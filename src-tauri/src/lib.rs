@@ -219,15 +219,16 @@ fn get_profiles() -> Result<Vec<SessionProfile>, String> {
 fn create_profile(title: String, purpose: String, project_path: String) -> Result<SessionProfile, String> {
     let mut profiles = load_profiles();
     let now = now_iso8601();
-    let claude_session_id = discover_claude_session_id(&project_path);
 
+    // Don't auto-discover session ID on creation — new profiles start fresh.
+    // The frontend will discover and link the session ID after claude starts.
     let profile = SessionProfile {
         id: Uuid::new_v4().to_string(),
         title,
         purpose: purpose.clone(),
         project_path: project_path.clone(),
         project_name: project_name_from_path(&project_path),
-        claude_session_id,
+        claude_session_id: None,
         context_prompt: get_context_prompt(&purpose),
         created_at: now.clone(),
         last_used_at: now,
