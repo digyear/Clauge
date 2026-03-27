@@ -358,6 +358,22 @@
     if (e.key === 'Escape') { showModal = false; showSettings = false; }
   }
 
+  function handleWindowResize() {
+    if (activeTermEntry?.fitAddon && activeTermEntry.container.offsetWidth > 0) {
+      requestAnimationFrame(() => {
+        try {
+          activeTermEntry.fitAddon.fit();
+          if (activeTermEntry.terminalId) {
+            const dims = activeTermEntry.fitAddon.proposeDimensions();
+            if (dims) {
+              invoke("resize_terminal", { terminalId: activeTermEntry.terminalId, cols: dims.cols, rows: dims.rows }).catch(() => {});
+            }
+          }
+        } catch(_) {}
+      });
+    }
+  }
+
   function openExternal(url) {
     import("@tauri-apps/plugin-opener").then(m => m.openUrl(url)).catch(() => window.open(url, "_blank"));
   }
@@ -415,7 +431,7 @@
   });
 </script>
 
-<svelte:window onkeydown={handleGlobalKeydown} />
+<svelte:window onkeydown={handleGlobalKeydown} onresize={handleWindowResize} />
 
 <div class="app-wrapper">
 <div class="app">
