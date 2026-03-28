@@ -18,6 +18,7 @@
   let usageLimits = $state(null);
   let sessionKeyInput = $state('');
   let appVersion = $state('');
+  let claudePlan = $state('');
   let updateReady = $state(null); // { version, body } — only set after download complete
   let showUpdateModal = $state(false);
   let showWhatsNew = $state(false);
@@ -62,6 +63,9 @@
 
   // Delete confirmation
   let deleteConfirm = $state(null); // profile to confirm delete
+  let menuProfile = $state(null); // profile whose ellipsis menu is open
+  let sessionActivity = $state({}); // profileId → 'active' | 'done' | null
+  let showUsageDetail = $state(false);
 
   // Theme state
   let currentTheme = $state(typeof localStorage !== 'undefined' ? (localStorage.getItem('clauge-theme') || 'dark') : 'dark');
@@ -191,6 +195,11 @@
 
   async function selectProfile(profile) {
     activeProfile = profile;
+    // Clear activity indicator when switching to this session
+    if (sessionActivity[profile.id]) {
+      delete sessionActivity[profile.id];
+      sessionActivity = { ...sessionActivity };
+    }
     let entry = terminalMap.get(profile.id);
 
     if (entry && entry.terminalId) {
@@ -236,6 +245,8 @@
         const purposePrompt = (getPurposePrompt(profile.purpose) || '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
 
         let outputReceived = false;
+        let activityTimer = null;
+        const profileId = profile.id;
         const onOutput = new Channel();
         onOutput.onmessage = (payload) => {
           if (entry.term) {
@@ -246,10 +257,26 @@
               entry.term.write(bytes);
             } catch(e) {}
           }
-          // Capture session ID on first output — session file exists by now
-          if (!outputReceived && !profile.claudeSessionId && existingSessionIds.length >= 0) {
+          // Track activity for background sessions
+          if (activeProfile?.id !== profileId) {
+            sessionActivity[profileId] = 'active';
+            sessionActivity = { ...sessionActivity };
+            // After 2s of no new output, mark as done (Claude finished responding)
+            if (activityTimer) clearTimeout(activityTimer);
+            activityTimer = setTimeout(() => {
+              if (sessionActivity[profileId] === 'active') {
+                sessionActivity[profileId] = 'done';
+                sessionActivity = { ...sessionActivity };
+              }
+            }, 2000);
+          }
+          // Capture session ID — retry every 3s until found (up to 30s)
+          if (!outputReceived && !profile.claudeSessionId) {
             outputReceived = true;
-            setTimeout(async () => {
+            let attempts = 0;
+            const captureInterval = setInterval(async () => {
+              attempts++;
+              if (attempts > 10 || profile.claudeSessionId) { clearInterval(captureInterval); return; }
               try {
                 const allSessions = await invoke("discover_sessions", { projectPath: spawnPath });
                 const newSession = allSessions.find(s => !existingSessionIds.includes(s.sessionId));
@@ -257,9 +284,11 @@
                   await invoke("update_session_id", { id: profile.id, claudeSessionId: newSession.sessionId });
                   profile.claudeSessionId = newSession.sessionId;
                   await loadProfiles();
+                  console.log("[Clauge] Session ID saved:", newSession.sessionId);
+                  clearInterval(captureInterval);
                 }
               } catch(e) {}
-            }, 2000);
+            }, 3000);
           }
         };
         entry.channel = onOutput;
@@ -319,7 +348,7 @@
 
     // Clean up worktree
     if (deletedProfile.worktreePath && deletedProfile.projectPath) {
-      try { await invoke("remove_worktree", { projectPath: deletedProfile.projectPath, worktreePath: deletedProfile.worktreePath }); } catch(e) {}
+      try { await invoke("remove_worktree", { projectPath: deletedProfile.projectPath, worktreePath: deletedProfile.worktreePath, branchName: deletedProfile.worktreeBranch || null }); } catch(e) {}
     }
 
     await invoke("delete_profile", { id: deletedId });
@@ -610,6 +639,7 @@ Anti-patterns to avoid:
       checkWhatsNew(v);
       checkAndDownloadUpdate();
     }).catch(() => {});
+    invoke("get_claude_plan").then(p => { if (p) claudePlan = p; }).catch(() => {});
 
 
     // Priority 1: Load profiles (fast, <10ms)
@@ -628,14 +658,14 @@ Anti-patterns to avoid:
   });
 </script>
 
-<svelte:window onkeydown={handleGlobalKeydown} onresize={handleWindowResize} />
+<svelte:window onkeydown={handleGlobalKeydown} onresize={handleWindowResize} onclick={() => { menuProfile = null; }} />
 
 <div class="app-wrapper">
 <div class="app">
   <div class="drag-bar"></div>
   <aside class="sidebar" class:collapsed={sidebarCollapsed}>
     <div class="sidebar-header">
-      <span class="app-title">Clauge</span>
+      <span class="app-title">Clauge {#if claudePlan}<span class="plan-badge">{claudePlan}</span>{/if}</span>
       <div class="header-actions">
         <button class="settings-btn" onclick={() => showSettings = true} title="Settings">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -660,23 +690,13 @@ Anti-patterns to avoid:
             </button>
             {#if isGroupExpanded(projectName)}
               {#each items as profile}
-                {#if deleteConfirm?.id === profile.id}
-                  <div class="delete-confirm">
-                    <span>Delete "{profile.title}"?</span>
-                    <div class="delete-actions">
-                      <button class="del-yes" onclick={confirmDelete}>Delete</button>
-                      <button class="del-no" onclick={() => deleteConfirm = null}>Cancel</button>
-                    </div>
-                  </div>
-                {:else}
                   <button
                     class="profile-item"
                     class:active={activeProfile?.id === profile.id}
                     onclick={() => selectProfile(profile)}
-                    oncontextmenu={(e) => deleteProfile(e, profile)}
                   >
                     <div class="profile-title">
-                      <span class="status-dot" class:active={activeProfile?.id === profile.id}></span>
+                      <span class="status-dot" class:active={activeProfile?.id === profile.id} class:bg-active={sessionActivity[profile.id] === 'active'} class:bg-done={sessionActivity[profile.id] === 'done'}></span>
                       {profile.title}
                     </div>
                     <div class="profile-meta">
@@ -686,8 +706,20 @@ Anti-patterns to avoid:
                       {/if}
                       <span class="time">{relativeTime(profile.lastUsedAt)}</span>
                     </div>
+                    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+                    <span class="ellipsis-btn" onclick={(e) => { e.stopPropagation(); menuProfile = menuProfile?.id === profile.id ? null : profile; }}>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
+                    </span>
+                    {#if menuProfile?.id === profile.id}
+                      <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+                      <div class="session-menu" onclick={(e) => e.stopPropagation()}>
+                        <button class="session-menu-item danger" onclick={() => { menuProfile = null; deleteConfirm = profile; }}>
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.928l.747 10.218A1.75 1.75 0 006.172 16h3.656a1.75 1.75 0 001.747-1.282L12.322 4.5h.928a.75.75 0 000-1.5H11zm-5.522 1.5l.735 10.06a.25.25 0 00.249.19h3.076a.25.25 0 00.249-.19l.735-10.06H5.478z"/></svg>
+                          Delete
+                        </button>
+                      </div>
+                    {/if}
                   </button>
-                {/if}
               {/each}
             {/if}
           </div>
@@ -736,14 +768,17 @@ Anti-patterns to avoid:
     {#if usageLimits}
       {@const sColor = usageLimits.sessionPercent > 80 ? '#f85149' : usageLimits.sessionPercent > 50 ? '#d29922' : 'var(--accent)'}
       {@const wColor = usageLimits.weeklyAllPercent > 80 ? '#f85149' : usageLimits.weeklyAllPercent > 50 ? '#d29922' : 'var(--accent)'}
-      <div class="usage-chip"><span class="usage-dot" style="background:{sColor};box-shadow:0 0 6px {sColor}44;"></span><span class="usage-lbl">Session</span><span class="usage-val" style="color:{sColor}">{usageLimits.sessionPercent.toFixed(0)}%</span></div>
-      <div class="usage-sep"></div>
-      <div class="usage-chip"><span class="usage-dot" style="background:{wColor};box-shadow:0 0 6px {wColor}44;"></span><span class="usage-lbl">Weekly</span><span class="usage-val" style="color:{wColor}">{usageLimits.weeklyAllPercent.toFixed(0)}%</span></div>
-      {#if usageLimits.weeklySonnetPercent != null}
-        {@const snColor = usageLimits.weeklySonnetPercent > 80 ? '#f85149' : usageLimits.weeklySonnetPercent > 50 ? '#d29922' : 'var(--accent)'}
+      <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+      <div class="usage-chips-clickable" onclick={() => showUsageDetail = true}>
+        <div class="usage-chip"><span class="usage-dot" style="background:{sColor};box-shadow:0 0 6px {sColor}44;"></span><span class="usage-lbl">Session</span><span class="usage-val" style="color:{sColor}">{usageLimits.sessionPercent.toFixed(0)}%</span></div>
         <div class="usage-sep"></div>
-        <div class="usage-chip"><span class="usage-dot" style="background:{snColor};box-shadow:0 0 6px {snColor}44;"></span><span class="usage-lbl">Sonnet</span><span class="usage-val" style="color:{snColor}">{usageLimits.weeklySonnetPercent.toFixed(0)}%</span></div>
-      {/if}
+        <div class="usage-chip"><span class="usage-dot" style="background:{wColor};box-shadow:0 0 6px {wColor}44;"></span><span class="usage-lbl">Weekly</span><span class="usage-val" style="color:{wColor}">{usageLimits.weeklyAllPercent.toFixed(0)}%</span></div>
+        {#if usageLimits.weeklySonnetPercent != null}
+          {@const snColor = usageLimits.weeklySonnetPercent > 80 ? '#f85149' : usageLimits.weeklySonnetPercent > 50 ? '#d29922' : 'var(--accent)'}
+          <div class="usage-sep"></div>
+          <div class="usage-chip"><span class="usage-dot" style="background:{snColor};box-shadow:0 0 6px {snColor}44;"></span><span class="usage-lbl">Sonnet</span><span class="usage-val" style="color:{snColor}">{usageLimits.weeklySonnetPercent.toFixed(0)}%</span></div>
+        {/if}
+      </div>
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
       <span class="limit-loading" onclick={() => { showSettings = true; settingsTab = 'usage'; }} style="cursor:pointer;">
@@ -774,9 +809,15 @@ Anti-patterns to avoid:
     <label>Purpose
       <div class="chips">
         {#each purposes as p}
-          <button class="chip" class:selected={modalPurpose === p.label}
-            style={modalPurpose === p.label ? `background:${p.color}33;color:${p.color};border-color:${p.color}` : ""}
-            onclick={() => modalPurpose = p.label}>{p.label}</button>
+          {#if !modalPath.trim()}
+            <button class="chip" disabled style="opacity:0.3;cursor:not-allowed;">{p.label}</button>
+          {:else if profiles.some(pr => pr.projectPath === modalPath && pr.purpose === p.label)}
+            <button class="chip" disabled style="opacity:0.3;cursor:not-allowed;" title="{p.label} already active for this project">{p.label}</button>
+          {:else}
+            <button class="chip" class:selected={modalPurpose === p.label}
+              style={modalPurpose === p.label ? `background:${p.color}33;color:${p.color};border-color:${p.color}` : ''}
+              onclick={() => modalPurpose = p.label}>{p.label}</button>
+          {/if}
         {/each}
       </div>
     </label>
@@ -927,6 +968,77 @@ Anti-patterns to avoid:
 </div>
 {/if}
 
+{#if deleteConfirm}
+<div class="modal-backdrop" style="animation:fadeIn 0.1s ease-out;">
+  <div class="modal" style="max-width:360px;animation:slideIn 0.15s ease-out;">
+    <div style="text-align:center;padding:20px 20px 0;">
+      <svg width="32" height="32" viewBox="0 0 16 16" fill="#f85149" style="margin-bottom:12px;"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.928l.747 10.218A1.75 1.75 0 006.172 16h3.656a1.75 1.75 0 001.747-1.282L12.322 4.5h.928a.75.75 0 000-1.5H11zm-5.522 1.5l.735 10.06a.25.25 0 00.249.19h3.076a.25.25 0 00.249-.19l.735-10.06H5.478z"/></svg>
+      <h2 style="font-size:15px;margin-bottom:8px;">Delete this session?</h2>
+      <p style="font-size:13px;color:var(--text-secondary);line-height:1.5;">
+        Are you sure you want to delete the <strong style="color:var(--text-primary);">{deleteConfirm.projectName} — {deleteConfirm.purpose}</strong> session?
+      </p>
+    </div>
+    <div class="modal-actions" style="padding:16px 20px;">
+      <button onclick={() => deleteConfirm = null}>Cancel</button>
+      <button style="background:#f85149 !important;border-color:transparent !important;color:#fff !important;" onclick={confirmDelete}>Delete</button>
+    </div>
+  </div>
+</div>
+{/if}
+
+{#if showUsageDetail && usageLimits}
+<div class="modal-backdrop" style="animation:fadeIn 0.1s ease-out;">
+  <div class="modal" style="max-width:380px;animation:slideIn 0.15s ease-out;padding:0;">
+    <div style="padding:20px 20px 16px;">
+      <h2 style="font-size:14px;margin:0 0 16px;">Usage</h2>
+
+      <div class="usage-detail-row">
+        <div class="usage-detail-label">Session</div>
+        <div class="usage-detail-bar">
+          <div class="usage-detail-fill" style="width:{usageLimits.sessionPercent}%;background:{usageLimits.sessionPercent > 80 ? '#f85149' : usageLimits.sessionPercent > 50 ? '#d29922' : 'var(--accent)'}"></div>
+        </div>
+        <div class="usage-detail-pct" style="color:{usageLimits.sessionPercent > 80 ? '#f85149' : usageLimits.sessionPercent > 50 ? '#d29922' : 'var(--accent)'}">{usageLimits.sessionPercent.toFixed(1)}%</div>
+      </div>
+      {#if usageLimits.sessionResets}
+        <div class="usage-detail-resets">Resets {new Date(usageLimits.sessionResets).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
+      {/if}
+
+      <div class="usage-detail-row" style="margin-top:14px;">
+        <div class="usage-detail-label">Weekly</div>
+        <div class="usage-detail-bar">
+          <div class="usage-detail-fill" style="width:{usageLimits.weeklyAllPercent}%;background:{usageLimits.weeklyAllPercent > 80 ? '#f85149' : usageLimits.weeklyAllPercent > 50 ? '#d29922' : 'var(--accent)'}"></div>
+        </div>
+        <div class="usage-detail-pct" style="color:{usageLimits.weeklyAllPercent > 80 ? '#f85149' : usageLimits.weeklyAllPercent > 50 ? '#d29922' : 'var(--accent)'}">{usageLimits.weeklyAllPercent.toFixed(1)}%</div>
+      </div>
+      {#if usageLimits.weeklyAllResets}
+        <div class="usage-detail-resets">Resets {new Date(usageLimits.weeklyAllResets).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
+      {/if}
+
+      {#if usageLimits.weeklySonnetPercent != null}
+        <div class="usage-detail-row" style="margin-top:14px;">
+          <div class="usage-detail-label">Sonnet</div>
+          <div class="usage-detail-bar">
+            <div class="usage-detail-fill" style="width:{usageLimits.weeklySonnetPercent}%;background:{usageLimits.weeklySonnetPercent > 80 ? '#f85149' : usageLimits.weeklySonnetPercent > 50 ? '#d29922' : 'var(--accent)'}"></div>
+          </div>
+          <div class="usage-detail-pct" style="color:{usageLimits.weeklySonnetPercent > 80 ? '#f85149' : usageLimits.weeklySonnetPercent > 50 ? '#d29922' : 'var(--accent)'}">{usageLimits.weeklySonnetPercent.toFixed(1)}%</div>
+        </div>
+        {#if usageLimits.weeklySonnetResets}
+          <div class="usage-detail-resets">Resets {new Date(usageLimits.weeklySonnetResets).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
+        {/if}
+      {/if}
+    </div>
+
+    {#if claudePlan}
+      <div style="padding:0 20px 12px;font-size:11px;color:var(--text-secondary);">Plan: <span style="text-transform:capitalize;color:var(--text-primary);">{claudePlan}</span></div>
+    {/if}
+
+    <div class="modal-actions" style="padding:12px 20px;border-top:1px solid var(--border);">
+      <button onclick={() => showUsageDetail = false}>Close</button>
+      <button class="create-btn" onclick={() => { showUsageDetail = false; loadUsageLimits(); }}>Refresh</button>
+    </div>
+  </div>
+</div>
+{/if}
 
 <style>
   :global(:root) {
@@ -944,11 +1056,14 @@ Anti-patterns to avoid:
 
   .sidebar { width: 220px; min-width: 220px; background: var(--sidebar-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; user-select: none; transition: width 0.2s ease, min-width 0.2s ease, opacity 0.2s ease; overflow: hidden; }
   .sidebar.collapsed { width: 0; min-width: 0; border-right: none; opacity: 0; pointer-events: none; }
-  .sidebar-toggle { position: absolute; left: 220px; top: 50%; transform: translateY(-50%); z-index: 50; width: 16px; height: 32px; border: 1px solid var(--border); border-left: none; border-radius: 0 6px 6px 0; background: var(--sidebar-bg); color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: left 0.2s ease, background 0.15s; -webkit-app-region: no-drag; }
-  .sidebar-toggle:hover { background: var(--border); color: var(--text-primary); }
+  .sidebar-toggle { position: absolute; left: 220px; top: 50%; transform: translateY(-50%); z-index: 50; width: 12px; height: 28px; border: none; border-radius: 0 4px 4px 0; background: transparent; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: left 0.2s ease, background 0.15s, opacity 0.15s; -webkit-app-region: no-drag; opacity: 0; }
+  .sidebar-toggle:hover, .app:hover .sidebar-toggle { opacity: 1; background: rgba(255,255,255,0.06); color: var(--text-primary); }
   .sidebar.collapsed ~ .sidebar-toggle { left: 0; }
   .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 14px; padding-top: 38px; border-bottom: 1px solid var(--border); -webkit-app-region: drag; }
-  .app-title { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+  .app-title { font-size: 15px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
+  .plan-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; padding: 2px 6px; border-radius: 4px; background: linear-gradient(135deg, rgba(255,215,0,0.15), rgba(255,170,50,0.1)); color: #ffd700; border: 1px solid rgba(255,215,0,0.3); position: relative; overflow: hidden; }
+  .plan-badge::after { content: ''; position: absolute; top: -50%; left: -100%; width: 60%; height: 200%; background: linear-gradient(90deg, transparent, rgba(255,215,0,0.2), transparent); animation: shine 3s ease-in-out infinite; }
+  @keyframes shine { 0% { left: -100%; } 50% { left: 150%; } 100% { left: 150%; } }
   .header-actions { display: flex; gap: 6px; align-items: center; -webkit-app-region: no-drag; }
   .settings-btn { width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
   .settings-btn:hover { background: var(--border); color: var(--text-primary); }
@@ -978,6 +1093,16 @@ Anti-patterns to avoid:
   .profile-meta { display: flex; align-items: center; justify-content: space-between; }
   .badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 10px; }
   .wt-badge { font-size: 8px; font-weight: 700; padding: 1px 4px; border-radius: 3px; background: rgba(210, 168, 255, 0.2); color: #d2a8ff; letter-spacing: 0.5px; }
+
+  .profile-item { padding-right: 28px; }
+  .ellipsis-btn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); opacity: 0; padding: 4px; border-radius: 4px; color: var(--text-secondary); cursor: pointer; transition: opacity 0.15s, background 0.15s; z-index: 2; }
+  .profile-item:hover .ellipsis-btn { opacity: 1; }
+  .ellipsis-btn:hover { background: var(--hover-bg, rgba(255,255,255,0.08)); color: var(--text-primary); }
+
+  .session-menu { position: absolute; right: 6px; top: calc(50% + 14px); background: #1c2128; border: 1px solid var(--border); border-radius: 8px; padding: 4px; min-width: 110px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 10; animation: fadeIn 0.1s ease-out; }
+  .session-menu-item { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; border: none; background: transparent; color: var(--text-secondary); font-size: 12px; font-family: inherit; cursor: pointer; border-radius: 5px; transition: background 0.12s; }
+  .session-menu-item:hover { background: rgba(255,255,255,0.06); }
+  .session-menu-item.danger:hover { background: rgba(248,81,73,0.12); color: #f85149; }
   .time { font-size: 11px; color: var(--text-secondary); }
   .bottom-bar { display: flex; align-items: center; padding: 5px 16px; background: var(--sidebar-bg); border-top: 1px solid var(--border); flex-shrink: 0; }
   .bottom-left { width: 120px; flex-shrink: 0; }
@@ -992,6 +1117,15 @@ Anti-patterns to avoid:
   .usage-lbl { font-size: 10px; color: var(--text-secondary); font-weight: 500; }
   .usage-val { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .usage-sep { width: 1px; height: 10px; background: var(--border); opacity: 0.5; }
+  .usage-chips-clickable { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 2px 6px; border-radius: 6px; transition: background 0.15s; }
+  .usage-chips-clickable:hover { background: rgba(255,255,255,0.04); }
+
+  .usage-detail-row { display: flex; align-items: center; gap: 10px; }
+  .usage-detail-label { font-size: 11px; font-weight: 500; color: var(--text-secondary); width: 52px; flex-shrink: 0; }
+  .usage-detail-bar { flex: 1; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+  .usage-detail-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+  .usage-detail-pct { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; width: 42px; text-align: right; }
+  .usage-detail-resets { font-size: 10px; color: var(--text-secondary); margin-top: 3px; padding-left: 62px; opacity: 0.7; }
   .limit-loading { font-size: 10px; color: var(--text-secondary); }
 
 
@@ -1063,7 +1197,10 @@ Anti-patterns to avoid:
   .create-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #484f58; margin-right: 6px; vertical-align: middle; transition: background 0.3s; }
-  .status-dot.active { background: #3fb950; box-shadow: 0 0 6px rgba(63, 185, 80, 0.6); animation: pulse 2s ease-in-out infinite; }
+  .status-dot.active { background: #3fb950; box-shadow: 0 0 6px rgba(63, 185, 80, 0.5); }
+  .status-dot.bg-active { background: var(--accent); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 50%, transparent); animation: bgPulse 0.8s ease-in-out infinite; }
+  .status-dot.bg-done { background: #d29922; box-shadow: 0 0 6px rgba(210, 153, 34, 0.5); }
+  @keyframes bgPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.7); } }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   .purpose-glow { position: absolute; top: 0; left: 0; right: 0; height: 60px; z-index: 1; pointer-events: none; animation: glowFadeIn 0.5s ease-out; }
   @keyframes glowFadeIn { from { opacity: 0; } to { opacity: 1; } }

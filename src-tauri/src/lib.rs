@@ -216,9 +216,9 @@ fn save_profiles(profiles: &[SessionProfile]) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 fn encode_project_path(project_path: &str) -> String {
-    // Claude encodes project paths by replacing '/' with '-'
-    // e.g. /Users/macbook/Personal/pulse -> -Users-macbook-Personal-pulse
-    project_path.replace('/', "-")
+    // Claude encodes project paths by replacing '/' and '.' with '-'
+    // e.g. /Users/me/.clauge-worktrees -> -Users-me--clauge-worktrees
+    project_path.replace('/', "-").replace('.', "-")
 }
 
 
@@ -334,34 +334,38 @@ fn is_git_repo(path: String) -> Result<bool, String> {
 /// Create a git worktree for session isolation
 #[tauri::command]
 fn create_worktree(project_path: String, branch_name: String) -> Result<String, String> {
-    // Worktree goes inside a hidden directory in the project
     let worktree_dir = PathBuf::from(&project_path)
         .join(".clauge-worktrees")
         .join(&branch_name);
     let worktree_path = worktree_dir.to_string_lossy().to_string();
 
-    // Create parent dir
+    // If worktree directory already exists and is valid, just reuse it
+    if worktree_dir.exists() {
+        return Ok(worktree_path);
+    }
+
     let _ = std::fs::create_dir_all(worktree_dir.parent().unwrap_or(&worktree_dir));
 
-    // Create worktree with new branch
+    // Prune stale worktrees first
+    let _ = std::process::Command::new("git")
+        .args(["-C", &project_path, "worktree", "prune"])
+        .output();
+
+    // Try creating with new branch
     let output = std::process::Command::new("git")
         .args(["-C", &project_path, "worktree", "add", "-b", &branch_name, &worktree_path])
         .output()
         .map_err(|e| format!("git worktree add failed: {}", e))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // Branch might already exist — try without -b
-        if stderr.contains("already exists") {
-            let output2 = std::process::Command::new("git")
-                .args(["-C", &project_path, "worktree", "add", &worktree_path, &branch_name])
-                .output()
-                .map_err(|e| format!("git worktree add (existing branch) failed: {}", e))?;
-            if !output2.status.success() {
-                return Err(format!("git worktree add failed: {}", String::from_utf8_lossy(&output2.stderr)));
-            }
-        } else {
-            return Err(format!("git worktree add failed: {}", stderr));
+        // Branch exists — reuse it
+        let output2 = std::process::Command::new("git")
+            .args(["-C", &project_path, "worktree", "add", &worktree_path, &branch_name])
+            .output()
+            .map_err(|e| format!("git worktree add failed: {}", e))?;
+
+        if !output2.status.success() {
+            return Err(format!("git worktree add failed: {}", String::from_utf8_lossy(&output2.stderr)));
         }
     }
 
@@ -378,20 +382,17 @@ fn create_worktree(project_path: String, branch_name: String) -> Result<String, 
     Ok(worktree_path)
 }
 
-/// Remove a git worktree
+/// Remove a git worktree (keeps the branch — user may have commits there)
 #[tauri::command]
-fn remove_worktree(project_path: String, worktree_path: String) -> Result<(), String> {
-    let output = std::process::Command::new("git")
+fn remove_worktree(project_path: String, worktree_path: String, _branch_name: Option<String>) -> Result<(), String> {
+    let _ = std::process::Command::new("git")
         .args(["-C", &project_path, "worktree", "remove", "--force", &worktree_path])
-        .output()
-        .map_err(|e| format!("git worktree remove failed: {}", e))?;
+        .output();
 
-    if !output.status.success() {
-        // If worktree dir is already gone, just prune
-        let _ = std::process::Command::new("git")
-            .args(["-C", &project_path, "worktree", "prune"])
-            .output();
-    }
+    let _ = std::process::Command::new("git")
+        .args(["-C", &project_path, "worktree", "prune"])
+        .output();
+
     Ok(())
 }
 
@@ -595,6 +596,22 @@ fn load_session_key() -> Result<Option<String>, String> {
 #[tauri::command]
 fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Get Claude subscription plan from keychain
+#[tauri::command]
+fn get_claude_plan() -> Result<String, String> {
+    let output = std::process::Command::new("security")
+        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+        .output()
+        .map_err(|e| format!("Keychain error: {}", e))?;
+    if !output.status.success() { return Ok(String::new()); }
+    let json_str = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+    let parsed: serde_json::Value = serde_json::from_str(json_str.trim()).map_err(|e| e.to_string())?;
+    Ok(parsed.get("claudeAiOauth")
+        .and_then(|o| o.get("subscriptionType").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string())
 }
 
 /// Update the tray title text (shown in menu bar)
@@ -810,6 +827,7 @@ pub fn run() {
             get_session_tokens,
             fetch_usage_limits,
             get_app_version,
+            get_claude_plan,
             update_tray_title,
             save_session_key,
             load_session_key,
