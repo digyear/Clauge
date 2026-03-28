@@ -163,7 +163,7 @@ You are in a PR review session. Your role:
 
 /// Write a CLAUDE.md file in the session's working directory
 /// Claude Code reads this automatically on every turn
-fn inject_claude_md(working_dir: &str, purpose: &str, title: &str) -> Result<(), String> {
+fn inject_claude_md(working_dir: &str, purpose: &str, _title: &str) -> Result<(), String> {
     let prompt = get_context_prompt(purpose);
     if prompt.is_empty() { return Ok(()); }
 
@@ -610,28 +610,6 @@ fn get_session_tokens(
     })
 }
 
-fn get_session_key_from_keychain() -> Result<String, String> {
-    let output = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
-        .output()
-        .map_err(|e| format!("Keychain access failed: {}", e))?;
-
-    if !output.status.success() {
-        return Err("No Claude Code credentials in keychain".to_string());
-    }
-
-    let json_str = String::from_utf8(output.stdout)
-        .map_err(|e| format!("Invalid UTF-8: {}", e))?;
-
-    let parsed: serde_json::Value = serde_json::from_str(json_str.trim())
-        .map_err(|e| format!("JSON parse failed: {}", e))?;
-
-    parsed
-        .get("claudeAiOauth")
-        .and_then(|o| o.get("accessToken").and_then(|v| v.as_str()))
-        .map(|s| s.to_string())
-        .ok_or("No access token found in credentials".to_string())
-}
 
 /// Fetch usage limits via precompiled Swift binary (NSURLSession bypasses Cloudflare, ~1.5s)
 #[tauri::command]
