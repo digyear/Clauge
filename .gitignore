@@ -5,3 +5,4 @@ build/
 .superpowers/
 *.DS_Store
 src-tauri/scripts/fetch_usage
+.clauge-worktrees/
