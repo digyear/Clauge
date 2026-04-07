@@ -79,6 +79,10 @@
   let modalPath = $state("");
   let modalTitle = $state("");
   let modalPurpose = $state("");
+  let modalSkipPermissions = $state(false);
+  let modalExistingSessions = $state([]);
+  let modalSelectedSession = $state("");
+  let modalCustomPrompt = $state("");
 
   const purposes = [
     { label: "Brainstorming", color: "#d2a8ff" },
@@ -86,6 +90,7 @@
     { label: "Code Review", color: "#58a6ff" },
     { label: "PR Review", color: "#d29922" },
     { label: "Debugging", color: "#f85149" },
+    { label: "Custom", color: "#8b949e" },
   ];
   const purposeColors = Object.fromEntries(purposes.map(p => [p.label, p.color]));
 
@@ -242,7 +247,9 @@
         }
 
         // Flatten prompt to single line for shell compatibility
-        const purposePrompt = (getPurposePrompt(profile.purpose) || '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+        // Use frontend purpose prompt for fixed purposes, fall back to profile.contextPrompt for Custom
+        const rawPrompt = getPurposePrompt(profile.purpose) || profile.contextPrompt || '';
+        const purposePrompt = rawPrompt.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
 
         let outputReceived = false;
         let activityTimer = null;
@@ -257,6 +264,8 @@
               entry.term.write(bytes);
             } catch(e) {}
           }
+          // Detect action-required prompts and notify if window not focused
+          checkForActionPrompt(payload.data, profile.title);
           // Track activity for background sessions
           if (activeProfile?.id !== profileId) {
             sessionActivity[profileId] = 'active';
@@ -297,6 +306,7 @@
           sessionId: profile.claudeSessionId || null,
           projectPath: spawnPath,
           contextPrompt: purposePrompt || null,
+          skipPermissions: profile.skipPermissions || false,
           onOutput: onOutput,
         });
         entry.terminalId = tid;
@@ -327,9 +337,21 @@
   async function createSession() {
     if (!modalPath || !modalTitle || !modalPurpose) return;
     try {
-      const profile = await invoke("create_profile", { title: modalTitle, purpose: modalPurpose, projectPath: modalPath });
+      const profile = await invoke("create_profile", {
+        title: modalTitle,
+        purpose: modalPurpose,
+        projectPath: modalPath,
+        skipPermissions: modalSkipPermissions,
+        customPrompt: modalPurpose === 'Custom' && modalCustomPrompt.trim() ? modalCustomPrompt.trim() : null,
+      });
+      // Link existing session if selected (Custom purpose only)
+      if (modalSelectedSession) {
+        await invoke("update_session_id", { id: profile.id, claudeSessionId: modalSelectedSession });
+        profile.claudeSessionId = modalSelectedSession;
+      }
       showModal = false;
-      modalPath = ""; modalTitle = ""; modalPurpose = "";
+      modalPath = ""; modalTitle = ""; modalPurpose = ""; modalSkipPermissions = false;
+      modalExistingSessions = []; modalSelectedSession = ""; modalCustomPrompt = "";
       await loadProfiles();
       await selectProfile(profile);
     } catch (e) { statusMsg = "Create failed: " + e; }
@@ -392,6 +414,16 @@
 
   let grouped = $derived(groupByProject(profiles));
 
+  async function loadExistingSessions(path) {
+    try {
+      const sessions = await invoke("discover_sessions", { projectPath: path });
+      // Filter out sessions already linked to a profile
+      const linkedIds = new Set(profiles.filter(p => p.claudeSessionId).map(p => p.claudeSessionId));
+      modalExistingSessions = sessions.filter(s => !linkedIds.has(s.sessionId));
+      modalSelectedSession = "";
+    } catch(_) { modalExistingSessions = []; }
+  }
+
   async function browsePath() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -399,6 +431,7 @@
       if (selected) {
         modalPath = selected;
         if (!modalTitle) modalTitle = selected.split("/").filter(Boolean).pop() || "";
+        loadExistingSessions(selected);
       }
     } catch(e) { statusMsg = "Browse failed: " + e; }
   }
@@ -411,7 +444,7 @@
       if (profiles[idx]) selectProfile(profiles[idx]);
     }
     if (e.metaKey && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
-    if (e.key === 'Escape') { showModal = false; showSettings = false; }
+    if (e.key === 'Escape') { showModal = false; showSettings = false; modalExistingSessions = []; modalSelectedSession = ""; modalCustomPrompt = ""; }
   }
 
   function handleWindowResize() {
@@ -596,6 +629,76 @@ Anti-patterns to avoid:
   }
 
 
+  async function handleDragStart(e) {
+    if (e.buttons === 1) {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      if (e.detail === 2) {
+        getCurrentWindow().toggleMaximize();
+      } else {
+        getCurrentWindow().startDragging();
+      }
+    }
+  }
+
+  // Notification for action-required prompts
+  let lastNotifyTime = 0;
+  let outputBuffer = '';
+  let bufferTimer = null;
+
+  function checkForActionPrompt(base64Data, sessionTitle) {
+    try {
+      // Decode base64 to text, strip ANSI escape codes
+      const raw = atob(base64Data);
+      const text = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+      outputBuffer += text;
+
+      // Debounce — wait for output to settle before checking
+      if (bufferTimer) clearTimeout(bufferTimer);
+      bufferTimer = setTimeout(() => {
+        const buf = outputBuffer;
+        outputBuffer = '';
+
+        // Throttle — max one notification per 10 seconds
+        if (Date.now() - lastNotifyTime < 10000) return;
+
+        // Only notify if window is not focused
+        if (document.hasFocus()) return;
+
+        // Detect common action-required patterns
+        const patterns = [
+          /Do you want to proceed/i,
+          /1\.\s*Yes/,                  // "1. Yes" selector
+          /\(y\/n\)/i,
+          /\[Y\/n\]/i,
+          /\[y\/N\]/i,
+          /Press Enter/i,
+          /Allow.*Deny/i,
+          /approve this/i,
+          /Yes, and don.t ask/i,
+        ];
+
+        if (patterns.some(p => p.test(buf))) {
+          lastNotifyTime = Date.now();
+          sendActionNotification(sessionTitle);
+        }
+      }, 500);
+    } catch(_) {}
+  }
+
+  async function sendActionNotification(sessionTitle) {
+    try {
+      const { isPermissionGranted, requestPermission, sendNotification } = await import("@tauri-apps/plugin-notification");
+      let granted = await isPermissionGranted();
+      if (!granted) {
+        const permission = await requestPermission();
+        granted = permission === 'granted';
+      }
+      if (granted) {
+        sendNotification({ title: `Action Required`, body: `${sessionTitle} — Claude is waiting for your input` });
+      }
+    } catch(_) {}
+  }
+
   async function loadUsageLimits() {
     usageError = '';
     try {
@@ -665,7 +768,8 @@ Anti-patterns to avoid:
 
 <div class="app-wrapper">
 <div class="app">
-  <div class="drag-bar"></div>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="drag-bar" onmousedown={handleDragStart}></div>
   <aside class="sidebar" class:collapsed={sidebarCollapsed}>
     <div class="sidebar-header">
       <span class="app-title">Clauge {#if claudePlan}<span class="plan-badge">{claudePlan}</span>{/if}</span>
@@ -797,7 +901,7 @@ Anti-patterns to avoid:
 
 {#if showModal}
 <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-<div class="modal-backdrop" onclick={(e) => { if (e.target === e.currentTarget) showModal = false; }}>
+<div class="modal-backdrop" onclick={(e) => { if (e.target === e.currentTarget) { showModal = false; modalExistingSessions = []; modalSelectedSession = ""; modalCustomPrompt = ""; } }}>
   <div class="modal">
     <h2>New Session</h2>
     <label>Project Folder
@@ -814,18 +918,42 @@ Anti-patterns to avoid:
         {#each purposes as p}
           {#if !modalPath.trim()}
             <button class="chip" disabled style="opacity:0.3;cursor:not-allowed;">{p.label}</button>
-          {:else if profiles.some(pr => pr.projectPath === modalPath && pr.purpose === p.label)}
+          {:else if p.label !== 'Custom' && profiles.some(pr => pr.projectPath === modalPath && pr.purpose === p.label)}
             <button class="chip" disabled style="opacity:0.3;cursor:not-allowed;" title="{p.label} already active for this project">{p.label}</button>
           {:else}
             <button class="chip" class:selected={modalPurpose === p.label}
               style={modalPurpose === p.label ? `background:${p.color}33;color:${p.color};border-color:${p.color}` : ''}
-              onclick={() => modalPurpose = p.label}>{p.label}</button>
+              onclick={() => { modalPurpose = p.label; if (p.label === 'Custom' && modalPath.trim()) loadExistingSessions(modalPath); }}>{p.label}</button>
           {/if}
         {/each}
       </div>
     </label>
+    {#if modalPurpose === 'Custom'}
+      {#if modalExistingSessions.length > 0}
+        <label>Resume Existing Session
+          <select class="session-select" bind:value={modalSelectedSession}>
+            <option value="">Start fresh</option>
+            {#each modalExistingSessions as s}
+              <option value={s.sessionId}>{s.preview || s.sessionId.slice(0, 8)} — {new Date(s.modifiedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+      <label>System Prompt <span style="font-size:10px;color:var(--text-secondary);font-weight:normal;">(optional)</span>
+        <textarea class="custom-prompt" bind:value={modalCustomPrompt} placeholder="e.g. Focus on performance optimization, avoid breaking changes..." rows="3"></textarea>
+      </label>
+    {/if}
+    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+    <div class="toggle-row">
+      <span class="toggle-label">Skip permissions
+        <span class="toggle-tooltip">?</span>
+      </span>
+      <button class="toggle-switch" class:on={modalSkipPermissions} onclick={() => modalSkipPermissions = !modalSkipPermissions}>
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
     <div class="modal-actions">
-      <button onclick={() => showModal = false}>Cancel</button>
+      <button onclick={() => { showModal = false; modalExistingSessions = []; modalSelectedSession = ""; modalCustomPrompt = ""; }}>Cancel</button>
       <button class="create-btn" disabled={!modalPath || !modalTitle || !modalPurpose} onclick={createSession}>Create</button>
     </div>
   </div>
@@ -1050,7 +1178,7 @@ Anti-patterns to avoid:
     --accent: #58a6ff;
   }
   :global(body) { margin: 0; padding: 0; overflow: hidden; background: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--text-primary); }
-  .drag-bar { position: fixed; top: 0; left: 0; right: 0; height: 38px; -webkit-app-region: drag; z-index: 100; }
+  .drag-bar { position: fixed; top: 0; left: 0; right: 0; height: 38px; z-index: 9999; cursor: default; }
   .app-wrapper { display: flex; flex-direction: column; height: 100vh; width: 100vw; overflow: hidden; }
   .app { display: flex; flex: 1; min-height: 0; overflow: hidden; background: transparent; }
 
@@ -1059,7 +1187,7 @@ Anti-patterns to avoid:
   .sidebar-toggle { position: absolute; left: 220px; top: 50%; transform: translateY(-50%); z-index: 50; width: 12px; height: 28px; border: none; border-radius: 0 4px 4px 0; background: transparent; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: left 0.2s ease, background 0.15s, opacity 0.15s; -webkit-app-region: no-drag; opacity: 0; }
   .sidebar-toggle:hover, .app:hover .sidebar-toggle { opacity: 1; background: rgba(255,255,255,0.06); color: var(--text-primary); }
   .sidebar.collapsed ~ .sidebar-toggle { left: 0; }
-  .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 14px; padding-top: 38px; border-bottom: 1px solid var(--border); -webkit-app-region: drag; }
+  .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 14px; padding-top: 38px; border-bottom: 1px solid var(--border); }
   .app-title { font-size: 15px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
   .plan-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; padding: 2px 6px; border-radius: 4px; background: linear-gradient(135deg, rgba(255,215,0,0.15), rgba(255,170,50,0.1)); color: #ffd700; border: 1px solid rgba(255,215,0,0.3); position: relative; overflow: hidden; }
   .plan-badge::after { content: ''; position: absolute; top: -50%; left: -100%; width: 60%; height: 200%; background: linear-gradient(90deg, transparent, rgba(255,215,0,0.2), transparent); animation: shine 3s ease-in-out infinite; }
@@ -1181,7 +1309,20 @@ Anti-patterns to avoid:
   .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
   .chip { padding: 5px 12px; border-radius: 14px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; font-family: inherit; transition: all 0.15s; }
   .chip:hover { border-color: var(--text-secondary); }
+  .chip:focus { outline: none; }
   .chip.selected { font-weight: 600; }
+  .session-select { width: 100%; margin-top: 6px; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--btn-bg, #21262d); color: var(--text-primary); font-size: 12px; font-family: inherit; appearance: none; cursor: pointer; }
+  .session-select option { background: #1c2128; color: var(--text-primary); }
+  .custom-prompt { width: 100%; margin-top: 6px; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--btn-bg, #21262d); color: var(--text-primary); font-size: 12px; font-family: inherit; resize: vertical; min-height: 60px; line-height: 1.5; }
+  .custom-prompt::placeholder { color: var(--text-secondary); }
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+  .toggle-label { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+  .toggle-tooltip { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--border); font-size: 10px; color: var(--text-secondary); cursor: default; position: relative; }
+  .toggle-tooltip:hover::after { content: 'Bypasses all permission prompts. Claude will execute commands, edit files, and make changes without asking.'; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #1c2128; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 11px; color: var(--text-primary); white-space: normal; width: 220px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 100; line-height: 1.4; }
+  .toggle-switch { width: 36px; height: 20px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,0.06); cursor: pointer; position: relative; transition: all 0.2s; padding: 0; }
+  .toggle-switch.on { background: var(--accent); border-color: var(--accent); }
+  .toggle-knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-secondary); transition: all 0.2s; }
+  .toggle-switch.on .toggle-knob { left: 18px; background: #fff; }
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   .modal-actions button { padding: 7px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; border: 1px solid var(--border); background: var(--btn-bg, #21262d); color: var(--text-primary); font-family: inherit; }
   .create-btn { background: var(--accent) !important; border-color: transparent !important; color: #fff !important; }

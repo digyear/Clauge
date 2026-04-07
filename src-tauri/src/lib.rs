@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIconBuilder, TrayIconId};
 use tauri::{Manager, State};
 use uuid::Uuid;
@@ -31,6 +31,8 @@ pub struct SessionProfile {
     pub worktree_path: Option<String>,
     #[serde(default)]
     pub worktree_branch: Option<String>,
+    #[serde(default)]
+    pub skip_permissions: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +45,7 @@ pub struct SessionStore {
 pub struct DiscoveredSession {
     pub session_id: String,
     pub modified_at: String,
+    pub preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,7 +247,7 @@ fn get_profiles() -> Result<Vec<SessionProfile>, String> {
 }
 
 #[tauri::command]
-fn create_profile(title: String, purpose: String, project_path: String) -> Result<SessionProfile, String> {
+fn create_profile(title: String, purpose: String, project_path: String, skip_permissions: Option<bool>, custom_prompt: Option<String>) -> Result<SessionProfile, String> {
     let mut profiles = load_profiles();
     let now = now_iso8601();
 
@@ -257,11 +260,12 @@ fn create_profile(title: String, purpose: String, project_path: String) -> Resul
         project_path: project_path.clone(),
         project_name: project_name_from_path(&project_path),
         claude_session_id: None,
-        context_prompt: get_context_prompt(&purpose),
+        context_prompt: custom_prompt.unwrap_or_else(|| get_context_prompt(&purpose)),
         created_at: now.clone(),
         last_used_at: now,
         worktree_path: None,
         worktree_branch: None,
+        skip_permissions: skip_permissions.unwrap_or(false),
     };
 
     profiles.push(profile.clone());
@@ -451,9 +455,25 @@ fn discover_sessions(project_path: String) -> Result<Vec<DiscoveredSession>, Str
                 })
                 .unwrap_or_default();
 
+            // Extract first user message as preview
+            let preview = std::fs::read_to_string(&path).ok().and_then(|content| {
+                for line in content.lines().take(20) {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                        if val.get("type").and_then(|t| t.as_str()) == Some("human") {
+                            if let Some(msg) = val.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()) {
+                                let trimmed = msg.chars().take(80).collect::<String>();
+                                return Some(trimmed);
+                            }
+                        }
+                    }
+                }
+                None
+            });
+
             sessions.push(DiscoveredSession {
                 session_id,
                 modified_at,
+                preview,
             });
         }
     }
@@ -645,6 +665,7 @@ fn spawn_terminal(
     session_id: Option<String>,
     project_path: String,
     context_prompt: Option<String>,
+    skip_permissions: Option<bool>,
     on_output: Channel<TerminalOutputPayload>,
 ) -> Result<String, String> {
     let terminal_id = Uuid::new_v4().to_string();
@@ -662,6 +683,9 @@ fn spawn_terminal(
     let mut claude_cmd = String::from("claude");
     if let Some(ref sid) = session_id {
         claude_cmd.push_str(&format!(" --resume \"{}\"", sid));
+    }
+    if skip_permissions.unwrap_or(false) {
+        claude_cmd.push_str(" --dangerously-skip-permissions");
     }
     // Inject purpose prompt via --append-system-prompt (persists every turn)
     if let Some(ref prompt) = context_prompt {
@@ -823,6 +847,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(TerminalState::default())
         .invoke_handler(tauri::generate_handler![
@@ -863,6 +888,36 @@ pub fn run() {
                     .expect("Failed to apply vibrancy");
             }
             eprintln!("[TIMING] vibrancy applied: {:?}", setup_start.elapsed());
+
+            // ---- App menu bar ----
+            let app_menu = Submenu::with_items(app, "Clauge", true, &[
+                &PredefinedMenuItem::about(app, Some("About Clauge"), None)?,
+                &PredefinedMenuItem::separator(app)?,
+                &PredefinedMenuItem::services(app, None)?,
+                &PredefinedMenuItem::separator(app)?,
+                &PredefinedMenuItem::hide(app, None)?,
+                &PredefinedMenuItem::hide_others(app, None)?,
+                &PredefinedMenuItem::show_all(app, None)?,
+                &PredefinedMenuItem::separator(app)?,
+                &PredefinedMenuItem::quit(app, None)?,
+            ])?;
+            let edit_menu = Submenu::with_items(app, "Edit", true, &[
+                &PredefinedMenuItem::undo(app, None)?,
+                &PredefinedMenuItem::redo(app, None)?,
+                &PredefinedMenuItem::separator(app)?,
+                &PredefinedMenuItem::cut(app, None)?,
+                &PredefinedMenuItem::copy(app, None)?,
+                &PredefinedMenuItem::paste(app, None)?,
+                &PredefinedMenuItem::select_all(app, None)?,
+            ])?;
+            let window_menu = Submenu::with_items(app, "Window", true, &[
+                &PredefinedMenuItem::minimize(app, None)?,
+                &PredefinedMenuItem::maximize(app, None)?,
+                &PredefinedMenuItem::separator(app)?,
+                &PredefinedMenuItem::close_window(app, None)?,
+            ])?;
+            let menu_bar = Menu::with_items(app, &[&app_menu, &edit_menu, &window_menu])?;
+            app.set_menu(menu_bar)?;
 
             // ---- System tray ----
             let show_item = MenuItem::with_id(app, "show", "Back to App", true, None::<&str>)?;
@@ -912,6 +967,14 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        });
 }
