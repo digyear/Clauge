@@ -701,6 +701,7 @@ fn spawn_terminal(
     let user_shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let mut cmd = CommandBuilder::new(&user_shell);
     cmd.arg("-l");
+    cmd.arg("-i");
     cmd.arg("-c");
     cmd.arg(&claude_cmd);
     cmd.cwd(&project_path);
@@ -796,6 +797,7 @@ fn spawn_shell(
     let user_shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let mut cmd = CommandBuilder::new(&user_shell);
     cmd.arg("-l");
+    cmd.arg("-i");
     cmd.cwd(&project_path);
     if let Some(home) = dirs::home_dir() {
         cmd.env("HOME", home.to_string_lossy().to_string());
