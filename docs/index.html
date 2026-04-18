@@ -3,10 +3,10 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Clauge — Run multiple Claude Code sessions in parallel</title>
+        <title>Clauge — Developer toolkit for Claude Code</title>
         <meta
             name="description"
-            content="Organize, label, and resume Claude Code sessions from a lightweight macOS app. Purpose-driven workflows, embedded terminal, automatic session isolation."
+            content="Manage Claude Code sessions, terminals, git, plugins, and usage analytics from one macOS app. Parallel sessions with worktree isolation, built-in diff viewer, plugin marketplace, and context manager."
         />
         <link rel="stylesheet" href="style.css" />
         <link rel="icon" href="icon.svg" />
@@ -38,12 +38,12 @@
             <div class="container hero-split">
                 <div class="hero-left">
                     <h1 class="reveal">
-                        Run multiple Claude Code<br />sessions
+                        Manage Claude Code<br />
                         <span class="hero-typewriter"></span>
                     </h1>
                     <p class="subtitle reveal reveal-delay-1">
-                        Organized by project, each with its own purpose and
-                        terminal.<br />Built with Rust + Tauri.
+                        Sessions, terminals, git, plugins, and usage analytics
+                        — all in one window.<br />Built with Rust + Tauri.
                     </p>
                     <div class="hero-buttons reveal reveal-delay-2">
                         <a
@@ -77,21 +77,8 @@
                     </div>
                     <a href="#" class="intel-link reveal reveal-delay-2" style="display:none;">Looking for Intel Mac?</a>
                     <p class="hero-meta reveal reveal-delay-3">
-                        macOS only &middot; ~7MB &middot; Apache 2.0
+                        macOS only &middot; ~6MB &middot; Apache 2.0
                     </p>
-                </div>
-                <div class="hero-right reveal reveal-delay-1">
-                    <div class="hero-video-wrap">
-                        <video
-                            class="promo-video"
-                            autoplay
-                            loop
-                            muted
-                            playsinline
-                        >
-                            <source src="promo.mp4" type="video/mp4" />
-                        </video>
-                    </div>
                 </div>
             </div>
         </section>
@@ -293,10 +280,10 @@
                     <div class="feature-text">
                         <h3>Parallel sessions, zero conflicts</h3>
                         <p>
-                            Run multiple sessions on the same project. Each one
-                            is automatically isolated — edit files in one
-                            without breaking the other. Switch between them
-                            instantly.
+                            Run multiple sessions on the same project with git
+                            worktree isolation. Built-in git integration —
+                            commit, push, pull, stash, branch switch, and
+                            inline diff viewer without leaving the app.
                         </p>
                     </div>
                     <div class="feature-visual">
@@ -397,88 +384,43 @@
                                     </div>
                                 </div>
                                 <div class="demo-terminal-pane">
-                                    <div
-                                        class="demo-term-content active"
-                                        data-panel="0"
-                                    >
-                                        <span class="demo-prompt"
-                                            >&#10095;</span
-                                        >
-                                        Refactoring auth middleware to use
-                                        JWT<br />
-                                        <span class="demo-dim"
-                                            >Reading
-                                            src/middleware/auth.ts</span
-                                        ><br />
-                                        <span class="demo-dim"
-                                            >Reading src/utils/jwt.ts</span
-                                        ><br /><br />
-                                        I'll update the middleware to validate
-                                        tokens...<span
-                                            class="demo-cursor"
-                                        ></span>
+                                    <div class="demo-term-content active" data-panel="0">
+                                        <span class="demo-prompt">&#10095;</span>
+                                        Refactoring auth middleware to use JWT<br />
+                                        <span class="demo-dim">Reading src/middleware/auth.ts</span><br />
+                                        <span class="demo-dim">Editing src/utils/jwt.ts</span><br /><br />
+                                        I'll update the middleware to validate tokens...<span class="demo-cursor"></span>
                                     </div>
-                                    <div
-                                        class="demo-term-content"
-                                        data-panel="1"
-                                    >
-                                        <span class="demo-prompt"
-                                            >&#10095;</span
-                                        >
+                                    <div class="demo-term-content" data-panel="1">
+                                        <span class="demo-prompt">&#10095;</span>
                                         Review the API endpoints for security<br />
-                                        <span class="demo-dim"
-                                            >Found 2 issues in
-                                            routes/users.ts</span
-                                        ><br /><br />
-                                        Missing rate limiting on POST
-                                        /api/auth/login...<span
-                                            class="demo-cursor"
-                                        ></span>
+                                        <span class="demo-dim">Found 2 issues in routes/users.ts</span><br /><br />
+                                        <span style="color:#f85149;">Missing rate limiting on POST /api/auth/login</span><span class="demo-cursor"></span>
                                     </div>
-                                    <div
-                                        class="demo-term-content"
-                                        data-panel="2"
-                                    >
-                                        <span class="demo-prompt"
-                                            >&#10095;</span
-                                        >
+                                    <div class="demo-term-content" data-panel="2">
+                                        <span class="demo-prompt">&#10095;</span>
                                         Token expires after 5 minutes<br />
-                                        <span class="demo-dim"
-                                            >Checking refresh logic...</span
-                                        ><br /><br />
-                                        Root cause: interval set to 300s not
-                                        3600s<span class="demo-cursor"></span>
+                                        <span class="demo-dim">Running git diff...</span><br /><br />
+                                        Root cause: interval set to 300s not 3600s<span class="demo-cursor"></span>
                                     </div>
-                                    <div
-                                        class="demo-term-content"
-                                        data-panel="3"
-                                    >
-                                        <span class="demo-prompt"
-                                            >&#10095;</span
-                                        >
-                                        Reviewing PR #87 — DB connection
-                                        pooling<br />
-                                        <span class="demo-dim"
-                                            >git diff main...feat/db-pool</span
-                                        ><br /><br />
-                                        Changes look good. One concern with
-                                        max_connections...<span
-                                            class="demo-cursor"
-                                        ></span>
+                                    <div class="demo-term-content" data-panel="3">
+                                        <span class="demo-prompt">&#10095;</span>
+                                        Reviewing PR #87 — DB connection pooling<br />
+                                        <span class="demo-dim">git diff main...feat/db-pool</span><br /><br />
+                                        Changes look good. One concern with max_connections...<span class="demo-cursor"></span>
                                     </div>
-                                    <div
-                                        class="demo-term-content"
-                                        data-panel="4"
-                                    >
-                                        <span class="demo-prompt"
-                                            >&#10095;</span
-                                        >
+                                    <div class="demo-term-content" data-panel="4">
+                                        <span class="demo-prompt">&#10095;</span>
                                         Should we use Redis or Memcached?<br /><br />
-                                        Let's compare both approaches...<span
-                                            class="demo-cursor"
-                                        ></span>
+                                        Let's compare both approaches...<span class="demo-cursor"></span>
                                     </div>
                                 </div>
+                            </div>
+                            <div class="demo-bottom-bar">
+                                <span class="demo-avatar">CG</span>
+                                <span class="demo-git-branch">⎇ main ↑2</span>
+                                <span class="demo-usage-chip">Session 4%</span>
+                                <span class="demo-usage-chip">Weekly 20%</span>
                             </div>
                         </div>
                     </div>
@@ -489,10 +431,10 @@
                     <div class="feature-text">
                         <h3>Everything in one window</h3>
                         <p>
-                            Embedded interactive terminal with full color,
-                            scrollback, and resize. Sessions grouped by project
-                            with expand/collapse. No jumping between terminal
-                            tabs.
+                            GPU-accelerated terminal with split shell panel,
+                            plugin manager with marketplace, context snippets
+                            you can inject mid-session, and notifications when
+                            Claude needs your input.
                         </p>
                     </div>
                     <div class="feature-visual">
@@ -518,9 +460,9 @@
                     <div class="feature-text">
                         <h3>Make it yours</h3>
                         <p>
-                            Dark and light themes. Six accent colors.
-                            Translucent sidebar. Adapts to how you work — not
-                            the other way around.
+                            Dark and light themes. Six accent colors. Custom
+                            font size. Reusable context snippets for coding
+                            guidelines and rules. Per-session git identity.
                         </p>
                     </div>
                     <div class="feature-visual">
@@ -578,11 +520,12 @@
                 <!-- Feature 4: Usage tracking — keep original clean design -->
                 <div class="feature-row reverse reveal">
                     <div class="feature-text">
-                        <h3>Usage tracking</h3>
+                        <h3>Usage dashboard</h3>
                         <p>
-                            Session and weekly usage limits visible right in the
-                            menu bar. Know how much headroom you have without
-                            opening a browser.
+                            Full analytics — cost per model, daily activity
+                            chart, tool usage, shell commands, top sessions.
+                            Live session and weekly limits with configurable
+                            refresh.
                         </p>
                     </div>
                     <div class="feature-visual">
@@ -601,46 +544,32 @@
                                     style="background: #28c840"
                                 ></span>
                             </div>
-                            <div class="mockup-body mockup-usage">
-                                <div class="usage-meter">
-                                    <span class="usage-label">Session</span>
-                                    <div class="usage-track">
-                                        <div
-                                            class="usage-fill"
-                                            style="
-                                                width: 13%;
-                                                background: var(--blue);
-                                            "
-                                        ></div>
+                            <div class="mockup-body mockup-usage" style="padding:14px;">
+                                <div style="display:flex;gap:8px;margin-bottom:10px;">
+                                    <div style="flex:1;text-align:center;padding:6px;background:rgba(255,255,255,0.04);border-radius:4px;border:1px solid rgba(255,255,255,0.06);">
+                                        <div style="font-size:14px;font-weight:700;color:#e6edf3;">$12.47</div>
+                                        <div style="font-size:8px;color:#8b949e;text-transform:uppercase;">Cost</div>
                                     </div>
-                                    <span class="usage-pct">13%</span>
-                                </div>
-                                <div class="usage-meter">
-                                    <span class="usage-label">Weekly</span>
-                                    <div class="usage-track">
-                                        <div
-                                            class="usage-fill"
-                                            style="
-                                                width: 6%;
-                                                background: var(--blue);
-                                            "
-                                        ></div>
+                                    <div style="flex:1;text-align:center;padding:6px;background:rgba(255,255,255,0.04);border-radius:4px;border:1px solid rgba(255,255,255,0.06);">
+                                        <div style="font-size:14px;font-weight:700;color:#e6edf3;">1,247</div>
+                                        <div style="font-size:8px;color:#8b949e;text-transform:uppercase;">Calls</div>
                                     </div>
-                                    <span class="usage-pct">6%</span>
-                                </div>
-                                <div class="usage-meter">
-                                    <span class="usage-label">Sonnet</span>
-                                    <div class="usage-track">
-                                        <div
-                                            class="usage-fill"
-                                            style="
-                                                width: 29%;
-                                                background: var(--yellow);
-                                            "
-                                        ></div>
+                                    <div style="flex:1;text-align:center;padding:6px;background:rgba(255,255,255,0.04);border-radius:4px;border:1px solid rgba(255,255,255,0.06);">
+                                        <div style="font-size:14px;font-weight:700;color:#e6edf3;">89%</div>
+                                        <div style="font-size:8px;color:#8b949e;text-transform:uppercase;">Cache</div>
                                     </div>
-                                    <span class="usage-pct">29%</span>
                                 </div>
+                                <div style="display:flex;gap:3px;align-items:flex-end;height:30px;margin-bottom:8px;">
+                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:40%;opacity:0.7;"></div>
+                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:60%;opacity:0.7;"></div>
+                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:80%;opacity:0.7;"></div>
+                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:45%;opacity:0.7;"></div>
+                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:90%;opacity:0.7;"></div>
+                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:70%;opacity:0.7;"></div>
+                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:100%;opacity:0.8;"></div>
+                                </div>
+                                <div class="usage-meter"><span class="usage-label">Session</span><div class="usage-track"><div class="usage-fill" style="width:4%;background:var(--blue);"></div></div><span class="usage-pct">4%</span></div>
+                                <div class="usage-meter"><span class="usage-label">Weekly</span><div class="usage-track"><div class="usage-fill" style="width:20%;background:var(--blue);"></div></div><span class="usage-pct">20%</span></div>
                             </div>
                         </div>
                     </div>
@@ -675,8 +604,10 @@
                         <div class="shortcut-desc">Toggle sidebar</div>
                     </div>
                     <div class="shortcut-card reveal reveal-delay-3">
-                        <div class="shortcut-keys"><kbd>Esc</kbd></div>
-                        <div class="shortcut-desc">Close modal</div>
+                        <div class="shortcut-keys">
+                            <kbd>&#8984;</kbd> <kbd>L</kbd>
+                        </div>
+                        <div class="shortcut-desc">Toggle shell</div>
                     </div>
                 </div>
             </div>
@@ -770,16 +701,22 @@
                 const el = document.querySelector(".hero-typewriter");
                 if (!el) return;
                 const words = [
-                    "in parallel",
-                    "side by side",
-                    "without conflicts",
+                    "sessions",
+                    "terminals",
+                    "git workflows",
+                    "plugins",
+                    "usage analytics",
+                    "contexts",
                     "your way",
                 ];
                 const colors = [
                     "var(--blue)",
-                    "var(--purple)",
                     "var(--green)",
                     "var(--yellow)",
+                    "var(--purple)",
+                    "var(--red)",
+                    "var(--blue)",
+                    "var(--green)",
                 ];
                 let wordIdx = 0,
                     charIdx = 0,
@@ -883,27 +820,20 @@
                 const el = document.getElementById("typing-terminal");
                 if (!el) return;
                 const lines = [
-                    { text: "$ claude", cls: "prompt" },
+                    { text: "$ claude --resume a3f8c2d1", cls: "prompt" },
                     { text: "", cls: "" },
-                    { text: "Welcome back! Resuming session...", cls: "dim" },
+                    { text: "Resuming session · Context: Code Style Guidelines", cls: "dim" },
                     { text: "", cls: "" },
-                    {
-                        text: "> Review the auth middleware for security issues",
-                        cls: "",
-                    },
+                    { text: "> Fix the auth bug and commit", cls: "" },
                     { text: "", cls: "" },
                     { text: "Reading src/middleware/auth.ts", cls: "dim" },
-                    { text: "Reading src/middleware/rateLimit.ts", cls: "dim" },
+                    { text: "Editing src/middleware/auth.ts", cls: "dim" },
                     { text: "", cls: "" },
-                    { text: "Found 2 issues:", cls: "" },
-                    {
-                        text: "  1. Missing rate limiting on /api/login",
-                        cls: "warn",
-                    },
-                    {
-                        text: "  2. JWT secret loaded from env without fallback",
-                        cls: "warn",
-                    },
+                    { text: "Fixed. Running git diff...", cls: "" },
+                    { text: "  + validateToken(req.headers.authorization)", cls: "warn" },
+                    { text: "  - // TODO: add validation", cls: "warn" },
+                    { text: "", cls: "" },
+                    { text: "Committed: fix(auth): add token validation", cls: "dim" },
                 ];
                 let lineIdx = 0,
                     charIdx = 0;

@@ -131,18 +131,12 @@ header .inner {
 }
 .hero > .container { max-width: 100%; padding: 0 40px; }
 .hero-split {
-  display: flex;
-  align-items: center;
-  gap: 48px;
-  width: 100%;
+  text-align: center;
+  max-width: 800px;
+  margin: 0 auto;
 }
 .hero-left {
-  flex: 0 0 38%;
-  min-width: 0;
-}
-.hero-right {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
 }
 .hero h1 {
   font-family: var(--font-display);
@@ -163,7 +157,7 @@ header .inner {
   font-size: clamp(14px, 1.8vw, 16px);
   color: var(--text-muted);
   max-width: 520px;
-  margin: 0 0 36px;
+  margin: 0 auto 36px;
   line-height: 1.6;
   font-weight: 300;
 }
@@ -172,10 +166,9 @@ header .inner {
   gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 20px;
+  justify-content: center;
 }
 @media (max-width: 768px) {
-  .hero-split { flex-direction: column; gap: 40px; text-align: center; }
-  .hero-left { text-align: center; }
   .hero-buttons { justify-content: center; }
   .hero .subtitle { margin: 0 auto 36px; }
 }
@@ -751,6 +744,25 @@ footer {
   background: rgba(210,168,255,0.15); color: var(--purple);
   flex-shrink: 0;
 }
+.demo-bottom-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  background: rgba(22, 27, 34, 0.9);
+  border-top: 1px solid rgba(255,255,255,0.06);
+  font-size: 8px;
+  color: var(--text-muted);
+}
+.demo-avatar {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--blue); color: #fff;
+  font-size: 6px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.demo-git-branch { font-family: var(--font-mono); color: var(--text-muted); }
+.demo-usage-chip { margin-left: auto; color: var(--green); font-weight: 600; }
+.demo-usage-chip + .demo-usage-chip { margin-left: 0; }
 .demo-terminal-pane {
   flex: 1;
   position: relative;
