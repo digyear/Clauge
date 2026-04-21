@@ -11,6 +11,8 @@
   import { contextsStore } from "$lib/stores/contexts.svelte";
   import { usageStore } from "$lib/stores/usage.svelte";
   import { gitStore } from "$lib/stores/git.svelte";
+  import { terminalStore } from "$lib/stores/terminal.svelte";
+  import { shellStore } from "$lib/stores/shell.svelte";
 
   let profiles = $state([]);
   let activeProfile = $state(null);
@@ -18,7 +20,6 @@
   let showSettings = $state(false);
   let settingsTab = $state('settings');
   // Context manager — state lives in contextsStore
-  let currentTerminalId = null;
   let terminalEl;
   let statusMsg = $state("Ready");
   let tokenUsage = $state(null);
@@ -34,7 +35,7 @@
     localStorage.setItem('clauge-sidebar-collapsed', String(sidebarCollapsed));
     // Refit all terminals after transition
     setTimeout(() => {
-      for (const [, entry] of terminalMap) {
+      for (const [, entry] of terminalStore.terminalMap) {
         if (entry.fitAddon && entry.container.offsetWidth > 0) {
           try { entry.fitAddon.fit(); } catch(_) {}
         }
@@ -64,25 +65,13 @@
   let deleteConfirm = $state(null); // profile to confirm delete
   let menuProfile = $state(null); // profile whose ellipsis menu is open
   let profileMenuOpen = $state(false);
-  let sessionActivity = $state({}); // profileId → 'active' | 'done' | null
   // Git state lives in gitStore
 
-  // Terminal management — one xterm per profile, switch between them
-  const terminalMap = new Map();
-  let activeTermEntry = null;
-
-  // Shell terminal management — one shell per profile
-  let shellOpenMap = $state({}); // profileId → boolean
-  let shellOpen = $derived(activeProfile ? (shellOpenMap[activeProfile.id] ?? false) : false);
+  // Terminal management — one xterm per profile, switch between them (state in terminalStore)
   let shellEl;
   let wrapperEl;
-  const shellMap = new Map(); // profileId → { term, fitAddon, container, terminalId }
-  let activeShellEntry = null;
-  let shellWidthMap = $state({});  // profileId → width percent
-  let isDraggingDivider = $state(false);
-  let focusedPanel = $state('claude'); // 'claude' | 'shell'
-
-  function getShellWidth(profileId) { return shellWidthMap[profileId] ?? 50; }
+  // Shell terminal management — one shell per profile (state in shellStore)
+  let shellOpen = $derived(activeProfile ? (shellStore.shellStore.shellOpenMap[activeProfile.id] ?? false) : false);
 
   // Modal state
   let modalPath = $state("");
@@ -110,15 +99,15 @@
   function applyTheme(themeName) {
     const { termTheme, cursor } = theme.applyTheme(themeName);
     // Update all existing terminals
-    for (const [, entry] of terminalMap) {
+    for (const [, entry] of terminalStore.terminalMap) {
       if (entry.term) entry.term.options.theme = { ...termTheme, cursor };
     }
   }
 
   function applyAccent(color) {
     const { termTheme, cursor } = theme.applyAccent(color);
-    for (const [, entry] of terminalMap) { if (entry.term) entry.term.options.theme = { ...termTheme, cursor }; }
-    for (const [, entry] of shellMap) { if (entry.term) entry.term.options.theme = { ...termTheme, cursor }; }
+    for (const [, entry] of terminalStore.terminalMap) { if (entry.term) entry.term.options.theme = { ...termTheme, cursor }; }
+    for (const [, entry] of shellStore.shellMap) { if (entry.term) entry.term.options.theme = { ...termTheme, cursor }; }
   }
 
   async function loadProfiles() {
@@ -127,18 +116,6 @@
     } catch (e) {
       try { profiles = await invoke("get_profiles"); } catch (e2) { statusMsg = "Load failed: " + e2; }
     }
-  }
-
-  // Terminal font/opacity settings (persisted)
-  let termFontSize = $state(typeof localStorage !== 'undefined' ? parseInt(localStorage.getItem('clauge-font-size') || '13') : 13);
-
-  function getTermConfig() {
-    return {
-      theme: theme.getTermTheme(),
-      fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", "Source Code Pro", "IBM Plex Mono", "Menlo", "Monaco", "Consolas", monospace',
-      fontSize: termFontSize, lineHeight: 1.4, cursorBlink: true, cursorStyle: "bar",
-      scrollback: 10000,
-    };
   }
 
   async function loadWebGLAddon(term) {
@@ -151,7 +128,7 @@
   }
 
   function createTermEntry(profileId) {
-    const t = new Terminal(getTermConfig());
+    const t = new Terminal(terminalStore.getTermConfig());
     const fa = new FitAddon();
     t.loadAddon(fa);
 
@@ -162,7 +139,7 @@
     loadWebGLAddon(t);
 
     t.onData((data) => {
-      const entry = terminalMap.get(profileId);
+      const entry = terminalStore.terminalMap.get(profileId);
       if (entry?.terminalId) invoke("write_to_terminal", { terminalId: entry.terminalId, data });
     });
 
@@ -171,26 +148,26 @@
     }).observe(container);
 
     const entry = { term: t, fitAddon: fa, container, terminalId: null, channel: null };
-    terminalMap.set(profileId, entry);
+    terminalStore.terminalMap.set(profileId, entry);
     return entry;
   }
 
   function showTermEntry(entry) {
-    if (activeTermEntry && activeTermEntry !== entry) {
-      activeTermEntry.container.style.display = "none";
+    if (terminalStore.activeTermEntry && terminalStore.activeTermEntry !== entry) {
+      terminalStore.activeTermEntry.container.style.display = "none";
       // Reduce scrollback on inactive terminal to save memory
-      try { activeTermEntry.term.options.scrollback = 1000; } catch(_) {}
+      try { terminalStore.activeTermEntry.term.options.scrollback = 1000; } catch(_) {}
     }
     entry.container.style.display = "block";
     // Restore full scrollback on active terminal
     try { entry.term.options.scrollback = 10000; } catch(_) {}
-    activeTermEntry = entry;
-    currentTerminalId = entry.terminalId;
+    terminalStore.activeTermEntry = entry;
+    terminalStore.currentTerminalId = entry.terminalId;
     requestAnimationFrame(() => { try { entry.fitAddon.fit(); } catch(_) {} });
   }
 
   function createShellEntry(profileId) {
-    const t = new Terminal({ ...getTermConfig(), scrollback: 5000 });
+    const t = new Terminal({ ...terminalStore.getTermConfig(), scrollback: 5000 });
     const fa = new FitAddon();
     t.loadAddon(fa);
 
@@ -201,14 +178,14 @@
     loadWebGLAddon(t);
 
     t.onData((data) => {
-      const sEntry = shellMap.get(profileId);
+      const sEntry = shellStore.shellMap.get(profileId);
       if (sEntry?.terminalId) {
         invoke("write_to_terminal", { terminalId: sEntry.terminalId, data }).catch(() => {
           // Shell process died — close shell panel
           sEntry.terminalId = null;
           if (activeProfile) {
-            shellOpenMap[activeProfile.id] = false;
-            shellOpenMap = {...shellOpenMap};
+            shellStore.shellOpenMap[activeProfile.id] = false;
+            shellStore.shellOpenMap = {...shellStore.shellOpenMap};
             // Refit Claude terminal to full width with PTY resize
             requestAnimationFrame(() => {
               requestAnimationFrame(() => {
@@ -225,24 +202,24 @@
     }).observe(container);
 
     const sEntry = { term: t, fitAddon: fa, container, terminalId: null };
-    shellMap.set(profileId, sEntry);
+    shellStore.shellMap.set(profileId, sEntry);
     return sEntry;
   }
 
   function showShellEntry(sEntry) {
-    if (activeShellEntry && activeShellEntry !== sEntry) {
-      activeShellEntry.container.style.display = "none";
-      try { activeShellEntry.term.options.scrollback = 500; } catch(_) {}
+    if (shellStore.activeShellEntry && shellStore.activeShellEntry !== sEntry) {
+      shellStore.activeShellEntry.container.style.display = "none";
+      try { shellStore.activeShellEntry.term.options.scrollback = 500; } catch(_) {}
     }
     sEntry.container.style.display = "block";
     try { sEntry.term.options.scrollback = 5000; } catch(_) {}
-    activeShellEntry = sEntry;
+    shellStore.activeShellEntry = sEntry;
     requestAnimationFrame(() => { try { sEntry.fitAddon.fit(); } catch(_) {} });
   }
 
   async function spawnShellForProfile(profile) {
     if (!shellEl) return;
-    let sEntry = shellMap.get(profile.id);
+    let sEntry = shellStore.shellMap.get(profile.id);
     if (sEntry && sEntry.terminalId) {
       showShellEntry(sEntry);
       return;
@@ -277,7 +254,7 @@
 
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-    isDraggingDivider = true;
+    shellStore.isDraggingDivider = true;
 
     let fitTimer = null;
     function onMove(ev) {
@@ -285,15 +262,15 @@
       const x = ev.clientX - rect.left;
       const pct = (x / rect.width) * 100;
       if (activeProfile) {
-        shellWidthMap[activeProfile.id] = Math.max(20, Math.min(80, 100 - pct));
-        shellWidthMap = {...shellWidthMap};
+        shellStore.shellWidthMap[activeProfile.id] = Math.max(20, Math.min(80, 100 - pct));
+        shellStore.shellWidthMap = {...shellStore.shellWidthMap};
       }
       // Throttle fit calls to every 100ms during drag — prevents xterm jank
       if (!fitTimer) {
         fitTimer = setTimeout(() => {
           fitTimer = null;
-          try { activeTermEntry?.fitAddon?.fit(); } catch(_) {}
-          try { activeShellEntry?.fitAddon?.fit(); } catch(_) {}
+          try { terminalStore.activeTermEntry?.fitAddon?.fit(); } catch(_) {}
+          try { shellStore.activeShellEntry?.fitAddon?.fit(); } catch(_) {}
         }, 100);
       }
     }
@@ -303,7 +280,7 @@
       document.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      isDraggingDivider = false;
+      shellStore.isDraggingDivider = false;
       if (fitTimer) { clearTimeout(fitTimer); fitTimer = null; }
       // Final fit + PTY resize after drag ends
       requestAnimationFrame(() => {
@@ -321,8 +298,8 @@
     if (!activeProfile && !shellOpen) return;
     const newState = !shellOpen;
     if (activeProfile) {
-      shellOpenMap[activeProfile.id] = newState;
-      shellOpenMap = {...shellOpenMap};
+      shellStore.shellOpenMap[activeProfile.id] = newState;
+      shellStore.shellOpenMap = {...shellStore.shellOpenMap};
     }
     if (newState && activeProfile) {
       // Wait for DOM to render the shell panel
@@ -330,12 +307,12 @@
         requestAnimationFrame(() => {
           spawnShellForProfile(activeProfile);
           // Refit Claude terminal since width changed
-          if (activeTermEntry?.fitAddon) {
+          if (terminalStore.activeTermEntry?.fitAddon) {
             try {
-              activeTermEntry.fitAddon.fit();
-              if (activeTermEntry.terminalId) {
-                const dims = activeTermEntry.fitAddon.proposeDimensions();
-                if (dims) invoke("resize_terminal", { terminalId: activeTermEntry.terminalId, cols: dims.cols, rows: dims.rows }).catch(() => {});
+              terminalStore.activeTermEntry.fitAddon.fit();
+              if (terminalStore.activeTermEntry.terminalId) {
+                const dims = terminalStore.activeTermEntry.fitAddon.proposeDimensions();
+                if (dims) invoke("resize_terminal", { terminalId: terminalStore.activeTermEntry.terminalId, cols: dims.cols, rows: dims.rows }).catch(() => {});
               }
             } catch(_) {}
           }
@@ -343,14 +320,14 @@
       });
     } else {
       // Refit Claude terminal to take full width — double rAF to wait for layout
-      if (activeTermEntry?.fitAddon) {
+      if (terminalStore.activeTermEntry?.fitAddon) {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             try {
-              activeTermEntry.fitAddon.fit();
-              if (activeTermEntry.terminalId) {
-                const dims = activeTermEntry.fitAddon.proposeDimensions();
-                if (dims) invoke("resize_terminal", { terminalId: activeTermEntry.terminalId, cols: dims.cols, rows: dims.rows }).catch(() => {});
+              terminalStore.activeTermEntry.fitAddon.fit();
+              if (terminalStore.activeTermEntry.terminalId) {
+                const dims = terminalStore.activeTermEntry.fitAddon.proposeDimensions();
+                if (dims) invoke("resize_terminal", { terminalId: terminalStore.activeTermEntry.terminalId, cols: dims.cols, rows: dims.rows }).catch(() => {});
               }
             } catch(_) {}
           });
@@ -362,11 +339,11 @@
   async function selectProfile(profile) {
     activeProfile = profile;
     // Clear activity indicator when switching to this session
-    if (sessionActivity[profile.id]) {
-      delete sessionActivity[profile.id];
-      sessionActivity = { ...sessionActivity };
+    if (terminalStore.sessionActivity[profile.id]) {
+      delete terminalStore.sessionActivity[profile.id];
+      terminalStore.sessionActivity = { ...terminalStore.sessionActivity };
     }
-    let entry = terminalMap.get(profile.id);
+    let entry = terminalStore.terminalMap.get(profile.id);
 
     if (entry && entry.terminalId) {
       showTermEntry(entry);
@@ -458,32 +435,32 @@
                   loadProfiles();
                 }).catch(() => {});
               }
-              sessionActivity[profileId] = 'done';
-              sessionActivity = { ...sessionActivity };
+              terminalStore.sessionActivity[profileId] = 'done';
+              terminalStore.sessionActivity = { ...terminalStore.sessionActivity };
               // Auto-close: hide terminal, switch to another session or show empty state
               entry.container.style.display = "none";
               if (activeProfile?.id === profileId) {
-                const otherProfile = profiles.find(p => p.id !== profileId && terminalMap.get(p.id)?.terminalId);
+                const otherProfile = profiles.find(p => p.id !== profileId && terminalStore.terminalMap.get(p.id)?.terminalId);
                 if (otherProfile) {
                   selectProfile(otherProfile);
                 } else {
                   activeProfile = null;
-                  activeTermEntry = null;
-                  currentTerminalId = null;
+                  terminalStore.activeTermEntry = null;
+                  terminalStore.currentTerminalId = null;
                 }
               }
             }
           } catch(_) {}
           // Track activity for background sessions
           if (activeProfile?.id !== profileId) {
-            sessionActivity[profileId] = 'active';
-            sessionActivity = { ...sessionActivity };
+            terminalStore.sessionActivity[profileId] = 'active';
+            terminalStore.sessionActivity = { ...terminalStore.sessionActivity };
             // After 2s of no new output, mark as done (Claude finished responding)
             if (activityTimer) clearTimeout(activityTimer);
             activityTimer = setTimeout(() => {
-              if (sessionActivity[profileId] === 'active') {
-                sessionActivity[profileId] = 'done';
-                sessionActivity = { ...sessionActivity };
+              if (terminalStore.sessionActivity[profileId] === 'active') {
+                terminalStore.sessionActivity[profileId] = 'done';
+                terminalStore.sessionActivity = { ...terminalStore.sessionActivity };
               }
             }, 2000);
           }
@@ -520,7 +497,7 @@
           onOutput: onOutput,
         });
         entry.terminalId = tid;
-        currentTerminalId = tid;
+        terminalStore.currentTerminalId = tid;
         statusMsg = profile.title;
         showTermEntry(entry);
         if (shellOpen) spawnShellForProfile(profile);
@@ -598,37 +575,37 @@
     await invoke("delete_profile", { id: deletedId });
 
     // Clean up terminal (backend PTY + child process)
-    const entry = terminalMap.get(deletedId);
+    const entry = terminalStore.terminalMap.get(deletedId);
     if (entry) {
       if (entry.terminalId) {
         try { await invoke("kill_terminal", { terminalId: entry.terminalId }); } catch(e) {}
       }
       entry.container.style.display = "none";
       if (entry.term) entry.term.dispose();
-      terminalMap.delete(deletedId);
+      terminalStore.terminalMap.delete(deletedId);
     }
 
     // Clean up shell (backend PTY + child process)
-    const sEntry = shellMap.get(deletedId);
+    const sEntry = shellStore.shellMap.get(deletedId);
     if (sEntry) {
       if (sEntry.terminalId) {
         try { await invoke("kill_terminal", { terminalId: sEntry.terminalId }); } catch(e) {}
       }
       sEntry.container.style.display = "none";
       if (sEntry.term) sEntry.term.dispose();
-      shellMap.delete(deletedId);
+      shellStore.shellMap.delete(deletedId);
     }
 
     if (activeProfile?.id === deletedId) {
       activeProfile = null;
-      activeTermEntry = null;
-      activeShellEntry = null;
-      currentTerminalId = null;
+      terminalStore.activeTermEntry = null;
+      shellStore.activeShellEntry = null;
+      terminalStore.currentTerminalId = null;
     }
-    delete shellOpenMap[deletedId];
-    delete shellWidthMap[deletedId];
-    shellOpenMap = {...shellOpenMap};
-    shellWidthMap = {...shellWidthMap};
+    delete shellStore.shellOpenMap[deletedId];
+    delete shellStore.shellWidthMap[deletedId];
+    shellStore.shellOpenMap = {...shellStore.shellOpenMap};
+    shellStore.shellWidthMap = {...shellStore.shellWidthMap};
 
     deleteConfirm = null;
     await loadProfiles();
@@ -672,14 +649,14 @@
   function doGitStashPop() { if (activeProfile) gitStore.doGitStashPop(gitPath(), gitProfileId()); }
 
   function handleFileDrop(e) {
-    if (!activeTermEntry?.terminalId) return;
+    if (!terminalStore.activeTermEntry?.terminalId) return;
     // Try web File API path (Tauri exposes file.path)
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
       const paths = Array.from(files).map(f => f.path || f.name).filter(Boolean);
       if (paths.length > 0) {
         const text = paths.map(p => p.includes(' ') ? `"${p}"` : p).join(' ');
-        invoke("write_to_terminal", { terminalId: activeTermEntry.terminalId, data: text }).catch(() => {});
+        invoke("write_to_terminal", { terminalId: terminalStore.activeTermEntry.terminalId, data: text }).catch(() => {});
         return;
       }
     }
@@ -691,7 +668,7 @@
       });
       if (paths.length > 0) {
         const text = paths.map(p => p.includes(' ') ? `"${p}"` : p).join(' ');
-        invoke("write_to_terminal", { terminalId: activeTermEntry.terminalId, data: text }).catch(() => {});
+        invoke("write_to_terminal", { terminalId: terminalStore.activeTermEntry.terminalId, data: text }).catch(() => {});
       }
     }
   }
@@ -732,21 +709,21 @@
 
   function handleWindowResize() {
     requestAnimationFrame(() => {
-      if (activeTermEntry?.fitAddon && activeTermEntry.container.offsetWidth > 0) {
+      if (terminalStore.activeTermEntry?.fitAddon && terminalStore.activeTermEntry.container.offsetWidth > 0) {
         try {
-          activeTermEntry.fitAddon.fit();
-          if (activeTermEntry.terminalId) {
-            const dims = activeTermEntry.fitAddon.proposeDimensions();
-            if (dims) invoke("resize_terminal", { terminalId: activeTermEntry.terminalId, cols: dims.cols, rows: dims.rows }).catch(() => {});
+          terminalStore.activeTermEntry.fitAddon.fit();
+          if (terminalStore.activeTermEntry.terminalId) {
+            const dims = terminalStore.activeTermEntry.fitAddon.proposeDimensions();
+            if (dims) invoke("resize_terminal", { terminalId: terminalStore.activeTermEntry.terminalId, cols: dims.cols, rows: dims.rows }).catch(() => {});
           }
         } catch(_) {}
       }
-      if (activeShellEntry?.fitAddon && activeShellEntry.container.offsetWidth > 0) {
+      if (shellStore.activeShellEntry?.fitAddon && shellStore.activeShellEntry.container.offsetWidth > 0) {
         try {
-          activeShellEntry.fitAddon.fit();
-          if (activeShellEntry.terminalId) {
-            const dims = activeShellEntry.fitAddon.proposeDimensions();
-            if (dims) invoke("resize_terminal", { terminalId: activeShellEntry.terminalId, cols: dims.cols, rows: dims.rows }).catch(() => {});
+          shellStore.activeShellEntry.fitAddon.fit();
+          if (shellStore.activeShellEntry.terminalId) {
+            const dims = shellStore.activeShellEntry.fitAddon.proposeDimensions();
+            if (dims) invoke("resize_terminal", { terminalId: shellStore.activeShellEntry.terminalId, cols: dims.cols, rows: dims.rows }).catch(() => {});
           }
         } catch(_) {}
       }
@@ -890,11 +867,11 @@ Anti-patterns to avoid:
     // Listen for Tauri native file drop events
     import("@tauri-apps/api/webviewWindow").then(({ getCurrentWebviewWindow }) => {
       getCurrentWebviewWindow().onDragDropEvent((event) => {
-        if (event.payload.type === 'drop' && activeTermEntry?.terminalId) {
+        if (event.payload.type === 'drop' && terminalStore.activeTermEntry?.terminalId) {
           const paths = event.payload.paths || [];
           if (paths.length > 0) {
             const text = paths.map(p => p.includes(' ') ? `"${p}"` : p).join(' ');
-            invoke("write_to_terminal", { terminalId: activeTermEntry.terminalId, data: text }).catch(() => {});
+            invoke("write_to_terminal", { terminalId: terminalStore.activeTermEntry.terminalId, data: text }).catch(() => {});
           }
         }
       });
@@ -953,7 +930,7 @@ Anti-patterns to avoid:
                     onclick={() => selectProfile(profile)}
                   >
                     <div class="profile-title">
-                      <span class="status-dot" class:active={activeProfile?.id === profile.id} class:bg-active={sessionActivity[profile.id] === 'active'} class:bg-done={sessionActivity[profile.id] === 'done'}></span>
+                      <span class="status-dot" class:active={activeProfile?.id === profile.id} class:bg-active={terminalStore.sessionActivity[profile.id] === 'active'} class:bg-done={terminalStore.sessionActivity[profile.id] === 'done'}></span>
                       {profile.title}
                     </div>
                     <div class="profile-meta">
@@ -1001,7 +978,7 @@ Anti-patterns to avoid:
 
   <div class="terminal-wrapper" bind:this={wrapperEl}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="terminal-area" class:panel-focused={focusedPanel === 'claude'} onclick={() => focusedPanel = 'claude'}
+    <div class="terminal-area" class:panel-focused={shellStore.focusedPanel === 'claude'} onclick={() => shellStore.focusedPanel = 'claude'}
       ondragover={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
       ondrop={(e) => { e.preventDefault(); handleFileDrop(e); }}>
       {#if !activeProfile}
@@ -1022,7 +999,7 @@ Anti-patterns to avoid:
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="shell-divider" style="display:{shellOpen ? 'block' : 'none'}" onmousedown={startDividerDrag}></div>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="shell-area" class:no-transition={isDraggingDivider} class:panel-focused={focusedPanel === 'shell'} onclick={() => focusedPanel = 'shell'} style="display:{shellOpen ? 'flex' : 'none'};width:{getShellWidth(activeProfile?.id)}%;flex:none;">
+    <div class="shell-area" class:no-transition={shellStore.isDraggingDivider} class:panel-focused={shellStore.focusedPanel === 'shell'} onclick={() => shellStore.focusedPanel = 'shell'} style="display:{shellOpen ? 'flex' : 'none'};width:{shellStore.getShellWidth(activeProfile?.id)}%;flex:none;">
       <div class="shell-panel" bind:this={shellEl}></div>
     </div>
   </div>
@@ -1430,15 +1407,15 @@ Anti-patterns to avoid:
         <div class="stg-field">
           <span class="stg-label">Font Size</span>
           <div style="display:flex;align-items:center;gap:8px;">
-            <input type="range" min="10" max="18" step="1" bind:value={termFontSize} class="stg-range"
+            <input type="range" min="10" max="18" step="1" bind:value={terminalStore.termFontSize} class="stg-range"
               oninput={(e) => {
                 const size = parseInt(e.target.value);
-                termFontSize = size;
+                terminalStore.termFontSize = size;
                 localStorage.setItem('clauge-font-size', String(size));
-                for (const [, en] of terminalMap) { if (en.term) { en.term.options.fontSize = size; try { en.fitAddon.fit(); } catch(_) {} } }
-                for (const [, en] of shellMap) { if (en.term) { en.term.options.fontSize = size; try { en.fitAddon.fit(); } catch(_) {} } }
+                for (const [, en] of terminalStore.terminalMap) { if (en.term) { en.term.options.fontSize = size; try { en.fitAddon.fit(); } catch(_) {} } }
+                for (const [, en] of shellStore.shellMap) { if (en.term) { en.term.options.fontSize = size; try { en.fitAddon.fit(); } catch(_) {} } }
               }} />
-            <span style="font-size:11px;color:var(--text-secondary);width:24px;text-align:right;font-variant-numeric:tabular-nums;">{termFontSize}px</span>
+            <span style="font-size:11px;color:var(--text-secondary);width:24px;text-align:right;font-variant-numeric:tabular-nums;">{terminalStore.termFontSize}px</span>
           </div>
         </div>
       </div>
