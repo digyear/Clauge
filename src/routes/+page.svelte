@@ -5,6 +5,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
   import { theme } from "$lib/stores/theme.svelte";
+  import { notifications } from "$lib/stores/notifications.svelte";
 
   let profiles = $state([]);
   let activeProfile = $state(null);
@@ -475,7 +476,7 @@
             } catch(e) {}
           }
           // Detect action-required prompts and notify if window not focused
-          checkForActionPrompt(payload.data, profile.title);
+          notifications.checkForActionPrompt(payload.data, profile.title);
           // Detect Claude session exit (Ctrl+C, exit, /exit)
           // Buffer recent output to catch multi-chunk patterns
           if (!entry._exitBuffer) entry._exitBuffer = '';
@@ -1128,106 +1129,6 @@ Anti-patterns to avoid:
         getCurrentWindow().startDragging();
       }
     }
-  }
-
-  // Notification for action-required prompts
-  let lastNotifyTime = 0;
-  let soundRepeatInterval = null;
-  let outputBuffer = '';
-  let bufferTimer = null;
-
-  function checkForActionPrompt(base64Data, sessionTitle) {
-    // Decode base64 to text, strip ANSI escape codes
-    const raw = atob(base64Data);
-    const text = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
-    outputBuffer += text;
-
-    // Check on every chunk if unfocused (timers may be throttled in background)
-    if (!document.hasFocus()) checkBuffer();
-    // Also debounce for when data arrives in small chunks
-    if (bufferTimer) clearTimeout(bufferTimer);
-    bufferTimer = setTimeout(checkBuffer, 300);
-
-    function checkBuffer() {
-      const buf = outputBuffer;
-      outputBuffer = '';
-      if (!buf) return;
-
-      // Throttle — max one notification per 10 seconds
-      if (Date.now() - lastNotifyTime < 10000) return;
-
-      // Only notify if window is not focused
-      if (document.hasFocus()) return;
-
-      const patterns = [
-        /Do you want to proceed/i,
-        /1\.\s*Yes/,
-        /\(y\/n\)/i,
-        /\[Y\/n\]/i,
-        /\[y\/N\]/i,
-        /Press Enter/i,
-        /Allow.*Deny/i,
-        /approve this/i,
-        /Yes, and don.t ask/i,
-      ];
-
-      if (patterns.some(p => p.test(buf))) {
-        lastNotifyTime = Date.now();
-        sendActionNotification(sessionTitle);
-        // Bounce Dock icon
-        import("@tauri-apps/api/window").then(({ getCurrentWindow, UserAttentionType }) => {
-          getCurrentWindow().requestUserAttention(UserAttentionType.Critical);
-        }).catch(() => {});
-        playNotificationSound();
-        // Repeat sound every 3s until focused
-        if (soundRepeatInterval) clearInterval(soundRepeatInterval);
-        soundRepeatInterval = setInterval(() => {
-          if (document.hasFocus()) { clearInterval(soundRepeatInterval); soundRepeatInterval = null; return; }
-          playNotificationSound();
-        }, 3000);
-      }
-    }
-  }
-
-  function playNotificationSound() {
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = 880; // A5 note
-      osc.type = 'sine';
-      gain.gain.setValueAtTime(0.08, ctx.currentTime); // Very quiet
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.3);
-      // Play a second tone for a pleasant chime
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc2.connect(gain2);
-      gain2.connect(ctx.destination);
-      osc2.frequency.value = 1320; // E6 note
-      osc2.type = 'sine';
-      gain2.gain.setValueAtTime(0.05, ctx.currentTime + 0.1);
-      gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-      osc2.start(ctx.currentTime + 0.1);
-      osc2.stop(ctx.currentTime + 0.4);
-    } catch(_) {}
-  }
-
-  async function sendActionNotification(sessionTitle) {
-    try {
-      const { isPermissionGranted, requestPermission, sendNotification } = await import("@tauri-apps/plugin-notification");
-      let granted = await isPermissionGranted();
-      if (!granted) {
-        const permission = await requestPermission();
-        granted = permission === 'granted';
-      }
-      if (granted) {
-        sendNotification({ title: `Action Required`, body: `${sessionTitle} — Claude is waiting for your input` });
-      }
-    } catch(_) {}
   }
 
   async function loadContextSnippets() {
