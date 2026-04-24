@@ -4,6 +4,9 @@
   import { updateAvailable, showWhatsNewModal } from '$lib/utils/updater';
   import { mode } from '$lib/stores/app';
   import { agentGitBranchName, agentGitFiles, agentGitAhead, agentGitBehind, agentContextUsage, activeAgentSession } from '$lib/stores/agent';
+  import AgentGitPanel from '$lib/components/agent/AgentGitPanel.svelte';
+
+  let gitPanelOpen = $state(false);
 
   let appVersion = $state('');
   onMount(async () => {
@@ -48,14 +51,16 @@
 {#if $mode === 'agent'}
 <footer class="statusbar glass-surface">
   <div class="sl">
-    <div class="si">
+    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+    <div class="si git-clickable" onclick={(e) => { e.stopPropagation(); gitPanelOpen = !gitPanelOpen; }}>
       <svg style="width:10px;height:10px;stroke:var(--t3);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round" viewBox="0 0 24 24"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>
       <span>{$agentGitBranchName || '—'}</span>
       {#if $agentGitAhead > 0}<span class="git-ahead">↑{$agentGitAhead}</span>{/if}
       {#if $agentGitBehind > 0}<span class="git-behind">↓{$agentGitBehind}</span>{/if}
-      {#if $agentGitFiles.length > 0}<span class="git-changes">{$agentGitFiles.length} changed</span>{/if}
+      {#if $agentGitFiles.length > 0}<span class="git-changes">{$agentGitFiles.length}</span>{/if}
     </div>
   </div>
+  <AgentGitPanel bind:open={gitPanelOpen} />
   <div class="sc">
     <div class="si">
       <span class="sled" style="background:{contextColor}"></span>
@@ -135,7 +140,24 @@
     color: var(--warn, #fa0);
   }
   .git-changes {
-    color: var(--t2);
+    font-size: 9px;
+    font-weight: 700;
+    color: #fff;
+    background: var(--acc, #7c5cf8);
+    padding: 0 5px;
+    border-radius: 8px;
+    min-width: 16px;
+    text-align: center;
+    line-height: 16px;
+  }
+  .git-clickable {
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 4px;
+    transition: background 0.1s;
+  }
+  .git-clickable:hover {
+    background: rgba(255,255,255,0.06);
   }
   .update-hint {
     cursor: default;
