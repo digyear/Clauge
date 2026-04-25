@@ -379,6 +379,7 @@
 
     if (entry && tIds.get(session.id)) {
       showTermEntry(entry);
+      if (session.claudeSessionId) startContextUsagePolling(session);
       if (get(agentShellOpen)) spawnShellForSession(session);
       refreshAgentGitStatus();
       return;
@@ -522,6 +523,16 @@
                 session.claudeSessionId = newSession.sessionId;
                 await loadAgentSessions();
                 clearInterval(captureInterval);
+
+                // Start context usage polling now that we have a session ID
+                if (contextUsageInterval) clearInterval(contextUsageInterval);
+                contextUsageInterval = setInterval(() => {
+                  const s = get(activeAgentSession);
+                  if (s?.claudeSessionId) {
+                    const path = s.worktreePath || s.projectPath;
+                    refreshAgentContextUsage(s.id, path, s.claudeSessionId);
+                  }
+                }, 5000);
               }
             } catch (_) {}
           }, 3000);
