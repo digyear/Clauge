@@ -176,9 +176,14 @@
             oncontextmenu={(e) => showSessionMenu(e, session)}
           >
             <span class="status-dot" class:active={$activeAgentSession?.id === session.id} class:bg-running={activity === 'running'}></span>
-            <div class="session-info">
-              <span class="session-title">{session.title}</span>
-              <div class="session-meta">
+            <div class="session-body">
+              <div class="session-row-top">
+                <span class="session-title">{session.title}</span>
+                {#if pct !== null}
+                  <span class="ctx-badge {contextClass(pct)}" title="{pct}% context window used">{pct}%</span>
+                {/if}
+              </div>
+              <div class="session-row-bot">
                 <span class="purpose-badge" style="color:{purposeColor(session.purpose)};background:{purposeColor(session.purpose)}22">{session.purpose}</span>
                 {#if session.worktreePath}
                   <span class="wt-badge" title="Isolated worktree: {session.worktreeBranch}">WT</span>
@@ -186,9 +191,6 @@
                 <span class="session-time">{relativeTime(session.lastUsedAt)}</span>
               </div>
             </div>
-            {#if pct !== null}
-              <span class="ctx-badge {contextClass(pct)}">{pct}%</span>
-            {/if}
             <span
               class="session-ellipsis"
               role="button"
@@ -305,13 +307,13 @@
   /* Session item */
   .session-item {
     width: 100%;
-    min-height: 34px;
+    min-height: 44px;
     border: none;
     background: transparent;
     display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0 10px 0 22px;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 8px 6px 20px;
     cursor: pointer;
     transition: background 0.08s;
     text-align: left;
@@ -324,36 +326,26 @@
     width: 6px; height: 6px; border-radius: 50%;
     flex-shrink: 0;
     background: var(--t4);
+    margin-top: 7px;
   }
-  .status-dot.active {
-    background: var(--acc);
-  }
+  .status-dot.active { background: var(--acc); }
   .status-dot.bg-running {
     background: #3fb950;
     box-shadow: 0 0 4px rgba(63, 185, 80, 0.4);
   }
 
-  .purpose-badge {
-    font-size: 10px;
-    font-family: var(--ui);
-    font-weight: 600;
-    padding: 1px 6px;
-    border-radius: 4px;
-    white-space: nowrap;
-  }
-
-  .session-meta {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-  }
-
-  .session-info {
-    display: flex;
-    flex-direction: column;
+  .session-body {
     flex: 1;
     min-width: 0;
-    gap: 1px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .session-row-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
 
   .session-title {
@@ -363,8 +355,26 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 1;
+    min-width: 0;
   }
   .session-item.active .session-title { color: var(--t1); }
+
+  .session-row-bot {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .purpose-badge {
+    font-size: 10px;
+    font-family: var(--ui);
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    line-height: 1.4;
+  }
 
   .session-time {
     font-family: var(--ui);
@@ -382,45 +392,23 @@
     padding: 1px 4px;
     border-radius: 3px;
     flex-shrink: 0;
-    letter-spacing: 0.03em;
   }
 
   /* Context usage badge */
   .ctx-badge {
     font-size: 9px;
-    font-family: var(--ui);
+    font-family: var(--mono);
     font-weight: 600;
     padding: 1px 5px;
     border-radius: 8px;
     flex-shrink: 0;
   }
-  .ctx-green {
-    color: #3fb950;
-    background: rgba(63, 185, 80, 0.12);
-  }
-  .ctx-yellow {
-    color: #d29922;
-    background: rgba(210, 153, 34, 0.12);
-  }
-  .ctx-red {
-    color: #f85149;
-    background: rgba(248, 81, 73, 0.12);
-    animation: ctx-pulse 1.5s ease-in-out infinite;
-  }
+  .ctx-green { color: #3fb950; background: rgba(63, 185, 80, 0.12); }
+  .ctx-yellow { color: #d29922; background: rgba(210, 153, 34, 0.12); }
+  .ctx-red { color: #f85149; background: rgba(248, 81, 73, 0.12); animation: ctx-pulse 1.5s ease-in-out infinite; }
   @keyframes ctx-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.6; }
-  }
-
-  /* Activity indicator */
-  .activity-dot {
-    width: 5px; height: 5px; border-radius: 50%;
-    background: var(--t4);
-    flex-shrink: 0;
-  }
-  .activity-dot.running {
-    background: #3fb950;
-    box-shadow: 0 0 4px rgba(63, 185, 80, 0.4);
   }
 
   /* Ellipsis button */
@@ -429,10 +417,9 @@
     display: none; align-items: center; justify-content: center;
     border-radius: 3px; flex-shrink: 0; cursor: default;
     color: var(--t3); transition: background 0.1s, color 0.1s;
+    margin-top: 3px;
   }
-  .session-ellipsis svg {
-    width: 14px; height: 14px;
-  }
+  .session-ellipsis svg { width: 14px; height: 14px; }
   .session-item:hover .session-ellipsis { display: flex; }
   .session-ellipsis:hover { background: rgba(255,255,255,0.08); color: var(--t1); }
 
