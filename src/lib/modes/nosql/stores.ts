@@ -73,6 +73,40 @@ export const nosqlLiveConnectionIds = writable<Record<string, string>>({});
 export const showNoSqlConnectionDialog = writable(false);
 export const editingNoSqlConnection = writable<NoSqlConnection | null>(null);
 
+// Per-connection-row state machine, surfaced in nav for visual feedback during
+// the (potentially slow, 5-15s) connect path. Mirrors `sqlConnectionStates`
+// and `sshConnStates` so the visual language is consistent across modes.
+export type NoSqlConnectionState = 'idle' | 'connecting' | 'connected' | 'error';
+export const nosqlConnectionStates = writable<Map<string, NoSqlConnectionState>>(new Map());
+export const nosqlConnectionErrors = writable<Map<string, string>>(new Map());
+
+function setNoSqlConnState(id: string, state: NoSqlConnectionState) {
+  nosqlConnectionStates.update(m => {
+    const next = new Map(m);
+    if (state === 'idle') next.delete(id);
+    else next.set(id, state);
+    return next;
+  });
+}
+
+function setNoSqlConnError(id: string, message: string | null) {
+  nosqlConnectionErrors.update(m => {
+    const next = new Map(m);
+    if (message) next.set(id, message);
+    else next.delete(id);
+    return next;
+  });
+}
+
+export function getNoSqlConnState(id: string): NoSqlConnectionState {
+  return get(nosqlConnectionStates).get(id) ?? 'idle';
+}
+
+export function resetNoSqlConnState(id: string) {
+  setNoSqlConnState(id, 'idle');
+  setNoSqlConnError(id, null);
+}
+
 export async function handleNoSqlConnectionSave(config: NoSqlConnectionConfig) {
   const editing = get(editingNoSqlConnection);
   let connId: string;
@@ -139,29 +173,48 @@ export async function deleteNoSqlConnection(id: string): Promise<void> {
   if (get(activeNoSqlConnectionId) === id) {
     activeNoSqlConnectionId.set(null);
   }
+  resetNoSqlConnState(id);
 }
 
 export async function connectToNoSql(id: string): Promise<string> {
+  // Guard against duplicate clicks while a connect is already in flight. The
+  // nav's local `connectingIds` set previously handled this, but pulling it
+  // into the store keeps the duplicate-attempt guard consistent with SQL/SSH.
+  if (getNoSqlConnState(id) === 'connecting') {
+    const existing = get(nosqlLiveConnectionIds)[id];
+    if (existing) return existing;
+    throw new Error('Connection already in progress');
+  }
   const allConns = get(nosqlConnections);
   const conn = allConns.find((c) => c.id === id);
   if (!conn) throw new Error('Connection not found');
-  const liveId = await nosqlConnect({
-    name: conn.name,
-    driver: conn.driver as any,
-    connectionString: conn.connectionString,
-    host: conn.host,
-    port: conn.port,
-    database: conn.databaseName || undefined,
-    username: conn.username || undefined,
-    password: conn.password || undefined,
-    ssl: !!conn.ssl,
-    directConnection: !!conn.directConnection,
-    // Forward the saved SSH profile so the backend opens the tunnel and
-    // rewrites host/port (and the connection string) before handing the
-    // URI to the Mongo / Redis driver. Without this the driver dials the
-    // original host directly.
-    sshProfileId: conn.sshProfileId ?? null,
-  });
+  setNoSqlConnState(id, 'connecting');
+  setNoSqlConnError(id, null);
+  let liveId: string;
+  try {
+    liveId = await nosqlConnect({
+      name: conn.name,
+      driver: conn.driver as any,
+      connectionString: conn.connectionString,
+      host: conn.host,
+      port: conn.port,
+      database: conn.databaseName || undefined,
+      username: conn.username || undefined,
+      password: conn.password || undefined,
+      ssl: !!conn.ssl,
+      directConnection: !!conn.directConnection,
+      // Forward the saved SSH profile so the backend opens the tunnel and
+      // rewrites host/port (and the connection string) before handing the
+      // URI to the Mongo / Redis driver. Without this the driver dials the
+      // original host directly.
+      sshProfileId: conn.sshProfileId ?? null,
+    });
+  } catch (e) {
+    setNoSqlConnState(id, 'error');
+    setNoSqlConnError(id, String(e));
+    throw e;
+  }
+  setNoSqlConnState(id, 'connected');
   connectedNoSqlIds.update((s) => {
     const next = new Set(s);
     next.add(id);
@@ -191,6 +244,7 @@ export async function disconnectFromNoSql(id: string): Promise<void> {
     delete next[id];
     return next;
   });
+  resetNoSqlConnState(id);
 }
 
 // AI execution trigger — AI writes query + target, NoSqlPanel/DocumentViewer auto-executes

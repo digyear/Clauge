@@ -11,6 +11,9 @@
     editingNoSqlConnection,
     nosqlLiveConnectionIds,
     openNoSqlCollection,
+    nosqlConnectionStates,
+    nosqlConnectionErrors,
+    resetNoSqlConnState,
   } from '../stores';
   import { nosqlListDatabases, nosqlListCollections, nosqlCreateCollection, nosqlDropDatabase, nosqlDropCollection, nosqlRenameCollection } from '../commands';
   import { showToast } from '$lib/shared/primitives/toast';
@@ -41,7 +44,6 @@
 
   let { searchQuery = '' }: Props = $props();
 
-  let connectingIds = $state<Set<string>>(new Set());
   let expandedConns = $state<Set<string>>(new Set());
   let expandedDbs = $state<Set<string>>(new Set());
   let collapsedDuringSearch = $state<Set<string>>(new Set());
@@ -129,7 +131,13 @@
 
   async function handleClickConnection(conn: NoSqlConnection) {
     activeNoSqlConnectionId.set(conn.id);
+    const state = $nosqlConnectionStates.get(conn.id) ?? 'idle';
+    // Already attempting — clicking again must NOT fire a duplicate connect.
+    if (state === 'connecting') return;
     if (!$connectedNoSqlIds.has(conn.id)) {
+      // Treat click on an errored row as a retry: clear so the indicator
+      // transitions back to `connecting` cleanly.
+      if (state === 'error') resetNoSqlConnState(conn.id);
       await doConnect(conn);
       expandedConns = new Set([...expandedConns, conn.id]);
     } else {
@@ -138,16 +146,15 @@
   }
 
   async function doConnect(conn: NoSqlConnection) {
-    if (connectingIds.has(conn.id)) return;
-    connectingIds = new Set([...connectingIds, conn.id]);
+    // The store guards against duplicate connects, but bail early too so we
+    // don't surface a toast for the no-op case.
+    if (($nosqlConnectionStates.get(conn.id) ?? 'idle') === 'connecting') return;
     try {
       await connectToNoSql(conn.id);
       showToast(`Connected to ${conn.name}`, 'success');
       await loadDatabases(conn.id);
     } catch (e: any) {
       showToast(friendlyError(e), 'error');
-    } finally {
-      connectingIds = new Set([...connectingIds].filter(id => id !== conn.id));
     }
   }
 
@@ -426,20 +433,30 @@
   {:else}
     {#each filtered as conn (conn.id)}
       {@const isConnected = $connectedNoSqlIds.has(conn.id)}
-      {@const isConnecting = connectingIds.has(conn.id)}
+      {@const connState = $nosqlConnectionStates.get(conn.id) ?? 'idle'}
+      {@const isConnecting = connState === 'connecting'}
+      {@const hasError = connState === 'error'}
+      {@const errorMsg = $nosqlConnectionErrors.get(conn.id) ?? ''}
       {@const isExpanded = expandedConns.has(conn.id) && isConnected}
 
       <button
         class="tree-item tree-conn"
         class:active={$activeNoSqlConnectionId === conn.id}
         class:connecting={isConnecting}
+        class:errored={hasError}
+        title={hasError ? errorMsg : ''}
         onclick={() => handleClickConnection(conn)}
         oncontextmenu={(e) => showConnMenu(e, conn)}
       >
         <svg class="tree-chevron" class:open={(isExpanded || searchQuery) && !collapsedDuringSearch.has(`conn:${conn.id}`)} viewBox="0 0 24 24">
           <path d="M9 18l6-6-6-6"/>
         </svg>
-        <span class="conn-dot" class:connected={isConnected} class:connecting={isConnecting}></span>
+        <span
+          class="conn-dot"
+          class:connected={isConnected}
+          class:connecting={isConnecting}
+          class:errored={hasError}
+        ></span>
         <span class="conn-driver" style:color={driverColor(conn.driver)} style:background="color-mix(in srgb, {driverColor(conn.driver)} 12%, transparent)">
           {conn.driver === 'mongodb' ? 'MG' : 'RD'}
         </span>
@@ -640,6 +657,9 @@
   }
   .tree-conn.active { background: color-mix(in srgb, var(--acc) 10%, transparent); }
   .tree-conn.connecting { opacity: 0.7; pointer-events: none; }
+  /* Errored: subtle red tint so the row stands out at a glance. The full error
+     message is exposed via the row's `title` attribute (native tooltip). */
+  .tree-conn.errored { background: color-mix(in srgb, var(--err) 8%, transparent); }
   .tree-conn .tree-label { font-size: 12px; color: var(--t2); }
   .tree-conn.active .tree-label { color: var(--t1); }
 
@@ -664,6 +684,7 @@
   }
   .conn-dot.connected { background: var(--acc); box-shadow: 0 0 4px color-mix(in srgb, var(--acc) 40%, transparent); }
   .conn-dot.connecting { background: var(--warn); animation: nn-pulse 1s ease-in-out infinite; }
+  .conn-dot.errored { background: var(--err); box-shadow: 0 0 4px color-mix(in srgb, var(--err) 50%, transparent); }
   @keyframes nn-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 
   .conn-driver {
