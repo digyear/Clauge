@@ -3,11 +3,20 @@
   import { sshCreateProfile } from '../commands';
   import { loadSshProfiles, sshProfiles } from '../stores';
   import { showToast } from '$lib/shared/primitives/toast';
-  import type { SshAuthType } from '../types';
+  import type { SshAuthType, SshProfile } from '../types';
   import { get } from 'svelte/store';
   import { SSH_EVENT } from '$lib/shared/constants/events';
 
-  let { show = $bindable(false) } = $props();
+  interface Props {
+    show?: boolean;
+    /** Called after a profile is successfully created. Lets callers
+     * (e.g. the SQL/NoSQL ConnectionDialog) auto-select the new profile
+     * in their picker. Optional — existing usage that just binds `show`
+     * keeps working untouched. */
+    onCreated?: (profile: SshProfile) => void;
+  }
+
+  let { show = $bindable(false), onCreated }: Props = $props();
 
   // ── Form state ─────────────────────────────────────────────────────────────
   // Empty by default — user types a name explicitly. Avoids the bad pattern of
@@ -62,9 +71,17 @@
       });
       await loadSshProfiles();
       window.dispatchEvent(new CustomEvent(SSH_EVENT.PROFILE_CREATED, { detail: profile }));
-      // Auto-connect: open the new profile in a tab immediately. If the connection
-      // fails it surfaces via the reconnect banner — no information is lost.
-      window.dispatchEvent(new CustomEvent(SSH_EVENT.OPEN_TAB, { detail: profile }));
+      // Notify caller (e.g. SQL/NoSQL ConnectionDialog) so it can auto-select
+      // the new profile. Skip the OPEN_TAB broadcast in that case — the user
+      // is configuring a DB connection, not opening an SSH terminal.
+      if (onCreated) {
+        onCreated(profile);
+      } else {
+        // Auto-connect: open the new profile in a tab immediately. If the
+        // connection fails it surfaces via the reconnect banner — no
+        // information is lost.
+        window.dispatchEvent(new CustomEvent(SSH_EVENT.OPEN_TAB, { detail: profile }));
+      }
       show = false;
       resetForm();
       showToast('SSH profile saved', 'success');
