@@ -14,6 +14,7 @@
     agentShellIds,
     agentShellOpen,
     agentSessionActivity,
+    agentSessionExited,
     agentSessions,
     agentSoundEnabled,
     agentDockBounceEnabled,
@@ -215,10 +216,11 @@
       const termId = tIds.get(sessionId);
       if (termId) {
         agentWriteToTerminal(termId, data).catch(() => {
-          // PTY dead (I/O error) — treat as session exit
+          // PTY dead (I/O error) — treat as session exit. Preserve the xterm
+          // entry (scrollback) so reopen shows prior output instead of respawn.
           agentTerminalIds.update(m => { m.delete(sessionId); return new Map(m); });
-          agentTerminalMap.update(m => { m.delete(sessionId); return new Map(m); });
           agentSessionActivity.update(m => { m.set(sessionId, 'done'); return new Map(m); });
+          agentSessionExited.update(m => { m.set(sessionId, true); return new Map(m); });
           const currentActive = get(activeAgentSession);
           if (currentActive?.id === sessionId) {
             const activity = get(agentSessionActivity);
@@ -447,6 +449,24 @@
   // Global generation was wrong — it blocked writes from other sessions' tabs.
   const _spawnGenerations = new Map<string, number>();
 
+  // User-initiated re-spawn for an exited session. Disposes the preserved
+  // scrollback xterm and starts a fresh claude PTY via the normal spawn path.
+  async function startNewForActiveSession() {
+    const session = get(activeAgentSession);
+    if (!session) return;
+    const tMap = get(agentTerminalMap);
+    const exitedEntry = tMap.get(session.id);
+    if (exitedEntry) {
+      try { exitedEntry.container.remove(); } catch (_) {}
+      try { exitedEntry.term.dispose(); } catch (_) {}
+      agentTerminalMap.update(m => { m.delete(session.id); return new Map(m); });
+    }
+    if (activeTermEntry === exitedEntry) activeTermEntry = null;
+    agentSessionExited.update(m => { m.delete(session.id); return new Map(m); });
+    currentSessionId = null;
+    selectSession(session);
+  }
+
   async function selectSession(session: any) {
     console.log(`[TERM] selectSession called: id=${session?.id}, title=${session?.title}`);
     if (!session || !terminalEl) { console.log('[TERM] SKIP: no session or terminalEl'); return; }
@@ -476,6 +496,20 @@
         }
         spawnShellForSession(session);
       }
+      refreshAgentGitStatus();
+      return;
+    }
+
+    // Reopened an exited session — show preserved scrollback, do NOT auto-spawn.
+    // User must explicitly click "Start new" to spawn a fresh claude.
+    if (entry && get(agentSessionExited).get(session.id)) {
+      if (entry.container.parentElement !== terminalEl) {
+        terminalEl.appendChild(entry.container);
+      }
+      console.log('[TERM] EARLY RETURN: showing exited session scrollback (no respawn)');
+      termReady = true;
+      spawning = false;
+      showTermEntry(entry);
       refreshAgentGitStatus();
       return;
     }
@@ -582,11 +616,11 @@
           agentTerminalIds.update(m => { m.delete(sessionId); return new Map(m); });
           const tMapNow = get(agentTerminalMap);
           const exitedEntry = tMapNow.get(sessionId);
-          if (exitedEntry) {
-            try { exitedEntry.container.remove(); } catch (_) {}
-            try { exitedEntry.term.dispose(); } catch (_) {}
-          }
-          agentTerminalMap.update(m => { m.delete(sessionId); return new Map(m); });
+          // Preserve the xterm entry so reopening the session shows the prior
+          // scrollback instead of auto-spawning a fresh claude. The PTY id has
+          // already been cleared above; reset on user-initiated "Start new".
+          // _suppressExit is set by reset/relaunch/close-tab handlers which
+          // dispose the entry themselves — don't duplicate that here.
           // Capture session ID from buffered "claude --resume <id>" if available
           if (entry && entry._exitBuffer && !session.claudeSessionId) {
             const resumeMatch = entry._exitBuffer.match(/claude --resume ([a-f0-9-]+)/);
@@ -597,7 +631,19 @@
           }
           if (entry) entry._exitBuffer = '';
           agentSessionActivity.update(m => { m.set(sessionId, 'done'); return new Map(m); });
-          activeTermEntry = null;
+          if (!_suppressExit) {
+            agentSessionExited.update(m => { m.set(sessionId, true); return new Map(m); });
+          } else if (exitedEntry) {
+            // Reset/relaunch/close-tab path — caller disposes; mirror legacy cleanup.
+            try { exitedEntry.container.remove(); } catch (_) {}
+            try { exitedEntry.term.dispose(); } catch (_) {}
+            agentTerminalMap.update(m => { m.delete(sessionId); return new Map(m); });
+          }
+          // Only clear activeTermEntry if THIS session's entry was the active one.
+          // Otherwise we silently lose the reference to the actually-displayed
+          // session and the next showTermEntry won't hide its container — leaving
+          // two terminals visible (cross-session leak).
+          if (activeTermEntry === exitedEntry) activeTermEntry = null;
           if (currentSessionId === sessionId) currentSessionId = null;
           if (!_suppressExit) {
             const allTabs = get(tabsStore);
@@ -665,14 +711,11 @@
           if (exitMatched) {
             console.log(`[TERM] EXIT DETECTED for session ${sessionId}, gen=${myGeneration}`);
             agentTerminalIds.update(m => { m.delete(sessionId); return new Map(m); });
-            // Remove terminal entry + dispose xterm + remove container from DOM
             const tMapNow = get(agentTerminalMap);
             const exitedEntry = tMapNow.get(sessionId);
-            if (exitedEntry) {
-              try { exitedEntry.container.remove(); } catch (_) {}
-              try { exitedEntry.term.dispose(); } catch (_) {}
-            }
-            agentTerminalMap.update(m => { m.delete(sessionId); return new Map(m); });
+            // Preserve the xterm entry so reopening the session shows the prior
+            // scrollback instead of auto-spawning a fresh claude. _suppressExit
+            // is set by reset/relaunch handlers which dispose the entry themselves.
             if (entry) entry._exitBuffer = '';
             // Capture session ID if not already set (for future --resume)
             const resumeMatch = clean.match(/claude --resume ([a-f0-9-]+)/);
@@ -682,9 +725,18 @@
               session.claudeSessionId = extractedSessionId;
             }
             agentSessionActivity.update(m => { m.set(sessionId, 'done'); return new Map(m); });
+            if (!_suppressExit) {
+              agentSessionExited.update(m => { m.set(sessionId, true); return new Map(m); });
+            } else if (exitedEntry) {
+              try { exitedEntry.container.remove(); } catch (_) {}
+              try { exitedEntry.term.dispose(); } catch (_) {}
+              agentTerminalMap.update(m => { m.delete(sessionId); return new Map(m); });
+            }
 
-            // Clear stale active reference — entry was just disposed/removed from DOM
-            activeTermEntry = null;
+            // Only clear activeTermEntry if THIS session's entry was the active one.
+            // Otherwise we lose the reference to the actually-displayed session
+            // and the next showTermEntry won't hide its container — cross-session leak.
+            if (activeTermEntry === exitedEntry) activeTermEntry = null;
             if (currentSessionId === sessionId) currentSessionId = null;
 
             // Synchronous tab-aware switching
@@ -925,6 +977,7 @@
     // Remove from maps
     agentTerminalIds.update(m => { m.delete(session.id); return new Map(m); });
     agentShellIds.update(m => { m.delete(session.id); return new Map(m); });
+    agentSessionExited.update(m => { m.delete(session.id); return new Map(m); });
 
     // Remove terminal entry so selectSession creates fresh one
     const tMap = get(agentTerminalMap);
@@ -975,6 +1028,7 @@
     // Remove from maps (keep claudeSessionId for --resume)
     agentTerminalIds.update(m => { m.delete(session.id); return new Map(m); });
     agentShellIds.update(m => { m.delete(session.id); return new Map(m); });
+    agentSessionExited.update(m => { m.delete(session.id); return new Map(m); });
 
     const tMap = get(agentTerminalMap);
     const entry = tMap.get(session.id);
@@ -1029,6 +1083,7 @@
 
     agentTerminalIds.update(m => { m.delete(sessionId); return new Map(m); });
     agentShellIds.update(m => { m.delete(sessionId); return new Map(m); });
+    agentSessionExited.update(m => { m.delete(sessionId); return new Map(m); });
 
     if (activeTermEntry === entry) activeTermEntry = null;
     if (activeShellEntry === sEntry) activeShellEntry = null;
@@ -1073,6 +1128,7 @@
 
     agentTerminalIds.update(m => { m.delete(session.id); return new Map(m); });
     agentShellIds.update(m => { m.delete(session.id); return new Map(m); });
+    agentSessionExited.update(m => { m.delete(session.id); return new Map(m); });
 
     // Remove worktree if exists
     if (session.worktreePath) {
@@ -1165,6 +1221,8 @@
 </script>
 
 {#if $activeAgentSession}
+  {@const _activeId = $activeAgentSession.id}
+  {@const _isExited = $agentSessionExited.get(_activeId) === true}
   <div class="agent-panel" bind:this={wrapperEl}>
     <div class="agent-terminal-main" style="width:{$agentShellOpen ? mainWidth + '%' : '100%'}">
       {#if spawning}
@@ -1174,6 +1232,13 @@
             <span class="loading-title">Starting Claude Code</span>
             <span class="loading-sub">Setting up terminal session<span class="loading-dots"></span></span>
           </div>
+        </div>
+      {/if}
+      {#if _isExited && !spawning}
+        <div class="agent-ended-banner">
+          <span class="ended-dot"></span>
+          <span class="ended-text">Session ended</span>
+          <button class="ended-btn" type="button" onclick={startNewForActiveSession}>Start new</button>
         </div>
       {/if}
       <div class="agent-terminal-container" class:term-hidden={!termReady} bind:this={terminalEl} style="background:{termBg}"></div>
@@ -1316,6 +1381,51 @@
   @keyframes loadFadeIn {
     from { opacity: 0; transform: scale(0.97); }
     to { opacity: 1; transform: scale(1); }
+  }
+
+  .agent-ended-banner {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px 6px 12px;
+    border-radius: 999px;
+    background: var(--b1);
+    border: 1px solid var(--bord, rgba(255, 255, 255, 0.08));
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    font-family: var(--ui);
+    font-size: 12px;
+    color: var(--t2);
+    z-index: 3;
+  }
+  .ended-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--t4);
+    flex-shrink: 0;
+  }
+  .ended-text {
+    color: var(--t3);
+  }
+  .ended-btn {
+    appearance: none;
+    border: none;
+    background: var(--acc);
+    color: #fff;
+    font-family: var(--ui);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+  .ended-btn:hover {
+    opacity: 0.85;
   }
 
   .agent-shell-panel {
