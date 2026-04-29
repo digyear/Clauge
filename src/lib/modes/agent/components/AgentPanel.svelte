@@ -41,6 +41,7 @@
   import { refreshAgentGitStatus, refreshAgentContextUsage, loadAgentSessions, agentGitBranchName, agentGitFiles, agentGitAhead, agentGitBehind } from '../stores';
   import { getTerminalTheme } from '$lib/utils/theme';
   import { appearance } from '$lib/stores/settings';
+  import { base64ToBytes, deferUntilFrame, loadWebGLAddon } from '$lib/shared/primitives/terminal-utils';
   import { getPurposePrompt } from '../ai/prompt';
   import { AGENT_EVENT } from '$lib/shared/constants/events';
   import {
@@ -174,15 +175,6 @@
       if (notifyBufferTimer) clearTimeout(notifyBufferTimer);
       notifyBufferTimer = setTimeout(() => checkNotifyBuffer(), AGENT_NOTIFY_DEBOUNCE_MS);
     } catch (_) {}
-  }
-
-  async function loadWebGLAddon(term: Terminal) {
-    try {
-      const { WebglAddon } = await import('@xterm/addon-webgl');
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => { webgl.dispose(); });
-      term.loadAddon(webgl);
-    } catch (_) {} // Falls back to canvas renderer silently
   }
 
   function getCurrentTermTheme(): Record<string, string> {
@@ -414,13 +406,13 @@
     let shellFirstData = false;
     channel.onmessage = (msg: any) => {
       if (!msg.data) return;
-      const bytes = Uint8Array.from(atob(msg.data), (c: string) => c.charCodeAt(0));
+      const bytes = base64ToBytes(msg.data);
       sEntry!.term.write(bytes);
       if (!shellFirstData) {
         shellFirstData = true;
-        requestAnimationFrame(() => requestAnimationFrame(() => {
+        deferUntilFrame(() => {
           shellLoadingSessions = shellLoadingSessions.filter(id => id !== session.id);
-        }));
+        });
       }
     };
     try {
@@ -577,9 +569,9 @@
         // visible blank gap because xterm batches writes into the next frame.
         if (!firstDataSeen && payload.data && payload.exit !== true) {
           firstDataSeen = true;
-          requestAnimationFrame(() => requestAnimationFrame(() => {
+          deferUntilFrame(() => {
             if (spawning) { spawning = false; termReady = true; }
-          }));
+          });
         }
 
         // PTY-close signal from Rust: reader thread sends { exit: true } when the
@@ -636,10 +628,7 @@
         // Write data to terminal
         if (entry!.term) {
           try {
-            const binary = atob(payload.data);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-            entry!.term.write(bytes);
+            entry!.term.write(base64ToBytes(payload.data));
           } catch (_) {}
         }
 

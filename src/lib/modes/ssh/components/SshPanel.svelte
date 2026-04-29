@@ -23,6 +23,7 @@
   import { getTerminalTheme } from '$lib/utils/theme';
   import { appearance } from '$lib/stores/settings';
   import { showToast } from '$lib/shared/primitives/toast';
+  import { base64ToBytes, deferUntilFrame, loadWebGLAddon } from '$lib/shared/primitives/terminal-utils';
   import { resolveSshCapture, rejectAllSshCaptures, type SshCaptureRequest } from '../ai/execute';
   import type { SshProfile, SshTerminalPayload } from '../types';
   import { SSH_EVENT } from '$lib/shared/constants/events';
@@ -93,17 +94,6 @@
   function getCurrentTermTheme(): Record<string, string> {
     const app = get(appearance);
     return getTerminalTheme(app.theme, app.accentColor);
-  }
-
-  async function loadWebGLAddon(term: Terminal) {
-    try {
-      const { WebglAddon } = await import('@xterm/addon-webgl');
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
-    } catch {
-      /* fallback to canvas */
-    }
   }
 
   function createEntry(tabKey: string, profile: SshProfile): TermEntry {
@@ -229,20 +219,16 @@
       }
       if (!firstDataSeen && payload.data) {
         firstDataSeen = true;
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => {
-            if (spawning) {
-              spawning = false;
-              termReady = true;
-            }
-          })
-        );
+        deferUntilFrame(() => {
+          if (spawning) {
+            spawning = false;
+            termReady = true;
+          }
+        });
       }
       if (payload.data) {
         try {
-          const binary = atob(payload.data);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const bytes = base64ToBytes(payload.data);
           entry.term.write(bytes);
           // Capture buffer for execute_shell tool: append decoded text and
           // check for shell prompt at end (heuristic stop).
