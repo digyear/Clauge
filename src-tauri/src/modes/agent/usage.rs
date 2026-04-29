@@ -1,10 +1,7 @@
 use crate::modes::agent::models::*;
+use crate::shared::cli::{claude::CLAUDE, runner::CliRunner};
 use std::fs;
 use std::path::PathBuf;
-
-fn encode_project_path(project_path: &str) -> String {
-    project_path.replace('/', "-").replace('.', "-")
-}
 
 #[tauri::command]
 pub async fn agent_get_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
@@ -14,8 +11,8 @@ pub async fn agent_get_usage_analytics(days: Option<u32>) -> Result<UsageAnalyti
 }
 
 pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytics, String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let projects_dir = home.join(".claude").join("projects");
+    let cli: &dyn CliRunner = &CLAUDE;
+    let projects_dir = cli.sessions_root().ok_or("Cannot determine home directory")?;
 
     if !projects_dir.exists() {
         return Ok(UsageAnalytics {
@@ -67,7 +64,7 @@ pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytic
         // Iterate session files
         for session_entry in std::fs::read_dir(&project_dir).map_err(|e| e.to_string())?.flatten() {
             let path = session_entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
+            if !cli.is_session_file(&path) { continue; }
 
             // Check modification time
             if let Ok(metadata) = path.metadata() {
@@ -246,6 +243,9 @@ pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytic
 /// Fetch usage limits via reqwest with native-tls (uses macOS SecureTransport to bypass Cloudflare)
 #[tauri::command]
 pub async fn agent_fetch_usage_limits(session_key: String) -> Result<serde_json::Value, String> {
+    let cli: &dyn CliRunner = &CLAUDE;
+    let orgs_url = cli.usage_api_orgs_url().ok_or("CLI does not expose a usage API")?;
+
     let client = reqwest::Client::builder()
         .use_native_tls()
         .timeout(std::time::Duration::from_secs(10))
@@ -257,7 +257,7 @@ pub async fn agent_fetch_usage_limits(session_key: String) -> Result<serde_json:
 
     // Step 1: Get org ID
     let orgs_resp = client
-        .get("https://claude.ai/api/organizations")
+        .get(&orgs_url)
         .header("Cookie", &cookie)
         .header("User-Agent", ua)
         .send()
@@ -277,8 +277,11 @@ pub async fn agent_fetch_usage_limits(session_key: String) -> Result<serde_json:
         .to_string();
 
     // Step 2: Get usage
+    let usage_url = cli
+        .usage_api_url_for(&org_id)
+        .ok_or("CLI does not expose a per-org usage URL")?;
     let usage_resp = client
-        .get(&format!("https://claude.ai/api/organizations/{}/usage", org_id))
+        .get(&usage_url)
         .header("Cookie", &cookie)
         .header("User-Agent", ua)
         .send()
@@ -295,9 +298,10 @@ pub async fn agent_fetch_usage_limits(session_key: String) -> Result<serde_json:
 
 #[tauri::command]
 pub fn agent_discover_sessions(project_path: String) -> Result<Vec<DiscoveredSession>, String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let encoded = encode_project_path(&project_path);
-    let projects_dir = home.join(".claude").join("projects").join(&encoded);
+    let cli: &dyn CliRunner = &CLAUDE;
+    let projects_dir = cli
+        .session_dir_for_project(&project_path)
+        .ok_or("Cannot determine home directory")?;
 
     if !projects_dir.exists() {
         return Ok(Vec::new());
@@ -308,7 +312,7 @@ pub fn agent_discover_sessions(project_path: String) -> Result<Vec<DiscoveredSes
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+        if cli.is_session_file(&path) {
             let session_id = path
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -356,23 +360,24 @@ pub fn agent_get_session_tokens(
     project_path: String,
     session_id: Option<String>,
 ) -> Result<TokenUsage, String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let encoded = encode_project_path(&project_path);
-    let projects_dir = home.join(".claude").join("projects").join(&encoded);
+    let cli: &dyn CliRunner = &CLAUDE;
+    let projects_dir = cli
+        .session_dir_for_project(&project_path)
+        .ok_or("Cannot determine home directory")?;
 
     if !projects_dir.exists() {
         return Err("Project directory not found".to_string());
     }
 
     let file_path = if let Some(sid) = session_id {
-        projects_dir.join(format!("{}.jsonl", sid))
+        projects_dir.join(format!("{}.{}", sid, cli.session_file_extension()))
     } else {
-        // Find most recent .jsonl file
+        // Find most recent session file
         let mut best: Option<(PathBuf, std::time::SystemTime)> = None;
         if let Ok(entries) = fs::read_dir(&projects_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                if cli.is_session_file(&path) {
                     if let Ok(meta) = path.metadata() {
                         if let Ok(modified) = meta.modified() {
                             if best.as_ref().map_or(true, |(_, t)| modified > *t) {
@@ -434,13 +439,11 @@ pub fn agent_get_session_context_usage(
     project_path: String,
     session_id: String,
 ) -> Result<ContextUsage, String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let encoded = encode_project_path(&project_path);
-    let file_path = home
-        .join(".claude")
-        .join("projects")
-        .join(&encoded)
-        .join(format!("{}.jsonl", session_id));
+    let cli: &dyn CliRunner = &CLAUDE;
+    let file_path = cli
+        .session_dir_for_project(&project_path)
+        .ok_or("Cannot determine home directory")?
+        .join(format!("{}.{}", session_id, cli.session_file_extension()));
 
     if !file_path.exists() {
         return Err("Session file not found".to_string());

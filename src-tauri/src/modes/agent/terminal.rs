@@ -1,24 +1,11 @@
 use crate::modes::agent::models::{TerminalEntry, TerminalOutputPayload, TerminalState};
+use crate::shared::cli::{claude::CLAUDE, runner::{CliRunner, SpawnOpts}};
 use base64::Engine;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use tauri::ipc::Channel;
 use tauri::State;
 use uuid::Uuid;
-
-fn resolve_claude_path() -> String {
-    let user_shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-    if let Ok(output) = std::process::Command::new(&user_shell)
-        .args(["-l", "-i", "-c", "which claude"])
-        .output()
-    {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() { return path; }
-        }
-    }
-    "claude".to_string()
-}
 
 #[tauri::command]
 pub fn agent_spawn_terminal(
@@ -37,36 +24,27 @@ pub fn agent_spawn_terminal(
         .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-    let mut claude_cmd = String::from("claude");
-    if let Some(ref sid) = session_id {
-        claude_cmd.push_str(&format!(" --resume \"{}\"", sid));
-    }
-    if skip_permissions.unwrap_or(false) {
-        claude_cmd.push_str(" --dangerously-skip-permissions");
-    }
-    if let Some(ref prompt) = context_prompt {
-        if !prompt.is_empty() {
-            // Use single quotes to prevent ALL shell interpretation (< > $ ` etc.)
-            // Escape single quotes within the prompt: ' -> '\''
-            let escaped = prompt.replace('\'', "'\\''");
-            claude_cmd.push_str(&format!(" --append-system-prompt '{}'", escaped));
-        }
-    }
+    let cli: &dyn CliRunner = &CLAUDE;
+    let spawn_cmd = cli.build_spawn_command(&SpawnOpts {
+        resume_session_id: session_id,
+        system_prompt: context_prompt,
+        skip_permissions: skip_permissions.unwrap_or(false),
+    });
 
     let user_shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let mut cmd = CommandBuilder::new(&user_shell);
     // -l (login) sources ~/.zprofile, but nvm/fnm/asdf set up node on PATH inside
-    // ~/.zshrc which only loads under -i (interactive). Without -i, Claude Code's
+    // ~/.zshrc which only loads under -i (interactive). Without -i, the CLI's
     // node-based hooks fail with "node: command not found" even though the user's
-    // Terminal works fine. resolve_claude_path() above already uses -l -i -c.
-    cmd.arg("-l"); cmd.arg("-i"); cmd.arg("-c"); cmd.arg(&claude_cmd);
+    // Terminal works fine.
+    cmd.arg("-l"); cmd.arg("-i"); cmd.arg("-c"); cmd.arg(&spawn_cmd);
     cmd.cwd(&project_path);
     if let Some(home) = dirs::home_dir() { cmd.env("HOME", home.to_string_lossy().to_string()); }
     cmd.env("TERM", "xterm-256color");
     if let Some(ref name) = git_name { cmd.env("GIT_AUTHOR_NAME", name); cmd.env("GIT_COMMITTER_NAME", name); }
     if let Some(ref email) = git_email { cmd.env("GIT_AUTHOR_EMAIL", email); cmd.env("GIT_COMMITTER_EMAIL", email); }
 
-    let child = pty_pair.slave.spawn_command(cmd).map_err(|e| format!("Failed to spawn claude: {}", e))?;
+    let child = pty_pair.slave.spawn_command(cmd).map_err(|e| format!("Failed to spawn {}: {}", cli.id(), e))?;
     let writer = pty_pair.master.take_writer().map_err(|e| format!("Failed to get PTY writer: {}", e))?;
     let reader = pty_pair.master.try_clone_reader().map_err(|e| format!("Failed to clone PTY reader: {}", e))?;
 

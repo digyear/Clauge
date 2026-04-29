@@ -1,11 +1,12 @@
 use crate::modes::agent::models::{ClaudePlugin, MarketplacePlugin};
+use crate::shared::cli::{claude::CLAUDE, runner::CliRunner};
 use std::fs;
 
 #[tauri::command]
 pub fn agent_get_plugins() -> Result<Vec<ClaudePlugin>, String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let settings_path = home.join(".claude").join("settings.json");
-    let installed_path = home.join(".claude").join("plugins").join("installed_plugins.json");
+    let cli: &dyn CliRunner = &CLAUDE;
+    let settings_path = cli.settings_file().ok_or("Cannot determine home directory")?;
+    let installed_path = cli.installed_plugins_file().ok_or("Cannot determine home directory")?;
     let mut enabled_map: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
     if settings_path.exists() {
         let content = fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
@@ -37,8 +38,8 @@ pub fn agent_get_plugins() -> Result<Vec<ClaudePlugin>, String> {
 
 #[tauri::command]
 pub fn agent_toggle_plugin(plugin_key: String, enabled: bool) -> Result<(), String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let settings_path = home.join(".claude").join("settings.json");
+    let cli: &dyn CliRunner = &CLAUDE;
+    let settings_path = cli.settings_file().ok_or("Cannot determine home directory")?;
     let mut settings: serde_json::Value = if settings_path.exists() {
         serde_json::from_str(&fs::read_to_string(&settings_path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?
     } else { serde_json::json!({}) };
@@ -50,9 +51,9 @@ pub fn agent_toggle_plugin(plugin_key: String, enabled: bool) -> Result<(), Stri
 
 #[tauri::command]
 pub fn agent_get_marketplace_plugins() -> Result<Vec<MarketplacePlugin>, String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let marketplaces_dir = home.join(".claude").join("plugins").join("marketplaces");
-    let installed_path = home.join(".claude").join("plugins").join("installed_plugins.json");
+    let cli: &dyn CliRunner = &CLAUDE;
+    let marketplaces_dir = cli.plugin_marketplaces_dir().ok_or("Cannot determine home directory")?;
+    let installed_path = cli.installed_plugins_file().ok_or("Cannot determine home directory")?;
     let mut installed_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
     if installed_path.exists() {
         if let Ok(content) = fs::read_to_string(&installed_path) {
@@ -64,7 +65,7 @@ pub fn agent_get_marketplace_plugins() -> Result<Vec<MarketplacePlugin>, String>
         }
     }
     let mut install_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-    let counts_path = home.join(".claude").join("plugins").join("install-counts-cache.json");
+    let counts_path = cli.plugin_install_counts_file().ok_or("Cannot determine home directory")?;
     if counts_path.exists() {
         if let Ok(content) = fs::read_to_string(&counts_path) {
             if let Ok(cache) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -103,16 +104,18 @@ pub fn agent_get_marketplace_plugins() -> Result<Vec<MarketplacePlugin>, String>
 
 #[tauri::command]
 pub fn agent_install_plugin(name: String, marketplace: String) -> Result<(), String> {
+    let cli: &dyn CliRunner = &CLAUDE;
     let plugin_id = format!("{}@{}", name, marketplace);
-    let output = std::process::Command::new("claude").args(["plugins", "install", &plugin_id]).output().map_err(|e| format!("Failed to run claude plugins install: {}", e))?;
-    if !output.status.success() { return Err(format!("Install failed: {}", String::from_utf8_lossy(&output.stderr).trim())); }
+    let (ok, stderr) = cli.run_plugin_subcommand(&["install", &plugin_id])?;
+    if !ok { return Err(format!("Install failed: {}", stderr)); }
     Ok(())
 }
 
 #[tauri::command]
 pub fn agent_uninstall_plugin(name: String, marketplace: String) -> Result<(), String> {
+    let cli: &dyn CliRunner = &CLAUDE;
     let plugin_id = format!("{}@{}", name, marketplace);
-    let output = std::process::Command::new("claude").args(["plugins", "uninstall", &plugin_id]).output().map_err(|e| format!("Failed to run claude plugins uninstall: {}", e))?;
-    if !output.status.success() { return Err(format!("Uninstall failed: {}", String::from_utf8_lossy(&output.stderr).trim())); }
+    let (ok, stderr) = cli.run_plugin_subcommand(&["uninstall", &plugin_id])?;
+    if !ok { return Err(format!("Uninstall failed: {}", stderr)); }
     Ok(())
 }
