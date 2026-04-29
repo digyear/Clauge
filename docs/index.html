@@ -2,941 +2,1918 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Clauge — Developer toolkit for Claude Code</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Clauge — The AI-powered super-app for developers</title>
         <meta
             name="description"
-            content="Manage Claude Code sessions, terminals, git, plugins, and usage analytics from one macOS app. Parallel sessions with worktree isolation, built-in diff viewer, plugin marketplace, and context manager."
+            content="One window. One keyboard. One AI that knows what you're doing. Clauge replaces the dev tools you keep flipping between."
+        />
+        <meta name="theme-color" content="#07070b" />
+
+        <meta property="og:type" content="website" />
+        <meta
+            property="og:title"
+            content="Clauge — The AI-powered super-app for developers"
+        />
+        <meta
+            property="og:description"
+            content="One window. One keyboard. One AI that knows what you're doing."
+        />
+        <meta property="og:image" content="clauge-mark.svg" />
+        <meta name="twitter:card" content="summary_large_image" />
+
+        <link rel="icon" type="image/svg+xml" href="clauge-mark.svg" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+            referrerpolicy="no-referrer"
         />
         <link rel="stylesheet" href="style.css" />
-        <link rel="icon" href="icon.svg" />
     </head>
     <body>
-        <!-- Header -->
-        <header id="header">
-            <div class="inner">
-                <a href="#" class="logo">Clauge</a>
-                <div class="header-right">
-                    <a href="changelog.html" class="header-link">Changelog</a>
+        <a class="skip-link" href="#main">Skip to content</a>
+        <div class="bg-field" aria-hidden="true"></div>
+
+        <header class="header" id="site-header">
+            <div class="container header-inner">
+                <a class="brand" href="./" aria-label="Clauge home">
+                    <img src="clauge-mark.svg" alt="" />
+                    <span>Clauge</span>
+                </a>
+                <nav class="nav" aria-label="Primary">
+                    <a href="#what-it-does">What it does</a>
+                    <a href="#ai">The AI</a>
+                    <a href="#themes">Themes</a>
+                    <a href="changelog.html">Changelog</a>
                     <a
                         href="https://github.com/ansxuman/Clauge"
-                        class="gh-link"
+                        target="_blank"
+                        rel="noopener"
+                        class="cta"
                     >
-                        <svg viewBox="0 0 16 16">
-                            <path
-                                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
-                            />
-                        </svg>
-                        GitHub
+                        <i class="fa-brands fa-github" aria-hidden="true"></i>
+                        <span>GitHub</span>
                     </a>
-                </div>
+                </nav>
             </div>
         </header>
 
-        <!-- Hero -->
-        <section class="hero">
-            <div class="container hero-split">
-                <div class="hero-left">
-                    <h1 class="reveal">
-                        Manage Claude Code<br />
-                        <span class="hero-typewriter"></span>
-                    </h1>
-                    <p class="subtitle reveal reveal-delay-1">
-                        Sessions, terminals, git, plugins, and usage analytics
-                        — all in one window.<br />Built with Rust + Tauri.
-                    </p>
-                    <div class="hero-buttons reveal reveal-delay-2">
-                        <a
-                            id="hero-download"
-                            href="https://github.com/ansxuman/Clauge/releases/latest"
-                            class="btn-primary"
+        <main id="main">
+            <!-- ─── HERO ─── -->
+            <section class="hero">
+                <div class="container">
+                    <div class="hero-copy">
+                        <h1>
+                            The AI-powered
+                            <span class="grad">super-app</span> for developers.
+                        </h1>
+
+                        <div class="hero-actions">
+                            <div class="hero-ctas">
+                                <a
+                                    class="btn btn-primary"
+                                    id="cta-download"
+                                    href="https://github.com/ansxuman/Clauge/releases/latest"
+                                    target="_blank"
+                                    rel="noopener"
+                                >
+                                    <i
+                                        class="fa-brands fa-apple"
+                                        aria-hidden="true"
+                                    ></i>
+                                    Download for Mac
+                                    <span class="chip" id="cta-arch"
+                                        >Apple Silicon</span
+                                    >
+                                </a>
+                                <a
+                                    class="btn btn-ghost"
+                                    href="https://github.com/ansxuman/Clauge"
+                                    target="_blank"
+                                    rel="noopener"
+                                >
+                                    <i
+                                        class="fa-brands fa-github"
+                                        aria-hidden="true"
+                                    ></i>
+                                    Star on GitHub
+                                </a>
+                            </div>
+                            <a
+                                class="intel-link"
+                                id="intel-link"
+                                href="https://github.com/ansxuman/Clauge/releases/latest"
+                                target="_blank"
+                                rel="noopener"
+                            >
+                                On an Intel Mac? <u>Get the Intel build</u>
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- BELOW: live app — full container width -->
+                    <div class="hero-preview">
+                        <div
+                            class="app-stage"
+                            id="app-stage"
+                            aria-label="Live preview of Clauge"
                         >
-                            <svg viewBox="0 0 16 16" fill="currentColor">
-                                <path
-                                    d="M2.75 14A1.75 1.75 0 011 12.25v-2.5a.75.75 0 011.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 00.25-.25v-2.5a.75.75 0 011.5 0v2.5A1.75 1.75 0 0113.25 14H2.75zM7.25 7.689V2a.75.75 0 011.5 0v5.689l1.97-1.969a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 6.78a.749.749 0 111.06-1.06l1.97 1.969z"
-                                />
-                            </svg>
-                            <span class="dl-text">Download for macOS</span>
-                        </a>
-                        <a
-                            href="https://github.com/ansxuman/Clauge"
-                            class="btn-secondary"
-                        >
-                            <svg
-                                width="16"
-                                height="16"
-                                viewBox="0 0 16 16"
-                                fill="currentColor"
+                            <div
+                                class="app-window"
+                                role="figure"
+                                aria-label="Clauge window"
                             >
-                                <path
-                                    d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
-                                />
-                            </svg>
-                            View on GitHub
-                        </a>
-                    </div>
-                    <a href="#" class="intel-link reveal reveal-delay-2" style="display:none;">Looking for Intel Mac?</a>
-                    <p class="hero-meta reveal reveal-delay-3">
-                        macOS only &middot; ~6MB &middot; Apache 2.0
-                    </p>
-                </div>
-            </div>
-        </section>
+                                <div class="chrome">
+                                    <span class="dots" aria-hidden="true">
+                                        <span class="dot r"></span
+                                        ><span class="dot y"></span
+                                        ><span class="dot g"></span>
+                                    </span>
+                                    <span class="chrome-title" id="chrome-title"
+                                        >Clauge</span
+                                    >
+                                    <span style="width: 36px"></span>
+                                </div>
 
-        <!-- Purposes -->
-        <section class="purposes-section">
-            <div class="container">
-                <div
-                    class="section-header reveal"
-                    style="
-                        text-align: center;
-                        max-width: 600px;
-                        margin: 0 auto 56px;
-                    "
-                >
-                    <p class="section-tag">Purposes</p>
-                    <h2 class="section-heading">
-                        One project, multiple workflows
-                    </h2>
-                    <p class="section-sub" style="max-width: 100%">
-                        Each session stays focused on what you need right now.
-                        Start brainstorming, move to building, review before you
-                        ship.
-                    </p>
-                </div>
-                <div class="purposes-grid">
-                    <div
-                        class="purpose-card reveal"
-                        style="border-left-color: var(--purple)"
-                    >
-                        <div class="purpose-icon" style="color: var(--purple)">
-                            <svg
-                                width="20"
-                                height="20"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                            >
-                                <circle cx="12" cy="12" r="10" />
-                                <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
-                                <line x1="12" y1="17" x2="12.01" y2="17" />
-                            </svg>
-                        </div>
-                        <div>
-                            <div
-                                class="purpose-name"
-                                style="color: var(--purple)"
-                            >
-                                Brainstorming
-                            </div>
-                            <div class="purpose-desc">
-                                Think through architecture before writing a line
-                                of code. Get multiple approaches with tradeoffs
-                                so you pick the right one.
-                            </div>
-                        </div>
-                    </div>
-                    <div
-                        class="purpose-card reveal reveal-delay-1"
-                        style="border-left-color: var(--green)"
-                    >
-                        <div class="purpose-icon" style="color: var(--green)">
-                            <svg
-                                width="20"
-                                height="20"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                            >
-                                <polyline points="16 18 22 12 16 6" />
-                                <polyline points="8 6 2 12 8 18" />
-                            </svg>
-                        </div>
-                        <div>
-                            <div
-                                class="purpose-name"
-                                style="color: var(--green)"
-                            >
-                                Development
-                            </div>
-                            <div class="purpose-desc">
-                                Ship features with clean, tested code that
-                                follows your existing patterns. Small changes,
-                                verified one at a time.
-                            </div>
-                        </div>
-                    </div>
-                    <div
-                        class="purpose-card reveal reveal-delay-2"
-                        style="border-left-color: var(--blue)"
-                    >
-                        <div class="purpose-icon" style="color: var(--blue)">
-                            <svg
-                                width="20"
-                                height="20"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                            >
-                                <path
-                                    d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                                />
-                                <circle cx="12" cy="12" r="3" />
-                            </svg>
-                        </div>
-                        <div>
-                            <div
-                                class="purpose-name"
-                                style="color: var(--blue)"
-                            >
-                                Code Review
-                            </div>
-                            <div class="purpose-desc">
-                                Catch bugs, security holes, and edge cases
-                                before they reach production. Get specific
-                                feedback with file and line references.
-                            </div>
-                        </div>
-                    </div>
-                    <div
-                        class="purpose-card reveal reveal-delay-3"
-                        style="border-left-color: var(--yellow)"
-                    >
-                        <div class="purpose-icon" style="color: var(--yellow)">
-                            <svg
-                                width="20"
-                                height="20"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                            >
-                                <circle cx="18" cy="18" r="3" />
-                                <circle cx="6" cy="6" r="3" />
-                                <path d="M13 6h3a2 2 0 012 2v7" />
-                                <path d="M11 18H8a2 2 0 01-2-2V9" />
-                            </svg>
-                        </div>
-                        <div>
-                            <div
-                                class="purpose-name"
-                                style="color: var(--yellow)"
-                            >
-                                PR Review
-                            </div>
-                            <div class="purpose-desc">
-                                Review pull requests end-to-end before merging.
-                                Get a clear summary of what changed, what's
-                                good, and what needs work.
-                            </div>
-                        </div>
-                    </div>
-                    <div
-                        class="purpose-card reveal reveal-delay-4"
-                        style="border-left-color: var(--red)"
-                    >
-                        <div class="purpose-icon" style="color: var(--red)">
-                            <svg
-                                width="20"
-                                height="20"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                            >
-                                <path d="M18.36 6.64A9 9 0 115.64 18.36" />
-                                <line x1="12" y1="2" x2="12" y2="6" />
-                                <line x1="12" y1="18" x2="12" y2="22" />
-                            </svg>
-                        </div>
-                        <div>
-                            <div class="purpose-name" style="color: var(--red)">
-                                Debugging
-                            </div>
-                            <div class="purpose-desc">
-                                Find the root cause, not a band-aid. Reproduces
-                                the issue, traces it methodically, and verifies
-                                the fix actually works.
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
+                                <div class="app-body">
+                                    <!-- nav rail -->
+                                    <div
+                                        class="nav-rail"
+                                        role="tablist"
+                                        aria-label="Workspaces"
+                                    >
+                                        <img
+                                            class="logo"
+                                            src="clauge-mark.svg"
+                                            alt=""
+                                            aria-hidden="true"
+                                        />
+                                        <button
+                                            class="rail-btn active"
+                                            data-mode="agent"
+                                            role="tab"
+                                            aria-selected="true"
+                                            aria-label="Coding agent"
+                                        >
+                                            <i
+                                                class="fa-solid fa-terminal"
+                                                aria-hidden="true"
+                                            ></i>
+                                        </button>
+                                        <button
+                                            class="rail-btn"
+                                            data-mode="rest"
+                                            role="tab"
+                                            aria-selected="false"
+                                            aria-label="API client"
+                                        >
+                                            <i
+                                                class="fa-solid fa-bolt"
+                                                aria-hidden="true"
+                                            ></i>
+                                        </button>
+                                        <button
+                                            class="rail-btn"
+                                            data-mode="sql"
+                                            role="tab"
+                                            aria-selected="false"
+                                            aria-label="SQL"
+                                        >
+                                            <i
+                                                class="fa-solid fa-database"
+                                                aria-hidden="true"
+                                            ></i>
+                                        </button>
+                                        <button
+                                            class="rail-btn"
+                                            data-mode="nosql"
+                                            role="tab"
+                                            aria-selected="false"
+                                            aria-label="NoSQL"
+                                        >
+                                            <i
+                                                class="fa-solid fa-leaf"
+                                                aria-hidden="true"
+                                            ></i>
+                                        </button>
+                                        <button
+                                            class="rail-btn"
+                                            data-mode="ssh"
+                                            role="tab"
+                                            aria-selected="false"
+                                            aria-label="SSH"
+                                        >
+                                            <i
+                                                class="fa-solid fa-server"
+                                                aria-hidden="true"
+                                            ></i>
+                                        </button>
 
-        <!-- Features -->
-        <section class="features-section">
-            <div class="container">
-                <div class="section-header reveal">
-                    <p class="section-tag">Features</p>
-                    <h2 class="section-heading">What you get</h2>
-                </div>
+                                        <span
+                                            class="rail-spacer"
+                                            aria-hidden="true"
+                                        ></span>
+                                    </div>
 
-                <!-- Feature 1: Sidebar + terminal with session switching -->
-                <div class="feature-row reveal">
-                    <div class="feature-text">
-                        <h3>Parallel sessions, zero conflicts</h3>
-                        <p>
-                            Run multiple sessions on the same project with git
-                            worktree isolation. Built-in git integration —
-                            commit, push, pull, stash, branch switch, and
-                            inline diff viewer without leaving the app.
+                                    <!-- workspace -->
+                                    <div class="workspace">
+                                        <!-- AGENT -->
+                                        <section
+                                            class="panel active"
+                                            data-mode="agent"
+                                            role="tabpanel"
+                                            aria-label="Agent"
+                                        >
+                                            <div class="panel-head">
+                                                <span class="chip-mode"
+                                                    ><i
+                                                        class="fa-solid fa-terminal"
+                                                    ></i>
+                                                    Coding</span
+                                                >
+                                                <span class="head-meta"
+                                                    >~/dev/clauge ·
+                                                    auth-refactor</span
+                                                >
+                                                <span
+                                                    class="head-actions"
+                                                    aria-hidden="true"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-rotate-right"
+                                                        ></i>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-folder-tree"
+                                                        ></i>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-ellipsis"
+                                                        ></i>
+                                                    </button>
+                                                </span>
+                                            </div>
+                                            <aside class="snav">
+                                                <h6>Sessions · 12</h6>
+                                                <div class="snav-item active">
+                                                    <span
+                                                        class="purpose-dot"
+                                                        data-p="develop"
+                                                    ></span>
+                                                    <span>auth-refactor</span>
+                                                </div>
+                                                <div class="snav-item">
+                                                    <span
+                                                        class="purpose-dot"
+                                                        data-p="review"
+                                                    ></span>
+                                                    <span
+                                                        >pr/482 · planner</span
+                                                    >
+                                                </div>
+                                                <div class="snav-item">
+                                                    <span
+                                                        class="purpose-dot"
+                                                        data-p="brainstorm"
+                                                    ></span>
+                                                    <span
+                                                        >migration v6 plan</span
+                                                    >
+                                                </div>
+                                                <div class="snav-item">
+                                                    <span
+                                                        class="purpose-dot"
+                                                        data-p="debug"
+                                                    ></span>
+                                                    <span
+                                                        >flaky e2e harness</span
+                                                    >
+                                                </div>
+                                                <div class="snav-item">
+                                                    <span
+                                                        class="purpose-dot"
+                                                        data-p="prreview"
+                                                    ></span>
+                                                    <span
+                                                        >pr/501 · ssh
+                                                        tunnel</span
+                                                    >
+                                                </div>
+                                                <div class="snav-item">
+                                                    <span
+                                                        class="purpose-dot"
+                                                        data-p="develop"
+                                                    ></span>
+                                                    <span>onboarding flow</span>
+                                                </div>
+                                                <div class="snav-item">
+                                                    <span
+                                                        class="purpose-dot"
+                                                        data-p="review"
+                                                    ></span>
+                                                    <span
+                                                        >pr/479 · billing</span
+                                                    >
+                                                </div>
+                                                <div class="snav-item">
+                                                    <span
+                                                        class="purpose-dot"
+                                                        data-p="develop"
+                                                    ></span>
+                                                    <span>nav animation</span>
+                                                </div>
+                                            </aside>
+                                            <div class="panel-body">
+                                                <div class="term-block">
+                                                    <div class="row">
+                                                        <span class="acc"
+                                                            >▶</span
+                                                        ><span class="out"
+                                                            >refactor the auth
+                                                            middleware to use
+                                                            the new session
+                                                            helper</span
+                                                        >
+                                                    </div>
+                                                    <div
+                                                        class="row"
+                                                        style="margin-top: 6px"
+                                                    >
+                                                        <span class="dim"
+                                                            >⠋ Reading 7 files
+                                                            in src/auth/…</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="dim"
+                                                            >⠴ Located
+                                                            <span class="out"
+                                                                >middleware.ts</span
+                                                            >,
+                                                            <span class="out"
+                                                                >session.ts</span
+                                                            >,
+                                                            <span class="out"
+                                                                >helpers/cookie.ts</span
+                                                            ></span
+                                                        >
+                                                    </div>
+                                                    <div
+                                                        class="row"
+                                                        style="margin-top: 6px"
+                                                    >
+                                                        <span class="info"
+                                                            >→ Editing
+                                                            src/auth/middleware.ts</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="info"
+                                                            >→ Editing
+                                                            src/auth/session.ts</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="ok"
+                                                            >✓ 2 files updated ·
+                                                            +24 / −9</span
+                                                        >
+                                                    </div>
+
+                                                    <div
+                                                        class="row"
+                                                        style="margin-top: 12px"
+                                                    >
+                                                        <span class="acc"
+                                                            >▶</span
+                                                        ><span class="out"
+                                                            >run the tests for
+                                                            the auth
+                                                            module</span
+                                                        >
+                                                    </div>
+                                                    <div
+                                                        class="row"
+                                                        style="margin-top: 6px"
+                                                    >
+                                                        <span class="dim"
+                                                            >⠋ bun test
+                                                            src/auth/</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="ok"
+                                                            >✓ 23 passed · 0
+                                                            failed · 187
+                                                            ms</span
+                                                        >
+                                                    </div>
+
+                                                    <div
+                                                        class="row"
+                                                        style="margin-top: 12px"
+                                                    >
+                                                        <span class="acc"
+                                                            >▶</span
+                                                        ><span class="out"
+                                                            >commit it with a
+                                                            clean message</span
+                                                        >
+                                                    </div>
+                                                    <div
+                                                        class="row"
+                                                        style="margin-top: 6px"
+                                                    >
+                                                        <span class="dim"
+                                                            >git add src/auth ·
+                                                            git commit</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="ok"
+                                                            >✓ </span
+                                                        ><span class="out"
+                                                            >auth: route through
+                                                            new session
+                                                            helper</span
+                                                        >
+                                                    </div>
+                                                </div>
+                                                <div class="panel-foot">
+                                                    <span
+                                                        ><span class="ok"
+                                                            >●</span
+                                                        >
+                                                        session active</span
+                                                    >
+                                                    <span class="sep">·</span>
+                                                    <span
+                                                        >12 messages · 4,128
+                                                        tokens</span
+                                                    >
+                                                    <span class="sep">·</span>
+                                                    <span
+                                                        >last edit · just
+                                                        now</span
+                                                    >
+                                                </div>
+                                            </div>
+                                        </section>
+
+                                        <!-- REST -->
+                                        <section
+                                            class="panel"
+                                            data-mode="rest"
+                                            role="tabpanel"
+                                            aria-label="API client"
+                                        >
+                                            <div class="panel-head">
+                                                <span class="chip-mode"
+                                                    ><i
+                                                        class="fa-solid fa-bolt"
+                                                    ></i>
+                                                    API</span
+                                                >
+                                                <span class="head-meta"
+                                                    >acme · staging</span
+                                                >
+                                                <span
+                                                    class="head-tabs"
+                                                    aria-hidden="true"
+                                                >
+                                                    <span class="head-tab"
+                                                        >Params</span
+                                                    >
+                                                    <span class="head-tab"
+                                                        >Headers</span
+                                                    >
+                                                    <span class="head-tab"
+                                                        >Body</span
+                                                    >
+                                                    <span
+                                                        class="head-tab active"
+                                                        >Response</span
+                                                    >
+                                                </span>
+                                                <span
+                                                    class="head-actions"
+                                                    aria-hidden="true"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-clock-rotate-left"
+                                                        ></i>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-ellipsis"
+                                                        ></i>
+                                                    </button>
+                                                </span>
+                                            </div>
+                                            <aside class="snav">
+                                                <h6>Collections</h6>
+                                                <div class="snav-item">
+                                                    <i
+                                                        class="fa-solid fa-folder"
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                    ></i>
+                                                    <span>Auth</span>
+                                                </div>
+                                                <div class="snav-item">
+                                                    <i
+                                                        class="fa-solid fa-folder-open"
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                    ></i>
+                                                    <span>Payments</span>
+                                                </div>
+                                                <div class="snav-sub snav-item">
+                                                    <span
+                                                        class="ml"
+                                                        style="
+                                                            color: var(--green);
+                                                        "
+                                                        >POST</span
+                                                    >
+                                                    <span>/intents</span>
+                                                </div>
+                                                <div
+                                                    class="snav-sub snav-item active"
+                                                >
+                                                    <span
+                                                        class="ml"
+                                                        style="
+                                                            color: var(--green);
+                                                        "
+                                                        >POST</span
+                                                    >
+                                                    <span
+                                                        >/intents·confirm</span
+                                                    >
+                                                </div>
+                                                <div class="snav-sub snav-item">
+                                                    <span
+                                                        class="ml"
+                                                        style="
+                                                            color: var(--blue);
+                                                        "
+                                                        >GET</span
+                                                    >
+                                                    <span>/intents/{id}</span>
+                                                </div>
+                                                <div class="snav-item">
+                                                    <i
+                                                        class="fa-solid fa-folder"
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                    ></i>
+                                                    <span>Webhooks</span>
+                                                </div>
+                                            </aside>
+                                            <div class="panel-body">
+                                                <div class="url-line">
+                                                    <span
+                                                        class="method-pill post"
+                                                        >POST</span
+                                                    >
+                                                    <span class="url-text"
+                                                        >https://api.acme.dev/<span
+                                                            class="var"
+                                                            >{{env}}</span
+                                                        >/payments/intents</span
+                                                    >
+                                                    <span
+                                                        style="
+                                                            color: var(
+                                                                --text-faint
+                                                            );
+                                                            font-size: 10.5px;
+                                                        "
+                                                        >⌘↵</span
+                                                    >
+                                                </div>
+                                                <div class="label">
+                                                    Request · headers
+                                                </div>
+                                                <div class="box code-block">
+                                                    <span
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                        >Authorization</span
+                                                    ><span
+                                                        style="
+                                                            color: var(
+                                                                --text-faint
+                                                            );
+                                                        "
+                                                        >:</span
+                                                    >
+                                                    Bearer
+                                                    <span class="var"
+                                                        >{{token}}</span
+                                                    ><br />
+                                                    <span
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                        >Content-Type</span
+                                                    ><span
+                                                        style="
+                                                            color: var(
+                                                                --text-faint
+                                                            );
+                                                        "
+                                                        >:</span
+                                                    >
+                                                    application/json<br />
+                                                    <span
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                        >X-Idempotency-Key</span
+                                                    ><span
+                                                        style="
+                                                            color: var(
+                                                                --text-faint
+                                                            );
+                                                        "
+                                                        >:</span
+                                                    >
+                                                    <span class="lit"
+                                                        >"pay_3Rt4z2K"</span
+                                                    >
+                                                </div>
+                                                <div class="label">
+                                                    Body · application/json
+                                                </div>
+                                                <div class="box code-block">
+                                                    {
+                                                    <span
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                        >"amount"</span
+                                                    >:
+                                                    <span class="num">2400</span
+                                                    >,
+                                                    <span
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                        >"currency"</span
+                                                    >:
+                                                    <span class="lit"
+                                                        >"usd"</span
+                                                    >,
+                                                    <span
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                        >"customer"</span
+                                                    >:
+                                                    <span class="lit"
+                                                        >"cus_8f24a1"</span
+                                                    >
+                                                    }
+                                                </div>
+                                                <div class="label">
+                                                    <span
+                                                        style="
+                                                            color: var(--green);
+                                                        "
+                                                        >●</span
+                                                    >
+                                                    201 Created · 84 ms · 318 B
+                                                </div>
+                                                <div class="box code-block">
+                                                    {
+                                                    <span
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                        >"id"</span
+                                                    >:
+                                                    <span class="lit"
+                                                        >"pi_3Rt4z2K8jL…"</span
+                                                    >,<br />
+                                                    &nbsp;&nbsp;<span
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                        >"status"</span
+                                                    >:
+                                                    <span class="lit"
+                                                        >"requires_action"</span
+                                                    >,<br />
+                                                    &nbsp;&nbsp;<span
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                        >"next_action"</span
+                                                    >: {
+                                                    <span
+                                                        style="
+                                                            color: var(--rest);
+                                                        "
+                                                        >"type"</span
+                                                    >:
+                                                    <span class="lit"
+                                                        >"redirect_to_url"</span
+                                                    >
+                                                    } }
+                                                </div>
+                                                <div class="panel-foot">
+                                                    <span
+                                                        ><span class="ok"
+                                                            >●</span
+                                                        >
+                                                        201</span
+                                                    >
+                                                    <span class="sep">·</span>
+                                                    <span>84 ms</span>
+                                                    <span class="sep">·</span>
+                                                    <span>history · 142</span>
+                                                    <span class="sep">·</span>
+                                                    <span>auth · bearer</span>
+                                                </div>
+                                            </div>
+                                        </section>
+
+                                        <!-- SQL -->
+                                        <section
+                                            class="panel"
+                                            data-mode="sql"
+                                            role="tabpanel"
+                                            aria-label="SQL"
+                                        >
+                                            <div class="panel-head">
+                                                <span class="chip-mode"
+                                                    ><i
+                                                        class="fa-solid fa-database"
+                                                    ></i>
+                                                    SQL</span
+                                                >
+                                                <span class="head-meta"
+                                                    >analytics_prod ·
+                                                    events</span
+                                                >
+                                                <span
+                                                    class="head-actions"
+                                                    aria-hidden="true"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-play"
+                                                        ></i>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-floppy-disk"
+                                                        ></i>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-ellipsis"
+                                                        ></i>
+                                                    </button>
+                                                </span>
+                                            </div>
+                                            <aside class="snav">
+                                                <h6>Connections</h6>
+                                                <div class="snav-item active">
+                                                    <span
+                                                        class="state on"
+                                                        aria-hidden="true"
+                                                    ></span>
+                                                    <span>analytics_prod</span>
+                                                    <span class="badge-mini"
+                                                        >CH</span
+                                                    >
+                                                </div>
+                                                <div class="snav-sub snav-item">
+                                                    <i
+                                                        class="fa-solid fa-table"
+                                                    ></i>
+                                                    <span>events</span>
+                                                </div>
+                                                <div class="snav-sub snav-item">
+                                                    <i
+                                                        class="fa-solid fa-table"
+                                                    ></i>
+                                                    <span>users</span>
+                                                </div>
+                                                <div class="snav-sub snav-item">
+                                                    <i
+                                                        class="fa-solid fa-table"
+                                                    ></i>
+                                                    <span>sessions</span>
+                                                </div>
+                                                <div class="snav-item">
+                                                    <span
+                                                        class="state off"
+                                                        aria-hidden="true"
+                                                    ></span>
+                                                    <span>staging</span>
+                                                    <span class="badge-mini"
+                                                        >PG</span
+                                                    >
+                                                </div>
+                                            </aside>
+                                            <div class="panel-body">
+                                                <div class="box code-block">
+                                                    <span class="com"
+                                                        >-- top plans, this
+                                                        week</span
+                                                    ><br />
+                                                    <span class="kw"
+                                                        >SELECT</span
+                                                    >
+                                                    <span class="id-c"
+                                                        >plan</span
+                                                    >,
+                                                    <span class="kw">count</span
+                                                    >(<span class="kw"
+                                                        >DISTINCT</span
+                                                    >
+                                                    <span class="id-c"
+                                                        >user_id</span
+                                                    >)
+                                                    <span class="kw">AS</span>
+                                                    <span class="id-c"
+                                                        >actives</span
+                                                    >,<br />
+                                                    &nbsp;&nbsp;<span class="kw"
+                                                        >round</span
+                                                    >(<span class="kw">avg</span
+                                                    >(<span class="id-c"
+                                                        >events_per_user</span
+                                                    >),
+                                                    <span class="num">1</span>)
+                                                    <span class="kw">AS</span>
+                                                    <span class="id-c"
+                                                        >avg_events</span
+                                                    ><br />
+                                                    <span class="kw">FROM</span>
+                                                    <span class="id-c"
+                                                        >events</span
+                                                    ><br />
+                                                    <span class="kw"
+                                                        >WHERE</span
+                                                    >
+                                                    <span class="id-c">ts</span>
+                                                    &gt;=
+                                                    <span class="kw">now</span
+                                                    >() -
+                                                    <span class="kw"
+                                                        >INTERVAL</span
+                                                    >
+                                                    <span class="num">7</span>
+                                                    <span class="kw">DAY</span
+                                                    ><br />
+                                                    <span class="kw"
+                                                        >GROUP BY</span
+                                                    >
+                                                    <span class="id-c"
+                                                        >plan</span
+                                                    >
+                                                    <span class="kw"
+                                                        >ORDER BY</span
+                                                    >
+                                                    <span class="id-c"
+                                                        >actives</span
+                                                    >
+                                                    <span class="kw">DESC</span
+                                                    >;
+                                                </div>
+                                                <div class="label">
+                                                    Results · 5 rows · 318 ms
+                                                </div>
+                                                <div class="results-grid">
+                                                    <span class="r-k">pro</span
+                                                    ><span class="r-v"
+                                                        >4,182</span
+                                                    >
+                                                    <span class="r-k">team</span
+                                                    ><span class="r-v"
+                                                        >1,517</span
+                                                    >
+                                                    <span class="r-k"
+                                                        >enterprise</span
+                                                    ><span class="r-v"
+                                                        >318</span
+                                                    >
+                                                    <span class="r-k">free</span
+                                                    ><span class="r-v"
+                                                        >9,402</span
+                                                    >
+                                                    <span class="r-k"
+                                                        >trial</span
+                                                    ><span class="r-v"
+                                                        >724</span
+                                                    >
+                                                </div>
+                                                <div class="panel-foot">
+                                                    <span
+                                                        ><span class="ok"
+                                                            >●</span
+                                                        >
+                                                        connected</span
+                                                    >
+                                                    <span class="sep">·</span>
+                                                    <span
+                                                        >ClickHouse · 23.8</span
+                                                    >
+                                                    <span class="sep">·</span>
+                                                    <span
+                                                        >tunneled ·
+                                                        bastion-eu</span
+                                                    >
+                                                    <span class="sep">·</span>
+                                                    <span>2.4 MB scanned</span>
+                                                </div>
+                                            </div>
+                                        </section>
+
+                                        <!-- NoSQL -->
+                                        <section
+                                            class="panel"
+                                            data-mode="nosql"
+                                            role="tabpanel"
+                                            aria-label="NoSQL"
+                                        >
+                                            <div class="panel-head">
+                                                <span class="chip-mode"
+                                                    ><i
+                                                        class="fa-solid fa-leaf"
+                                                    ></i>
+                                                    NoSQL</span
+                                                >
+                                                <span class="head-meta"
+                                                    >mongodb · prod ·
+                                                    users</span
+                                                >
+                                                <span
+                                                    class="head-actions"
+                                                    aria-hidden="true"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-rotate-right"
+                                                        ></i>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-magnifying-glass"
+                                                        ></i>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-ellipsis"
+                                                        ></i>
+                                                    </button>
+                                                </span>
+                                            </div>
+                                            <aside class="snav">
+                                                <h6>MongoDB · prod</h6>
+                                                <div class="snav-item">
+                                                    <i
+                                                        class="fa-solid fa-folder"
+                                                    ></i>
+                                                    <span>sessions</span>
+                                                </div>
+                                                <div class="snav-item active">
+                                                    <i
+                                                        class="fa-solid fa-file-lines"
+                                                    ></i>
+                                                    <span>users</span>
+                                                </div>
+                                                <div class="snav-item">
+                                                    <i
+                                                        class="fa-solid fa-file-lines"
+                                                    ></i>
+                                                    <span>contexts</span>
+                                                </div>
+                                                <h6 style="margin-top: 14px">
+                                                    Redis · cache
+                                                </h6>
+                                                <div class="snav-item">
+                                                    <i
+                                                        class="fa-solid fa-key"
+                                                    ></i>
+                                                    <span>session:*</span>
+                                                </div>
+                                                <div class="snav-item">
+                                                    <i
+                                                        class="fa-solid fa-key"
+                                                    ></i>
+                                                    <span>ratelimit:*</span>
+                                                </div>
+                                            </aside>
+                                            <div class="panel-body">
+                                                <div class="box code-block">
+                                                    <span class="kw">db</span
+                                                    >.<span class="id-c"
+                                                        >users</span
+                                                    >.<span class="kw"
+                                                        >find</span
+                                                    >({
+                                                    <span
+                                                        style="
+                                                            color: var(--nosql);
+                                                        "
+                                                        >plan</span
+                                                    >:
+                                                    <span class="lit"
+                                                        >"pro"</span
+                                                    >,
+                                                    <span
+                                                        style="
+                                                            color: var(--nosql);
+                                                        "
+                                                        >last_seen</span
+                                                    >: { $gte:
+                                                    <span class="lit"
+                                                        >"2026-04-23"</span
+                                                    >
+                                                    } }).<span class="kw"
+                                                        >limit</span
+                                                    >(<span class="num">10</span
+                                                    >)
+                                                </div>
+                                                <div class="label">
+                                                    Document · 1 of 4,182
+                                                </div>
+                                                <div class="box code-block">
+                                                    {<br />
+                                                    &nbsp;&nbsp;<span
+                                                        style="
+                                                            color: var(--nosql);
+                                                        "
+                                                        >_id</span
+                                                    >:
+                                                    <span
+                                                        style="
+                                                            color: var(
+                                                                --text-faint
+                                                            );
+                                                        "
+                                                        >ObjectId(<span
+                                                            class="lit"
+                                                            >"66b30f2a4f4a8c0001a4a3e1"</span
+                                                        >)</span
+                                                    >,<br />
+                                                    &nbsp;&nbsp;<span
+                                                        style="
+                                                            color: var(--nosql);
+                                                        "
+                                                        >email</span
+                                                    >:
+                                                    <span class="lit"
+                                                        >"dev@acme.app"</span
+                                                    >,<br />
+                                                    &nbsp;&nbsp;<span
+                                                        style="
+                                                            color: var(--nosql);
+                                                        "
+                                                        >plan</span
+                                                    >:
+                                                    <span class="lit"
+                                                        >"pro"</span
+                                                    >,<br />
+                                                    &nbsp;&nbsp;<span
+                                                        style="
+                                                            color: var(--nosql);
+                                                        "
+                                                        >last_seen</span
+                                                    >:
+                                                    <span class="lit"
+                                                        >"2026-04-29T15:42:08Z"</span
+                                                    >,<br />
+                                                    &nbsp;&nbsp;<span
+                                                        style="
+                                                            color: var(--nosql);
+                                                        "
+                                                        >prefs</span
+                                                    >: { theme:
+                                                    <span class="lit"
+                                                        >"midnight"</span
+                                                    >, defaultMode:
+                                                    <span class="lit"
+                                                        >"agent"</span
+                                                    >
+                                                    },<br />
+                                                    &nbsp;&nbsp;<span
+                                                        style="
+                                                            color: var(--nosql);
+                                                        "
+                                                        >sessions</span
+                                                    >:
+                                                    <span class="num">42</span
+                                                    >,<br />
+                                                    &nbsp;&nbsp;<span
+                                                        style="
+                                                            color: var(--nosql);
+                                                        "
+                                                        >verified</span
+                                                    >:
+                                                    <span
+                                                        style="
+                                                            color: var(
+                                                                --purple
+                                                            );
+                                                        "
+                                                        >true</span
+                                                    ><br />
+                                                    }
+                                                </div>
+                                                <div class="panel-foot">
+                                                    <span
+                                                        ><span class="ok"
+                                                            >●</span
+                                                        >
+                                                        connected</span
+                                                    >
+                                                    <span class="sep">·</span>
+                                                    <span
+                                                        >users · 14,302
+                                                        docs</span
+                                                    >
+                                                    <span class="sep">·</span>
+                                                    <span>tls · sni</span>
+                                                    <span class="sep">·</span>
+                                                    <span>318 ms</span>
+                                                </div>
+                                            </div>
+                                        </section>
+
+                                        <!-- SSH -->
+                                        <section
+                                            class="panel"
+                                            data-mode="ssh"
+                                            role="tabpanel"
+                                            aria-label="SSH"
+                                        >
+                                            <div class="panel-head">
+                                                <span class="chip-mode"
+                                                    ><i
+                                                        class="fa-solid fa-server"
+                                                    ></i>
+                                                    SSH</span
+                                                >
+                                                <span class="head-meta"
+                                                    >deploy@bastion-eu · pty
+                                                    132×38</span
+                                                >
+                                                <span
+                                                    class="head-actions"
+                                                    aria-hidden="true"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-magnifying-glass"
+                                                        ></i>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-arrows-up-down-left-right"
+                                                        ></i>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        tabindex="-1"
+                                                    >
+                                                        <i
+                                                            class="fa-solid fa-ellipsis"
+                                                        ></i>
+                                                    </button>
+                                                </span>
+                                            </div>
+                                            <aside class="snav">
+                                                <h6>Profiles</h6>
+                                                <div class="snav-item active">
+                                                    <span
+                                                        class="state on"
+                                                        aria-hidden="true"
+                                                    ></span>
+                                                    <span>bastion-eu</span>
+                                                </div>
+                                                <div class="snav-item">
+                                                    <span
+                                                        class="state off"
+                                                        aria-hidden="true"
+                                                    ></span>
+                                                    <span>prod-db-1</span>
+                                                </div>
+                                                <div class="snav-item">
+                                                    <span
+                                                        class="state off"
+                                                        aria-hidden="true"
+                                                    ></span>
+                                                    <span>staging-app</span>
+                                                </div>
+                                                <div class="snav-item">
+                                                    <span
+                                                        class="state off"
+                                                        aria-hidden="true"
+                                                    ></span>
+                                                    <span>mac-mini</span>
+                                                </div>
+                                            </aside>
+                                            <div class="panel-body">
+                                                <div class="term-block">
+                                                    <div class="row">
+                                                        <span class="ssh-prompt"
+                                                            >deploy@bastion-eu:~$</span
+                                                        ><span class="out"
+                                                            >uptime</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="dim"
+                                                            >15:42:08 · up 64
+                                                            days · load 0.32,
+                                                            0.41, 0.39</span
+                                                        >
+                                                    </div>
+
+                                                    <div
+                                                        class="row"
+                                                        style="margin-top: 6px"
+                                                    >
+                                                        <span class="ssh-prompt"
+                                                            >deploy@bastion-eu:~$</span
+                                                        ><span class="out"
+                                                            >df -h /var</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="dim"
+                                                            >Filesystem Size
+                                                            Used Avail Use%
+                                                            Mounted</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="dim"
+                                                            >/dev/nvme0n1p2 220G
+                                                            78G 131G 37%
+                                                            /var</span
+                                                        >
+                                                    </div>
+
+                                                    <div
+                                                        class="row"
+                                                        style="margin-top: 6px"
+                                                    >
+                                                        <span class="ssh-prompt"
+                                                            >deploy@bastion-eu:~$</span
+                                                        ><span class="out"
+                                                            >systemctl status
+                                                            nginx
+                                                            --no-pager</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="ok"
+                                                            >● nginx.service —
+                                                            active
+                                                            (running)</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="dim">
+                                                            Loaded: enabled ·
+                                                            Memory: 24.1M ·
+                                                            Tasks: 9</span
+                                                        >
+                                                    </div>
+
+                                                    <div
+                                                        class="row"
+                                                        style="margin-top: 6px"
+                                                    >
+                                                        <span class="ssh-prompt"
+                                                            >deploy@bastion-eu:~$</span
+                                                        ><span class="out"
+                                                            >ps -ef --sort=-pcpu
+                                                            | head -3</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="dim"
+                                                            >UID PID %CPU
+                                                            CMD</span
+                                                        >
+                                                    </div>
+                                                    <div class="row">
+                                                        <span class="dim"
+                                                            >app 4128 12.4 node
+                                                            server.js</span
+                                                        >
+                                                    </div>
+
+                                                    <div
+                                                        class="row"
+                                                        style="margin-top: 6px"
+                                                    >
+                                                        <span class="ssh-prompt"
+                                                            >deploy@bastion-eu:~$</span
+                                                        >
+                                                        <span class="dim"
+                                                            >_</span
+                                                        >
+                                                    </div>
+                                                </div>
+                                                <div class="panel-foot">
+                                                    <span
+                                                        ><span class="ok"
+                                                            >●</span
+                                                        >
+                                                        connected</span
+                                                    >
+                                                    <span class="sep">·</span>
+                                                    <span>pty 132 × 38</span>
+                                                    <span class="sep">·</span>
+                                                    <span
+                                                        >ed25519 ·
+                                                        keychain</span
+                                                    >
+                                                    <span class="sep">·</span>
+                                                    <span>idle 0.4 s</span>
+                                                </div>
+                                            </div>
+                                        </section>
+                                    </div>
+                                    <!-- workspace -->
+
+                                    <!-- AI side panel — always present, doing work -->
+                                    <aside
+                                        class="ai-side"
+                                        id="ai-side"
+                                        aria-label="AI assistant"
+                                    >
+                                        <div class="ai-head">
+                                            <span class="badge"
+                                                ><i
+                                                    class="fa-solid fa-sparkles"
+                                                ></i>
+                                                AI assistant</span
+                                            >
+                                            <span class="working"
+                                                ><span class="pulse-dot"></span>
+                                                working</span
+                                            >
+                                        </div>
+                                        <div
+                                            class="ai-stream"
+                                            id="ai-stream"
+                                        ></div>
+                                        <div class="ai-input">Ask Clauge…</div>
+                                    </aside>
+                                </div>
+                                <!-- .app-body -->
+
+                                <!-- status bar — usage chips, connection state, like Clauge's StatusBar.svelte -->
+                                <div
+                                    class="status-bar"
+                                    id="status-bar"
+                                    aria-label="Status"
+                                >
+                                    <span class="sb-item" id="sb-mode">
+                                        <span
+                                            class="sb-dot on"
+                                            aria-hidden="true"
+                                        ></span>
+                                        <span>connected</span>
+                                    </span>
+                                    <span class="sb-chip" id="sb-context"
+                                        >~/dev/clauge</span
+                                    >
+                                    <span class="sb-divider"></span>
+                                    <span class="sb-right">
+                                        <span class="sb-chip"
+                                            ><b>S</b>:42%</span
+                                        >
+                                        <span class="sb-chip"
+                                            ><b>W</b>:18%</span
+                                        >
+                                        <span class="sb-chip"
+                                            >claude · sonnet 4.6</span
+                                        >
+                                    </span>
+                                </div>
+                            </div>
+                            <!-- .app-window -->
+
+                            <div
+                                class="app-legend"
+                                role="tablist"
+                                aria-label="Pick a workspace"
+                            >
+                                <button
+                                    class="legend-pill active"
+                                    data-mode="agent"
+                                    role="tab"
+                                    aria-selected="true"
+                                >
+                                    <span class="swatch"></span> Coding
+                                </button>
+                                <button
+                                    class="legend-pill"
+                                    data-mode="rest"
+                                    role="tab"
+                                    aria-selected="false"
+                                >
+                                    <span class="swatch"></span> APIs
+                                </button>
+                                <button
+                                    class="legend-pill"
+                                    data-mode="sql"
+                                    role="tab"
+                                    aria-selected="false"
+                                >
+                                    <span class="swatch"></span> SQL
+                                </button>
+                                <button
+                                    class="legend-pill"
+                                    data-mode="nosql"
+                                    role="tab"
+                                    aria-selected="false"
+                                >
+                                    <span class="swatch"></span> NoSQL
+                                </button>
+                                <button
+                                    class="legend-pill"
+                                    data-mode="ssh"
+                                    role="tab"
+                                    aria-selected="false"
+                                >
+                                    <span class="swatch"></span> SSH
+                                </button>
+                            </div>
+                        </div>
+                        <!-- .app-stage -->
+                    </div>
+                    <!-- .hero-preview -->
+                </div>
+            </section>
+
+            <!-- ─── WHAT IT DOES ─── -->
+            <section id="what-it-does">
+                <div class="container">
+                    <div class="reveal">
+                        <p class="section-tag">What it does</p>
+                        <h2 class="section-heading">
+                            Every tool you reach for.
+                            <span style="color: var(--purple)"
+                                >In one window.</span
+                            >
+                        </h2>
+                        <p class="section-lede">
+                            Code with an AI agent. Hit your APIs. Query your
+                            databases. SSH into your boxes. We're adding more —
+                            but you'll never need a second window for any of it.
                         </p>
                     </div>
-                    <div class="feature-visual">
-                        <div class="demo-app">
-                            <div class="demo-app-bar">
-                                <span class="dot-r"></span
-                                ><span class="dot-y"></span
-                                ><span class="dot-g"></span>
-                            </div>
-                            <div class="demo-app-body">
-                                <div class="demo-sidebar">
-                                    <div class="demo-side-hdr">
-                                        Clauge
-                                        <span class="demo-side-plus">+</span>
-                                    </div>
-                                    <div class="demo-side-group">
-                                        <div class="demo-side-grp-hdr">
-                                            <span class="demo-chevron"
-                                                >&#9656;</span
-                                            >
-                                            MYAPP
-                                            <span class="demo-grp-count"
-                                                >3</span
-                                            >
-                                        </div>
-                                        <div
-                                            class="demo-side-item active"
-                                            data-idx="0"
-                                        >
-                                            <span
-                                                class="demo-status-dot on"
-                                            ></span>
-                                            Auth refactor
-                                            <span class="demo-side-badge dev"
-                                                >Dev</span
-                                            >
-                                        </div>
-                                        <div
-                                            class="demo-side-item"
-                                            data-idx="1"
-                                        >
-                                            <span
-                                                class="demo-status-dot"
-                                            ></span>
-                                            API endpoints
-                                            <span class="demo-side-badge review"
-                                                >Review</span
-                                            >
-                                        </div>
-                                        <div
-                                            class="demo-side-item"
-                                            data-idx="2"
-                                        >
-                                            <span
-                                                class="demo-status-dot"
-                                            ></span>
-                                            Bug #42
-                                            <span class="demo-side-badge debug"
-                                                >Debug</span
-                                            >
-                                            <span class="demo-side-wt">WT</span>
-                                        </div>
-                                    </div>
-                                    <div class="demo-side-group">
-                                        <div class="demo-side-grp-hdr">
-                                            <span class="demo-chevron"
-                                                >&#9656;</span
-                                            >
-                                            BACKEND
-                                            <span class="demo-grp-count"
-                                                >2</span
-                                            >
-                                        </div>
-                                        <div
-                                            class="demo-side-item"
-                                            data-idx="3"
-                                        >
-                                            <span
-                                                class="demo-status-dot"
-                                            ></span>
-                                            PR #87
-                                            <span class="demo-side-badge pr"
-                                                >PR</span
-                                            >
-                                        </div>
-                                        <div
-                                            class="demo-side-item"
-                                            data-idx="4"
-                                        >
-                                            <span
-                                                class="demo-status-dot"
-                                            ></span>
-                                            Brainstorm DB
-                                            <span class="demo-side-badge brain"
-                                                >Brain</span
-                                            >
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="demo-terminal-pane">
-                                    <div class="demo-term-content active" data-panel="0">
-                                        <span class="demo-prompt">&#10095;</span>
-                                        Refactoring auth middleware to use JWT<br />
-                                        <span class="demo-dim">Reading src/middleware/auth.ts</span><br />
-                                        <span class="demo-dim">Editing src/utils/jwt.ts</span><br /><br />
-                                        I'll update the middleware to validate tokens...<span class="demo-cursor"></span>
-                                    </div>
-                                    <div class="demo-term-content" data-panel="1">
-                                        <span class="demo-prompt">&#10095;</span>
-                                        Review the API endpoints for security<br />
-                                        <span class="demo-dim">Found 2 issues in routes/users.ts</span><br /><br />
-                                        <span style="color:#f85149;">Missing rate limiting on POST /api/auth/login</span><span class="demo-cursor"></span>
-                                    </div>
-                                    <div class="demo-term-content" data-panel="2">
-                                        <span class="demo-prompt">&#10095;</span>
-                                        Token expires after 5 minutes<br />
-                                        <span class="demo-dim">Running git diff...</span><br /><br />
-                                        Root cause: interval set to 300s not 3600s<span class="demo-cursor"></span>
-                                    </div>
-                                    <div class="demo-term-content" data-panel="3">
-                                        <span class="demo-prompt">&#10095;</span>
-                                        Reviewing PR #87 — DB connection pooling<br />
-                                        <span class="demo-dim">git diff main...feat/db-pool</span><br /><br />
-                                        Changes look good. One concern with max_connections...<span class="demo-cursor"></span>
-                                    </div>
-                                    <div class="demo-term-content" data-panel="4">
-                                        <span class="demo-prompt">&#10095;</span>
-                                        Should we use Redis or Memcached?<br /><br />
-                                        Let's compare both approaches...<span class="demo-cursor"></span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="demo-bottom-bar">
-                                <span class="demo-avatar">CG</span>
-                                <span class="demo-git-branch">⎇ main ↑2</span>
-                                <span class="demo-usage-chip">Session 4%</span>
-                                <span class="demo-usage-chip">Weekly 20%</span>
-                            </div>
-                        </div>
+
+                    <div class="does-grid">
+                        <article class="does-card reveal" data-accent="agent">
+                            <span class="icon"
+                                ><i class="fa-solid fa-terminal"></i
+                            ></span>
+                            <h3>A coding agent that ships</h3>
+                            <p>
+                                Real Claude Code sessions, restored across
+                                launches. Pick a purpose — brainstorming,
+                                building, reviewing, debugging — and the AI
+                                shifts gears with you.
+                            </p>
+                        </article>
+                        <article class="does-card reveal" data-accent="rest">
+                            <span class="icon"
+                                ><i class="fa-solid fa-bolt"></i
+                            ></span>
+                            <h3>An API client that's fast</h3>
+                            <p>
+                                Collections, environments, history. Paste a cURL
+                                and hit Send. Import what you've got from
+                                Postman. Done with the round-trip.
+                            </p>
+                        </article>
+                        <article class="does-card reveal" data-accent="sql">
+                            <span class="icon"
+                                ><i class="fa-solid fa-database"></i
+                            ></span>
+                            <h3>SQL across every dialect</h3>
+                            <p>
+                                PostgreSQL, MySQL, SQLite, ClickHouse. Real
+                                autocomplete, real schema awareness. Tunnel
+                                through SSH without leaving the editor.
+                            </p>
+                        </article>
+                        <article class="does-card reveal" data-accent="nosql">
+                            <span class="icon"
+                                ><i class="fa-solid fa-leaf"></i
+                            ></span>
+                            <h3>MongoDB and Redis, side by side</h3>
+                            <p>
+                                Browse collections like a tree. Inspect
+                                documents as syntax-highlighted JSON. Watch keys
+                                with TTL. All in the same window.
+                            </p>
+                        </article>
+                        <article class="does-card reveal" data-accent="ssh">
+                            <span class="icon"
+                                ><i class="fa-solid fa-server"></i
+                            ></span>
+                            <h3>SSH that you'd actually use</h3>
+                            <p>
+                                Save profiles, store keys in your Keychain,
+                                attach to a real terminal. The AI can run
+                                commands too — but only after it shows you what
+                                and why.
+                            </p>
+                        </article>
+                        <article class="does-card reveal" data-accent="ai">
+                            <span class="icon"
+                                ><i class="fa-solid fa-circle-plus"></i
+                            ></span>
+                            <h3>And more, on the way</h3>
+                            <p>
+                                Clauge is built to absorb the next tool you
+                                reach for. One window, one keyboard, one AI —
+                                that's the bet.
+                            </p>
+                        </article>
                     </div>
                 </div>
+            </section>
 
-                <!-- Feature 2: Auto-typing terminal -->
-                <div class="feature-row reverse reveal">
-                    <div class="feature-text">
-                        <h3>Everything in one window</h3>
-                        <p>
-                            GPU-accelerated terminal with split shell panel,
-                            plugin manager with marketplace, context snippets
-                            you can inject mid-session, and notifications when
-                            Claude needs your input.
+            <!-- ─── AI FLEX ─── -->
+            <section id="ai" style="padding-top: 64px">
+                <div class="container">
+                    <div class="reveal">
+                        <p class="section-tag">The AI</p>
+                        <h2 class="section-heading">
+                            An AI that
+                            <span style="color: var(--purple)"
+                                >knows what you're doing.</span
+                            >
+                        </h2>
+                        <p class="section-lede">
+                            Most assistants give you a chatbox and hope you
+                            describe your tools well. Clauge's AI <em>is</em> in
+                            the tool. Ask in plain English; it writes the query,
+                            fills the request, edits the file, or proposes the
+                            shell command — already wired to the right context.
                         </p>
                     </div>
-                    <div class="feature-visual">
-                        <div class="demo-terminal">
-                            <div class="demo-term-bar">
-                                <span class="dot-r"></span
-                                ><span class="dot-y"></span
-                                ><span class="dot-g"></span
-                                ><span class="demo-term-title"
-                                    >Clauge — Development</span
+
+                    <div class="flex-grid">
+                        <article class="flex-card reveal" data-accent="agent">
+                            <span class="badge"
+                                ><i class="fa-solid fa-terminal"></i>
+                                Coding</span
+                            >
+                            <h3>
+                                "Refactor the auth middleware to use the new
+                                session helper."
+                            </h3>
+                            <p>
+                                It reads the relevant files, finds the shape of
+                                your existing code, and proposes the edit — diff
+                                first, ship second.
+                            </p>
+                            <div class="demo">
+                                <span class="me"
+                                    >Refactor the auth middleware to use the new
+                                    session helper.</span
+                                >
+                                <span class="it"
+                                    >Reading <code>middleware.ts</code>,
+                                    <code>session.ts</code>… proposing
+                                    edit.</span
+                                >
+                                <span class="res"
+                                    >✓ 2 files · +24 / −9 · ready to apply</span
                                 >
                             </div>
-                            <div
-                                class="demo-term-body"
-                                id="typing-terminal"
-                            ></div>
-                        </div>
+                        </article>
+
+                        <article class="flex-card reveal" data-accent="sql">
+                            <span class="badge"
+                                ><i class="fa-solid fa-database"></i> SQL</span
+                            >
+                            <h3>"Top plans by active users this week."</h3>
+                            <p>
+                                It writes the query against <em>your</em> schema
+                                — picks the right dialect, knows your column
+                                names, runs it.
+                            </p>
+                            <div class="demo">
+                                <span class="me"
+                                    >Top plans by active users this week.</span
+                                >
+                                <span class="it"
+                                    ><code
+                                        >SELECT plan, count(DISTINCT user_id)
+                                        FROM events WHERE ts &gt;= now() -
+                                        INTERVAL 7 DAY GROUP BY plan</code
+                                    ></span
+                                >
+                                <span class="res">5 rows · 318 ms</span>
+                            </div>
+                        </article>
+
+                        <article class="flex-card reveal" data-accent="rest">
+                            <span class="badge"
+                                ><i class="fa-solid fa-bolt"></i> API</span
+                            >
+                            <h3>"Test the payments endpoint with $24 USD."</h3>
+                            <p>
+                                It fills the URL, the headers, the body — using
+                                your environment variables. You hit Send.
+                            </p>
+                            <div class="demo">
+                                <span class="me"
+                                    >Test the payments endpoint with $24
+                                    USD.</span
+                                >
+                                <span class="it"
+                                    ><code>POST /payments/intents</code> · body
+                                    <code
+                                        >{ amount: 2400, currency: "usd" }</code
+                                    ></span
+                                >
+                                <span class="res">201 Created · 84 ms</span>
+                            </div>
+                        </article>
+
+                        <article class="flex-card reveal" data-accent="ssh">
+                            <span class="badge"
+                                ><i class="fa-solid fa-server"></i> SSH</span
+                            >
+                            <h3>"What's eating disk on the bastion?"</h3>
+                            <p>
+                                It proposes the command, tells you why, and
+                                waits for a click. No surprises, no destructive
+                                edge cases.
+                            </p>
+                            <div class="demo">
+                                <span class="me"
+                                    >What's eating disk on the bastion?</span
+                                >
+                                <span class="it"
+                                    >Proposing
+                                    <code
+                                        >du -sh /var/* | sort -h | tail -5</code
+                                    >
+                                    — read-only.</span
+                                >
+                                <span class="res"
+                                    >↳ Run on bastion-eu? [Cancel] [Run]</span
+                                >
+                            </div>
+                        </article>
                     </div>
                 </div>
+            </section>
 
-                <!-- Feature 3: Morphing theme window -->
-                <div class="feature-row reveal">
-                    <div class="feature-text">
-                        <h3>Make it yours</h3>
-                        <p>
-                            Dark and light themes. Six accent colors. Custom
-                            font size. Reusable context snippets for coding
-                            guidelines and rules. Per-session git identity.
+            <!-- ─── THEMES ─── -->
+            <section id="themes" style="padding-top: 56px">
+                <div class="container">
+                    <div class="reveal">
+                        <p class="section-tag">Themes</p>
+                        <h2 class="section-heading">
+                            Yours by the end of the day.
+                        </h2>
+                        <p class="section-lede">
+                            Five themes out of the box. Every surface — editor,
+                            terminal, sidebar, chips — recomposes together.
                         </p>
                     </div>
-                    <div class="feature-visual">
-                        <div class="demo-theme" id="theme-demo">
-                            <div class="demo-theme-window">
-                                <div class="demo-theme-sidebar">
-                                    <div class="demo-theme-item active">
-                                        Auth refactor
-                                    </div>
-                                    <div class="demo-theme-item">Bug #42</div>
-                                </div>
-                                <div class="demo-theme-content">
-                                    <div class="demo-theme-line w80"></div>
-                                    <div class="demo-theme-line w60"></div>
-                                    <div class="demo-theme-line w90"></div>
-                                    <div class="demo-theme-line w40"></div>
-                                </div>
-                            </div>
-                            <div class="demo-theme-dots">
-                                <span
-                                    class="theme-dot"
-                                    style="--c: #58a6ff"
-                                    data-accent="#58a6ff"
-                                ></span>
-                                <span
-                                    class="theme-dot"
-                                    style="--c: #d2a8ff"
-                                    data-accent="#d2a8ff"
-                                ></span>
-                                <span
-                                    class="theme-dot"
-                                    style="--c: #3fb950"
-                                    data-accent="#3fb950"
-                                ></span>
-                                <span
-                                    class="theme-dot"
-                                    style="--c: #f85149"
-                                    data-accent="#f85149"
-                                ></span>
-                                <span
-                                    class="theme-dot"
-                                    style="--c: #d29922"
-                                    data-accent="#d29922"
-                                ></span>
-                                <span
-                                    class="theme-dot"
-                                    style="--c: #ff7b72"
-                                    data-accent="#ff7b72"
-                                ></span>
-                            </div>
+                    <div class="themes">
+                        <div class="theme dark-glass">
+                            <span class="name">dark glass</span>
+                            <span class="swatch"
+                                ><i style="background: var(--purple)"></i
+                                ><i style="background: var(--ssh)"></i
+                                ><i style="background: var(--green)"></i
+                            ></span>
+                        </div>
+                        <div class="theme dark-solid">
+                            <span class="name">dark solid</span>
+                            <span class="swatch"
+                                ><i style="background: var(--purple)"></i
+                                ><i style="background: var(--ssh)"></i
+                                ><i style="background: var(--green)"></i
+                            ></span>
+                        </div>
+                        <div class="theme midnight">
+                            <span class="name">midnight</span>
+                            <span class="swatch"
+                                ><i style="background: #6f74ff"></i
+                                ><i style="background: #1de9b6"></i
+                                ><i style="background: #ff6b9d"></i
+                            ></span>
+                        </div>
+                        <div class="theme nord">
+                            <span class="name">nord</span>
+                            <span class="swatch"
+                                ><i style="background: #88c0d0"></i
+                                ><i style="background: #a3be8c"></i
+                                ><i style="background: #b48ead"></i
+                            ></span>
+                        </div>
+                        <div class="theme light">
+                            <span class="name">light</span>
+                            <span class="swatch"
+                                ><i style="background: #6750a4"></i
+                                ><i style="background: #006c4f"></i
+                                ><i style="background: #c2410c"></i
+                            ></span>
                         </div>
                     </div>
                 </div>
+            </section>
 
-                <!-- Feature 4: Usage tracking — keep original clean design -->
-                <div class="feature-row reverse reveal">
-                    <div class="feature-text">
-                        <h3>Usage dashboard</h3>
-                        <p>
-                            Full analytics — cost per model, daily activity
-                            chart, tool usage, shell commands, top sessions.
-                            Live session and weekly limits with configurable
-                            refresh.
+            <!-- ─── SHORTCUTS ─── -->
+            <section id="shortcuts" style="padding-top: 24px">
+                <div class="container">
+                    <div class="reveal">
+                        <p class="section-tag">Keyboard</p>
+                        <h2 class="section-heading">Built for the home row.</h2>
+                        <p class="section-lede">
+                            One muscle memory across every workspace.
                         </p>
                     </div>
-                    <div class="feature-visual">
-                        <div class="mockup glass-mockup">
-                            <div class="mockup-titlebar">
-                                <span
-                                    class="mockup-dot"
-                                    style="background: #ff5f57"
-                                ></span
-                                ><span
-                                    class="mockup-dot"
-                                    style="background: #febc2e"
-                                ></span
-                                ><span
-                                    class="mockup-dot"
-                                    style="background: #28c840"
-                                ></span>
-                            </div>
-                            <div class="mockup-body mockup-usage" style="padding:14px;">
-                                <div style="display:flex;gap:8px;margin-bottom:10px;">
-                                    <div style="flex:1;text-align:center;padding:6px;background:rgba(255,255,255,0.04);border-radius:4px;border:1px solid rgba(255,255,255,0.06);">
-                                        <div style="font-size:14px;font-weight:700;color:#e6edf3;">$12.47</div>
-                                        <div style="font-size:8px;color:#8b949e;text-transform:uppercase;">Cost</div>
-                                    </div>
-                                    <div style="flex:1;text-align:center;padding:6px;background:rgba(255,255,255,0.04);border-radius:4px;border:1px solid rgba(255,255,255,0.06);">
-                                        <div style="font-size:14px;font-weight:700;color:#e6edf3;">1,247</div>
-                                        <div style="font-size:8px;color:#8b949e;text-transform:uppercase;">Calls</div>
-                                    </div>
-                                    <div style="flex:1;text-align:center;padding:6px;background:rgba(255,255,255,0.04);border-radius:4px;border:1px solid rgba(255,255,255,0.06);">
-                                        <div style="font-size:14px;font-weight:700;color:#e6edf3;">89%</div>
-                                        <div style="font-size:8px;color:#8b949e;text-transform:uppercase;">Cache</div>
-                                    </div>
-                                </div>
-                                <div style="display:flex;gap:3px;align-items:flex-end;height:30px;margin-bottom:8px;">
-                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:40%;opacity:0.7;"></div>
-                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:60%;opacity:0.7;"></div>
-                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:80%;opacity:0.7;"></div>
-                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:45%;opacity:0.7;"></div>
-                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:90%;opacity:0.7;"></div>
-                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:70%;opacity:0.7;"></div>
-                                    <div style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:100%;opacity:0.8;"></div>
-                                </div>
-                                <div class="usage-meter"><span class="usage-label">Session</span><div class="usage-track"><div class="usage-fill" style="width:4%;background:var(--blue);"></div></div><span class="usage-pct">4%</span></div>
-                                <div class="usage-meter"><span class="usage-label">Weekly</span><div class="usage-track"><div class="usage-fill" style="width:20%;background:var(--blue);"></div></div><span class="usage-pct">20%</span></div>
-                            </div>
+                    <div class="shortcuts">
+                        <div class="kbd-row">
+                            <span class="label">Switch workspace</span
+                            ><kbd
+                                ><span>⌘</span><span>1</span><span>–</span
+                                ><span>4</span></kbd
+                            >
+                        </div>
+                        <div class="kbd-row">
+                            <span class="label">Toggle the AI</span
+                            ><kbd><span>⌘</span><span>L</span></kbd>
+                        </div>
+                        <div class="kbd-row">
+                            <span class="label">Send · execute</span
+                            ><kbd><span>⌘</span><span>↵</span></kbd>
+                        </div>
+                        <div class="kbd-row">
+                            <span class="label">Save</span
+                            ><kbd><span>⌘</span><span>S</span></kbd>
+                        </div>
+                        <div class="kbd-row">
+                            <span class="label">Hide sidebar</span
+                            ><kbd><span>⌘</span><span>B</span></kbd>
+                        </div>
+                        <div class="kbd-row">
+                            <span class="label">Find in terminal</span
+                            ><kbd><span>⌘</span><span>F</span></kbd>
                         </div>
                     </div>
                 </div>
-            </div>
-        </section>
+            </section>
 
-        <!-- Shortcuts -->
-        <section class="shortcuts-section">
-            <div class="container">
-                <div class="section-header reveal">
-                    <p class="section-tag">Shortcuts</p>
-                    <h2 class="section-heading">Keyboard-first</h2>
+            <!-- ─── DOWNLOAD ─── -->
+            <section id="download" style="padding-top: 24px">
+                <div class="container">
+                    <div class="download-card reveal">
+                        <div class="copy">
+                            <h3>Get Clauge for Mac.</h3>
+                            <p>Native, fast, free for personal use.</p>
+                        </div>
+                        <div class="download-actions">
+                            <a
+                                class="btn btn-primary"
+                                id="dl-primary"
+                                href="https://github.com/ansxuman/Clauge/releases/latest"
+                                target="_blank"
+                                rel="noopener"
+                            >
+                                <i class="fa-brands fa-apple"></i>
+                                Download
+                                <span class="chip" id="dl-arch"
+                                    >Apple Silicon</span
+                                >
+                            </a>
+                            <a
+                                class="intel-link"
+                                id="dl-intel"
+                                href="https://github.com/ansxuman/Clauge/releases/latest"
+                                target="_blank"
+                                rel="noopener"
+                            >
+                                On Intel? <u>Get the Intel build</u>
+                            </a>
+                        </div>
+                    </div>
                 </div>
-                <div class="shortcuts-grid">
-                    <div class="shortcut-card reveal">
-                        <div class="shortcut-keys">
-                            <kbd>&#8984;</kbd> <kbd>N</kbd>
-                        </div>
-                        <div class="shortcut-desc">New session</div>
-                    </div>
-                    <div class="shortcut-card reveal reveal-delay-1">
-                        <div class="shortcut-keys">
-                            <kbd>&#8984;</kbd> <kbd>1-9</kbd>
-                        </div>
-                        <div class="shortcut-desc">Switch session</div>
-                    </div>
-                    <div class="shortcut-card reveal reveal-delay-2">
-                        <div class="shortcut-keys">
-                            <kbd>&#8984;</kbd> <kbd>B</kbd>
-                        </div>
-                        <div class="shortcut-desc">Toggle sidebar</div>
-                    </div>
-                    <div class="shortcut-card reveal reveal-delay-3">
-                        <div class="shortcut-keys">
-                            <kbd>&#8984;</kbd> <kbd>L</kbd>
-                        </div>
-                        <div class="shortcut-desc">Toggle shell</div>
-                    </div>
-                </div>
-            </div>
-        </section>
+            </section>
+        </main>
 
-        <!-- Download -->
-        <section class="download-section">
-            <div class="container reveal">
-                <h2>Get Clauge</h2>
-                <p class="sub">Free and open source.</p>
-                <a
-                    id="cta-download"
-                    href="https://github.com/ansxuman/Clauge/releases/latest"
-                    class="btn-primary"
-                >
-                    <svg
-                        viewBox="0 0 16 16"
-                        fill="currentColor"
-                        width="16"
-                        height="16"
-                    >
-                        <path
-                            d="M2.75 14A1.75 1.75 0 011 12.25v-2.5a.75.75 0 011.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 00.25-.25v-2.5a.75.75 0 011.5 0v2.5A1.75 1.75 0 0113.25 14H2.75zM7.25 7.689V2a.75.75 0 011.5 0v5.689l1.97-1.969a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 6.78a.749.749 0 111.06-1.06l1.97 1.969z"
-                        />
-                    </svg>
-                    <span class="dl-text">Download for macOS</span>
-                </a>
-                <a href="#" class="intel-link" style="display:none;">Looking for Intel Mac?</a>
-                <p class="below-btn">
-                    <a href="https://github.com/ansxuman/Clauge">View source on GitHub</a>
-                </p>
-            </div>
-        </section>
-
-        <!-- Footer -->
         <footer>
             <div class="container">
-                <div class="footer-inner">
-                    <div class="footer-left">
-                        <div class="logo">Clauge</div>
-                        <div class="footer-links">
-                            <a href="https://github.com/ansxuman/Clauge"
-                                >GitHub</a
-                            >
-                            <a href="https://github.com/ansxuman/Clauge/issues"
-                                >Report Bug</a
-                            >
-                            <a href="https://github.com/ansxuman/Clauge/issues"
-                                >Request Feature</a
-                            >
-                        </div>
-                    </div>
-                    <div class="footer-right">
-                        <a href="https://buymeacoffee.com/ansxuman">
-                            <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="currentColor"
-                            >
-                                <path
-                                    d="M2 21.5c0 .28.22.5.5.5h15c.28 0 .5-.22.5-.5V18H2v3.5zM20 6h-1V4.5c0-.28-.22-.5-.5-.5h-15c-.28 0-.5.22-.5.5V6H2c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1.47c.41 1.74 1.7 3.15 3.37 3.72l-.34.78c-.12.28.04.5.34.5h6.32c.3 0 .46-.22.34-.5l-.34-.78c1.67-.57 2.96-1.98 3.37-3.72H18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-2 4h-1V8h1v2z"
-                                />
-                            </svg>
-                            Buy me a coffee
+                <div class="row">
+                    <div class="col" style="max-width: 320px">
+                        <a class="brand" href="./" style="margin-bottom: 8px">
+                            <img src="clauge-mark.svg" alt="" />
+                            <span>Clauge</span>
                         </a>
+                        <p style="color: var(--text-dim)">
+                            The AI-powered super-app for developers.
+                        </p>
+                    </div>
+                    <div class="col">
+                        <h5>Product</h5>
+                        <a href="#what-it-does">What it does</a>
+                        <a href="#ai">The AI</a>
+                        <a href="#themes">Themes</a>
+                        <a href="changelog.html">Changelog</a>
+                    </div>
+                    <div class="col">
+                        <h5>Open</h5>
+                        <a
+                            href="https://github.com/ansxuman/Clauge"
+                            target="_blank"
+                            rel="noopener"
+                            >GitHub</a
+                        >
+                        <a
+                            href="https://github.com/ansxuman/Clauge/issues"
+                            target="_blank"
+                            rel="noopener"
+                            >Report an issue</a
+                        >
+                        <a
+                            href="https://github.com/ansxuman/Clauge/releases"
+                            target="_blank"
+                            rel="noopener"
+                            >Releases</a
+                        >
                     </div>
                 </div>
-                <div class="footer-bottom">Apache License 2.0</div>
+                <div class="meta-row">
+                    <span>© 2026 Clauge</span>
+                    <span>Made for developers · macOS</span>
+                </div>
             </div>
         </footer>
 
-        <script>
-            // Scroll reveal
-            const observer = new IntersectionObserver(
-                (entries) => {
-                    entries.forEach((e) => {
-                        if (e.isIntersecting) {
-                            e.target.classList.add("visible");
-                        }
-                    });
-                },
-                { threshold: 0.1, rootMargin: "0px 0px -40px 0px" },
-            );
-            document
-                .querySelectorAll(".reveal")
-                .forEach((el) => observer.observe(el));
-
-            // Hero typewriter
-            (function () {
-                const el = document.querySelector(".hero-typewriter");
-                if (!el) return;
-                const words = [
-                    "sessions",
-                    "terminals",
-                    "git workflows",
-                    "plugins",
-                    "usage analytics",
-                    "contexts",
-                    "your way",
-                ];
-                const colors = [
-                    "var(--blue)",
-                    "var(--green)",
-                    "var(--yellow)",
-                    "var(--purple)",
-                    "var(--red)",
-                    "var(--blue)",
-                    "var(--green)",
-                ];
-                let wordIdx = 0,
-                    charIdx = 0,
-                    deleting = false;
-                function tick() {
-                    const word = words[wordIdx];
-                    if (!deleting) {
-                        el.textContent = word.slice(0, charIdx);
-                        el.style.color = colors[wordIdx];
-                        charIdx++;
-                        if (charIdx > word.length) {
-                            setTimeout(() => {
-                                deleting = true;
-                                tick();
-                            }, 2000);
-                            return;
-                        }
-                        setTimeout(tick, 60);
-                    } else {
-                        el.textContent = word.slice(0, charIdx);
-                        charIdx--;
-                        if (charIdx < 0) {
-                            deleting = false;
-                            charIdx = 0;
-                            wordIdx = (wordIdx + 1) % words.length;
-                            setTimeout(tick, 400);
-                            return;
-                        }
-                        setTimeout(tick, 30);
-                    }
-                }
-                setTimeout(tick, 800);
-            })();
-
-            // Header scroll
-            const header = document.getElementById("header");
-            window.addEventListener(
-                "scroll",
-                () => {
-                    header.classList.toggle("scrolled", window.scrollY > 20);
-                },
-                { passive: true },
-            );
-
-            // Direct download — default to Apple Silicon, show Intel link
-            (async function () {
-                try {
-                    const resp = await fetch(
-                        "https://api.github.com/repos/ansxuman/Clauge/releases/latest",
-                    );
-                    if (!resp.ok) return;
-                    const release = await resp.json();
-                    const assets = release.assets || [];
-                    const armDmg = assets.find(a => a.name.endsWith(".dmg") && a.name.includes("aarch64"));
-                    const intelDmg = assets.find(a => a.name.endsWith(".dmg") && (a.name.includes("x64") || a.name.includes("x86_64")));
-                    const version = release.tag_name;
-
-                    if (armDmg) {
-                        document.querySelectorAll("#hero-download, #cta-download").forEach(el => {
-                            el.href = armDmg.browser_download_url;
-                            el.querySelector(".dl-text").textContent = `Download ${version} (Apple Silicon)`;
-                        });
-                    }
-                    if (intelDmg) {
-                        document.querySelectorAll(".intel-link").forEach(el => {
-                            el.href = intelDmg.browser_download_url;
-                            el.style.display = "inline";
-                        });
-                    }
-                } catch (e) {}
-            })();
-
-            // Session switcher — sidebar click + auto-cycle
-            (function () {
-                const items = document.querySelectorAll(".demo-side-item");
-                const panels = document.querySelectorAll(".demo-term-content");
-                let current = 0;
-                function switchTo(idx) {
-                    items.forEach((t) => {
-                        t.classList.remove("active");
-                        t.querySelector(".demo-status-dot").classList.remove(
-                            "on",
-                        );
-                    });
-                    panels.forEach((p) => p.classList.remove("active"));
-                    items[idx].classList.add("active");
-                    items[idx]
-                        .querySelector(".demo-status-dot")
-                        .classList.add("on");
-                    panels[idx].classList.add("active");
-                    current = idx;
-                }
-                items.forEach((item, i) =>
-                    item.addEventListener("click", () => switchTo(i)),
-                );
-                setInterval(() => switchTo((current + 1) % items.length), 3000);
-            })();
-
-            // Typing terminal
-            (function () {
-                const el = document.getElementById("typing-terminal");
-                if (!el) return;
-                const lines = [
-                    { text: "$ claude --resume a3f8c2d1", cls: "prompt" },
-                    { text: "", cls: "" },
-                    { text: "Resuming session · Context: Code Style Guidelines", cls: "dim" },
-                    { text: "", cls: "" },
-                    { text: "> Fix the auth bug and commit", cls: "" },
-                    { text: "", cls: "" },
-                    { text: "Reading src/middleware/auth.ts", cls: "dim" },
-                    { text: "Editing src/middleware/auth.ts", cls: "dim" },
-                    { text: "", cls: "" },
-                    { text: "Fixed. Running git diff...", cls: "" },
-                    { text: "  + validateToken(req.headers.authorization)", cls: "warn" },
-                    { text: "  - // TODO: add validation", cls: "warn" },
-                    { text: "", cls: "" },
-                    { text: "Committed: fix(auth): add token validation", cls: "dim" },
-                ];
-                let lineIdx = 0,
-                    charIdx = 0;
-                function type() {
-                    if (lineIdx >= lines.length) {
-                        lineIdx = 0;
-                        el.innerHTML = "";
-                    }
-                    const line = lines[lineIdx];
-                    if (line.text === "") {
-                        el.innerHTML += "<br>";
-                        lineIdx++;
-                        charIdx = 0;
-                        setTimeout(type, 200);
-                    } else if (charIdx === 0) {
-                        el.innerHTML += `<span class="t-${line.cls}">`;
-                        charIdx++;
-                        setTimeout(type, 30);
-                    } else if (charIdx <= line.text.length) {
-                        const spans = el.querySelectorAll("span");
-                        const last = spans[spans.length - 1];
-                        last.textContent = line.text.slice(0, charIdx);
-                        charIdx++;
-                        setTimeout(type, lineIdx === 0 ? 60 : 20);
-                    } else {
-                        el.innerHTML += "</span><br>";
-                        lineIdx++;
-                        charIdx = 0;
-                        setTimeout(
-                            type,
-                            lineIdx < lines.length && lines[lineIdx].text === ""
-                                ? 100
-                                : 300,
-                        );
-                    }
-                }
-                // Start when visible
-                const obs = new IntersectionObserver(
-                    (entries) => {
-                        if (entries[0].isIntersecting) {
-                            obs.disconnect();
-                            type();
-                        }
-                    },
-                    { threshold: 0.3 },
-                );
-                obs.observe(el.closest(".feature-row"));
-            })();
-
-            // Theme color morphing
-            (function () {
-                const demo = document.getElementById("theme-demo");
-                if (!demo) return;
-                const dots = demo.querySelectorAll(".theme-dot");
-                const window_ = demo.querySelector(".demo-theme-window");
-                const activeItem = demo.querySelector(
-                    ".demo-theme-item.active",
-                );
-                let autoIdx = 0;
-                function setAccent(color) {
-                    window_.style.setProperty("--demo-accent", color);
-                    activeItem.style.borderLeftColor = color;
-                    activeItem.style.background = color + "18";
-                    dots.forEach((d) => d.classList.remove("active"));
-                }
-                dots.forEach((dot, i) => {
-                    dot.addEventListener("click", () => {
-                        setAccent(dot.dataset.accent);
-                        dot.classList.add("active");
-                        autoIdx = i;
-                    });
-                });
-                // Auto-cycle
-                const colors = [
-                    "#58a6ff",
-                    "#d2a8ff",
-                    "#3fb950",
-                    "#f85149",
-                    "#d29922",
-                    "#ff7b72",
-                ];
-                setInterval(() => {
-                    autoIdx = (autoIdx + 1) % colors.length;
-                    setAccent(colors[autoIdx]);
-                    dots[autoIdx].classList.add("active");
-                }, 2000);
-                dots[0].classList.add("active");
-            })();
-        </script>
-
-        <!-- Floating Buy Me a Coffee -->
-        <a
-            href="https://buymeacoffee.com/ansxuman"
-            target="_blank"
-            class="bmc-float"
-            title="Buy me a coffee"
-        >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                <path
-                    d="M2 21.5c0 .28.22.5.5.5h15c.28 0 .5-.22.5-.5V18H2v3.5zM20 6h-1V4.5c0-.28-.22-.5-.5-.5h-15c-.28 0-.5.22-.5.5V6H2c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1.47c.41 1.74 1.7 3.15 3.37 3.72l-.34.78c-.12.28.04.5.34.5h6.32c.3 0 .46-.22.34-.5l-.34-.78c1.67-.57 2.96-1.98 3.37-3.72H18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-2 4h-1V8h1v2z"
-                />
-            </svg>
-            <span>Buy me a coffee</span>
-        </a>
+        <script src="app.js" defer></script>
     </body>
 </html>

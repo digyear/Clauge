@@ -104,7 +104,7 @@ pub async fn github_get_status(pool: State<'_, SqlitePool>) -> Result<Option<Git
 
 // ── OAuth Flow ──────────────────────────────────────
 
-const GITHUB_CLIENT_ID: &str = "Ov23lix7oiRoAvHlQmS4";
+const GITHUB_CLIENT_ID: &str = "Ov23liXcWby6XVM80TfG";
 const GITHUB_OAUTH_URL: &str = "https://github.com/login/oauth/authorize";
 
 #[tauri::command]
@@ -113,7 +113,7 @@ pub fn github_get_oauth_url() -> String {
         "{}?client_id={}&redirect_uri={}&scope=gist",
         GITHUB_OAUTH_URL,
         GITHUB_CLIENT_ID,
-        "https://clauge.ssh-i.in/auth/callback"
+        "https://clauge.in/auth/callback"
     )
 }
 

@@ -182,7 +182,7 @@
       case 'sync': activeModal.set('github'); break;
       case 'settings': activeModal.set('settings'); break;
       case 'check-updates': handleCheckForUpdates(); break;
-      case 'whats-new': openExternal('https://clauge.ssh-i.in/changelog.html'); break;
+      case 'whats-new': openExternal('https://clauge.in/changelog.html'); break;
       case 'report': openExternal('https://github.com/ansxuman/Clauge/issues/new'); break;
       case 'coffee': openExternal('https://buymeacoffee.com/ansxuman'); break;
       case 'about': activeModal.set('settings'); break;
@@ -239,7 +239,6 @@
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div class="profile-menu" onclick={(e: MouseEvent) => e.stopPropagation()}>
-          <!-- TEMP: GitHub connect/sync hidden — re-enable when sync flow is finalized.
           {#if $githubConnected}
             <div class="pm-sync-status">
               <svg viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2z"/><path d="M7.5 12l3 3 6-6"/></svg>
@@ -264,7 +263,6 @@
             </button>
           {/if}
           <div class="pm-sep"></div>
-          -->
 
           <button class="pm-item" onclick={() => handleProfileAction('settings')}>
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/></svg>
