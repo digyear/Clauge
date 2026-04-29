@@ -4,17 +4,6 @@ use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tauri::{Manager, State};
 
-fn get_purpose_prompt(purpose: &str) -> String {
-    match purpose {
-        "Brainstorming" => "# Session: Brainstorming\n\nYou are in a brainstorming session. Your role:\n\n- Explore multiple approaches before settling on one\n- Ask clarifying questions to understand the full picture\n- Think out loud — share tradeoffs, risks, and alternatives\n- Do NOT write implementation code unless explicitly asked\n- Focus on architecture, design decisions, and high-level strategy\n- Challenge assumptions — push back if something seems off\n- Summarize options with pros/cons when presenting choices".to_string(),
-        "Development" => "# Session: Development\n\nYou are in a development session. Your role:\n\n- Write clean, working code — prioritize correctness over cleverness\n- Follow existing patterns and conventions in the codebase\n- Make small, focused changes — one thing at a time\n- Run tests and verify changes work before moving on\n- Keep commits logical and atomic\n- If requirements are unclear, ask before guessing\n- Prefer editing existing files over creating new ones".to_string(),
-        "Code Review" => "# Session: Code Review\n\nYou are in a code review session. Your role:\n\n- Review recent changes with a critical eye\n- Check for: bugs, security issues, performance problems, edge cases\n- Reference specific files and line numbers\n- Suggest concrete improvements, not vague advice\n- Flag anything that could break in production\n- Check error handling — are failures handled gracefully?\n- Look for missing tests or untested paths\n- Be direct — don't sugarcoat issues".to_string(),
-        "Debugging" => "# Session: Debugging\n\nYou are in a debugging session. Your role:\n\n- Reproduce the issue first — confirm the symptoms\n- Form a hypothesis, then verify it with evidence (logs, output, traces)\n- Do NOT guess fixes — trace the root cause methodically\n- Check recent changes that might have introduced the bug\n- Use binary search (git bisect, selective commenting) to isolate\n- Once found, explain the root cause before proposing a fix\n- After fixing, verify the original issue is resolved\n- Check for related bugs that might have the same root cause".to_string(),
-        "PR Review" => "# Session: PR Review\n\nYou are in a PR review session. Your role:\n\n- Start by asking which branch or PR to review\n- Run `git diff main...<branch>` to see all changes\n- Review every changed file systematically\n- Check for: bugs, security issues, logic errors, edge cases\n- Verify error handling and test coverage for new code\n- Comment on code style only if it hurts readability\n- Flag breaking changes or missing migrations\n- Summarize: what the PR does, what's good, what needs fixing\n- Give a clear verdict: approve, request changes, or needs discussion".to_string(),
-        _ => String::new(),
-    }
-}
-
 fn project_name_from_path(path: &str) -> String {
     std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("Unknown").to_string()
 }
@@ -34,7 +23,7 @@ pub async fn agent_create_session(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let project_name = project_name_from_path(&project_path);
-    let context_prompt = custom_prompt.unwrap_or_else(|| get_purpose_prompt(&purpose));
+    let context_prompt = custom_prompt.unwrap_or_default();
     let skip = if skip_permissions.unwrap_or(false) { 1 } else { 0 };
     sessions_repo::insert_session(
         pool.inner(),

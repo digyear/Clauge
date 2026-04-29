@@ -5,18 +5,8 @@
   import { loadAgentSessions, agentSessions, activeAgentSession } from '../stores';
   import { tabs as tabsStore, addTab, activateTab } from '$lib/shared/stores/tabs';
   import { showToast } from '$lib/shared/primitives/toast';
+  import { SESSION_PURPOSES, getPurposeColor, getPurposePrompt } from '../ai/prompt';
   import { get } from 'svelte/store';
-
-  // Mirror PURPOSE_COLORS used in +layout.svelte's session picker so the new
-  // tab gets the right dot color matching the rest of Agent UI.
-  const PURPOSE_COLORS: Record<string, string> = {
-    Brainstorming: '#d2a8ff',
-    Development: '#3fb950',
-    'Code Review': '#58a6ff',
-    'PR Review': '#d29922',
-    Debugging: '#f85149',
-    Custom: '#8b949e',
-  };
 
   let { show = $bindable(false) } = $props();
 
@@ -41,14 +31,7 @@
   let attachedContextNames = $state<string[]>([]);
   let showContextDropdown = $state(false);
 
-  const purposes = [
-    { label: 'Brainstorming', color: '#d2a8ff' },
-    { label: 'Development', color: '#3fb950' },
-    { label: 'Code Review', color: '#58a6ff' },
-    { label: 'PR Review', color: '#d29922' },
-    { label: 'Debugging', color: '#f85149' },
-    { label: 'Custom', color: '#8b949e' },
-  ];
+  const purposes = SESSION_PURPOSES.map(p => ({ label: p.id, color: p.color }));
 
   // Check if a purpose is already active for this project
   function isPurposeUsed(purposeLabel: string): boolean {
@@ -100,7 +83,9 @@
         purpose,
         projectPath: projectPath.trim(),
         skipPermissions: skipPermissions || undefined,
-        customPrompt: purpose === 'Custom' && customPrompt.trim() ? customPrompt.trim() : undefined,
+        customPrompt: purpose === 'Custom'
+          ? (customPrompt.trim() || undefined)
+          : (getPurposePrompt(purpose) ?? undefined),
         gitName: gitEnabled && gitName.trim() ? gitName.trim() : undefined,
         gitEmail: gitEnabled && gitEmail.trim() ? gitEmail.trim() : undefined,
       });
@@ -128,7 +113,7 @@
       if (existing) {
         activateTab(existing.id);
       } else {
-        addTab(session.title, 'agent', session.id, PURPOSE_COLORS[session.purpose] ?? PURPOSE_COLORS.Custom);
+        addTab(session.title, 'agent', session.id, getPurposeColor(session.purpose));
       }
       activeAgentSession.set(session);
 

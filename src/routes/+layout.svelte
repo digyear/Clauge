@@ -10,6 +10,7 @@
   import SettingsModal from '$lib/components/settings/SettingsModal.svelte';
   import GitHubConnect from '$lib/components/github/GitHubConnect.svelte';
   import { loadAgentSessions, loadAgentContexts } from '$lib/modes/agent/stores';
+  import { getPurposeColor } from '$lib/modes/agent/ai/prompt';
   import NewSessionModal from '$lib/modes/agent/components/NewSessionModal.svelte';
   import EditSessionModal from '$lib/modes/agent/components/EditSessionModal.svelte';
   import UsageDashboard from '$lib/modes/agent/components/UsageDashboard.svelte';
@@ -101,7 +102,7 @@
     if (existing) {
       activateTab(existing.id);
     } else {
-      addTab(session.title, 'agent', session.id, PURPOSE_COLORS[session.purpose] ?? PURPOSE_COLORS.Custom);
+      addTab(session.title, 'agent', session.id, getPurposeColor(session.purpose));
     }
     activeAgentSession.set(session);
     showSessionPicker = false;
@@ -139,15 +140,6 @@
     showSshPicker = false;
     window.dispatchEvent(new CustomEvent(SSH_EVENT.NEW_PROFILE));
   }
-
-  const PURPOSE_COLORS: Record<string, string> = {
-    Brainstorming: '#d2a8ff',
-    Development: '#3fb950',
-    'Code Review': '#58a6ff',
-    'PR Review': '#d29922',
-    Debugging: '#f85149',
-    Custom: '#8b949e',
-  };
 
   async function handleDragStart(e: MouseEvent) {
     if (e.buttons !== 1) return;
@@ -396,7 +388,7 @@
           <span class="session-picker-title">{session.title}</span>
           <span
             class="session-picker-badge"
-            style="color: {PURPOSE_COLORS[session.purpose] ?? PURPOSE_COLORS.Custom}; border-color: {PURPOSE_COLORS[session.purpose] ?? PURPOSE_COLORS.Custom};"
+            style="color: {getPurposeColor(session.purpose)}; border-color: {getPurposeColor(session.purpose)};"
           >{session.purpose}</span>
         </div>
       {/each}
