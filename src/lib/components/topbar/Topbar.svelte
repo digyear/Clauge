@@ -13,6 +13,7 @@
   import { agentKillTerminal } from '$lib/commands/agent';
   import { sshProfiles, activeSshProfile, sshTerminalIds } from '$lib/stores/ssh';
   import { sshKillTerminal } from '$lib/commands/ssh';
+  import { SSH_EVENT, AGENT_EVENT, APP_EVENT } from '$lib/shared/constants/events';
 
   // SQL disconnect
   async function handleSqlDisconnect() {
@@ -111,7 +112,7 @@
       if (termId) sshKillTerminal(termId).catch(() => {});
 
       // Let SshPanel clean up its xterm + maps via window event
-      window.dispatchEvent(new CustomEvent('ssh:close-tab', { detail: { tabKey: closingTab.key } }));
+      window.dispatchEvent(new CustomEvent(SSH_EVENT.CLOSE_TAB, { detail: { tabKey: closingTab.key } }));
 
       // Promote next SSH tab if any, else clear active profile
       const remaining = get(tabs).filter((t) => t.id !== tabId);
@@ -135,7 +136,7 @@
       if (shellId) agentKillTerminal(shellId).catch(() => {});
 
       // Let AgentPanel clean up terminal entries
-      window.dispatchEvent(new CustomEvent('agent:close-tab-session', { detail: { sessionId: closingTab.key } }));
+      window.dispatchEvent(new CustomEvent(AGENT_EVENT.CLOSE_TAB_SESSION, { detail: { sessionId: closingTab.key } }));
 
       const remaining = get(tabs).filter(t => t.id !== tabId);
       const nextAgentTab = remaining.find(t => t.mode === 'agent');
@@ -170,7 +171,7 @@
     if (!tab) { showCloseConfirm = false; return; }
 
     if (tab.unsaved && !tab.key) {
-      window.dispatchEvent(new CustomEvent('clauge:save-new-request', { detail: { tabId: closeConfirmTabId } }));
+      window.dispatchEvent(new CustomEvent(APP_EVENT.SAVE_NEW_REQUEST, { detail: { tabId: closeConfirmTabId } }));
     } else if (tab.dirty && tab.key) {
       const draft = getDraft(closeConfirmTabId);
       if (draft) {
@@ -203,12 +204,12 @@
       // Mirrors agent: no profiles → open create modal; otherwise show picker.
       // The +layout.svelte handler decides which based on profiles count.
       const rect = btn?.getBoundingClientRect();
-      window.dispatchEvent(new CustomEvent('ssh:add-tab', { detail: { x: rect?.left ?? 290, y: rect?.bottom ?? 48 } }));
+      window.dispatchEvent(new CustomEvent(SSH_EVENT.ADD_TAB, { detail: { x: rect?.left ?? 290, y: rect?.bottom ?? 48 } }));
       return;
     }
     if (m === 'agent') {
       const rect = btn?.getBoundingClientRect();
-      window.dispatchEvent(new CustomEvent('agent:add-tab', { detail: { x: rect?.left ?? 290, y: rect?.bottom ?? 48 } }));
+      window.dispatchEvent(new CustomEvent(AGENT_EVENT.ADD_TAB, { detail: { x: rect?.left ?? 290, y: rect?.bottom ?? 48 } }));
       return;
     }
     if (m === 'sql') {
@@ -341,10 +342,10 @@
   }
 
   onMount(() => {
-    window.addEventListener('clauge:tab-close-prompt', handleTabClosePromptEvent);
+    window.addEventListener(APP_EVENT.TAB_CLOSE_PROMPT, handleTabClosePromptEvent);
   });
   onDestroy(() => {
-    window.removeEventListener('clauge:tab-close-prompt', handleTabClosePromptEvent);
+    window.removeEventListener(APP_EVENT.TAB_CLOSE_PROMPT, handleTabClosePromptEvent);
   });
 </script>
 

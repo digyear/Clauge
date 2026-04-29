@@ -4,6 +4,7 @@
   import { loadAgentSessions, activeAgentSession } from '$lib/stores/agent';
   import { showToast } from '$lib/components/shared/toast';
   import type { AgentSession, AgentContext } from '$lib/types/agent';
+  import { AGENT_EVENT } from '$lib/shared/constants/events';
 
   let { show = $bindable(false), session = $bindable<AgentSession | null>(null) } = $props();
 
@@ -85,7 +86,7 @@
         const updated = { ...session, title: title.trim(), contextPrompt, skipPermissions: skipPermissions ? 1 : 0, gitName: gitEnabled && gitName.trim() ? gitName.trim() : null, gitEmail: gitEnabled && gitEmail.trim() ? gitEmail.trim() : null };
         activeAgentSession.set(updated);
         // Relaunch terminal with --resume + updated prompt (shows loader, seamless)
-        window.dispatchEvent(new CustomEvent('agent:relaunch-session', { detail: { session: updated } }));
+        window.dispatchEvent(new CustomEvent(AGENT_EVENT.RELAUNCH_SESSION, { detail: { session: updated } }));
       }
       show = false;
       showToast('Session updated', 'success');

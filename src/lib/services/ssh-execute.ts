@@ -1,3 +1,5 @@
+import { SSH_EVENT } from '$lib/shared/constants/events';
+
 // Coordination layer between AIPanel (which receives tool_pending events
 // from Rust) and SshPanel (which owns the xterm + PTY writer). Avoids
 // circular imports by using a tiny pub/sub indirection.
@@ -30,7 +32,7 @@ export function executeAndCaptureOnSsh(profileId: string, command: string): Prom
     pendingCaptures.set(requestId, resolve);
   });
   const detail: SshCaptureRequest = { requestId, profileId, command };
-  window.dispatchEvent(new CustomEvent('ssh:execute-capture-request', { detail }));
+  window.dispatchEvent(new CustomEvent(SSH_EVENT.EXECUTE_CAPTURE_REQUEST, { detail }));
   return promise;
 }
 

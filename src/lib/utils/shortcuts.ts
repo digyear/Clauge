@@ -3,6 +3,7 @@ import { mode } from '$lib/stores/app';
 import { navOpen, aiPanelOpen, aiPanelOpenPerMode, activeModal } from '$lib/stores/app';
 import { tabs, activeTabId, closeTab, getDraft, markClean } from '$lib/stores/tabs';
 import { commitRequest } from '$lib/stores/collections';
+import { APP_EVENT } from '$lib/shared/constants/events';
 
 export function setupGlobalShortcuts() {
   document.addEventListener('keydown', handleKeydown);
@@ -45,7 +46,7 @@ function handleKeydown(e: KeyboardEvent) {
     // runs the proper teardown (kill terminal, switch active profile, reset
     // spawning state). REST tabs only need the prompt when dirty.
     if (tab.mode === 'agent' || tab.mode === 'ssh' || tab.dirty || tab.unsaved) {
-      window.dispatchEvent(new CustomEvent('clauge:tab-close-prompt', { detail: { tabId } }));
+      window.dispatchEvent(new CustomEvent(APP_EVENT.TAB_CLOSE_PROMPT, { detail: { tabId } }));
     } else {
       closeTab(tabId);
     }
@@ -62,10 +63,10 @@ function handleKeydown(e: KeyboardEvent) {
     if (!tab) return;
     if (tab.mode === 'sql') {
       // SQL: trigger save for pending result edits
-      window.dispatchEvent(new CustomEvent('clauge:sql-save'));
+      window.dispatchEvent(new CustomEvent(APP_EVENT.SQL_SAVE));
     } else if (tab.unsaved && tab.key === null) {
       // New unsaved request — show save dialog
-      window.dispatchEvent(new CustomEvent('clauge:save-new-request', { detail: { tabId } }));
+      window.dispatchEvent(new CustomEvent(APP_EVENT.SAVE_NEW_REQUEST, { detail: { tabId } }));
     } else if (tab.dirty && tab.key !== null) {
       // Existing dirty request — persist draft to backend
       const draft = getDraft(tabId);

@@ -25,6 +25,8 @@
   import { showToast } from '$lib/components/shared/toast';
   import { resolveSshCapture, rejectAllSshCaptures, type SshCaptureRequest } from '$lib/services/ssh-execute';
   import type { SshProfile, SshTerminalPayload } from '$lib/types/ssh';
+  import { SSH_EVENT } from '$lib/shared/constants/events';
+  import { RESIZE_DEBOUNCE_MS, SSH_CAPTURE_TIMEOUT_MS } from '$lib/shared/constants/timings';
 
   let terminalEl: HTMLDivElement;
 
@@ -50,7 +52,7 @@
   // the trailing space — but the 15s timeout is the hard backstop.
   const SHELL_PROMPT_RE = /[\$#>❯%]\s*$/m;
   const ANSI_RE = /\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(?:\x07|\x1b\\)/g;
-  const CAPTURE_TIMEOUT_MS = 15_000;
+  const CAPTURE_TIMEOUT_MS = SSH_CAPTURE_TIMEOUT_MS;
   const CAPTURE_MAX_CHARS = 100_000;
 
   function stripAnsi(text: string): string {
@@ -157,7 +159,7 @@
         } catch {
           /* ignore */
         }
-      }, 100);
+      }, RESIZE_DEBOUNCE_MS);
     }).observe(container);
 
     termEntries.set(tabKey, entry);
@@ -522,10 +524,10 @@
   }
 
   onMount(async () => {
-    window.addEventListener('ssh:open-tab', handleOpenTab);
-    window.addEventListener('ssh:close-tab', handleCloseTab);
-    window.addEventListener('ssh:insert-command', handleInsertCommand);
-    window.addEventListener('ssh:execute-capture-request', handleExecuteCaptureRequest);
+    window.addEventListener(SSH_EVENT.OPEN_TAB, handleOpenTab);
+    window.addEventListener(SSH_EVENT.CLOSE_TAB, handleCloseTab);
+    window.addEventListener(SSH_EVENT.INSERT_COMMAND, handleInsertCommand);
+    window.addEventListener(SSH_EVENT.EXECUTE_CAPTURE_REQUEST, handleExecuteCaptureRequest);
 
     // First mount: load profiles + auto-attach if there's a tab waiting.
     await loadSshProfiles();
@@ -550,10 +552,10 @@
   onDestroy(() => {
     unsubProfile();
     unsubAppearance();
-    window.removeEventListener('ssh:open-tab', handleOpenTab);
-    window.removeEventListener('ssh:close-tab', handleCloseTab);
-    window.removeEventListener('ssh:insert-command', handleInsertCommand);
-    window.removeEventListener('ssh:execute-capture-request', handleExecuteCaptureRequest);
+    window.removeEventListener(SSH_EVENT.OPEN_TAB, handleOpenTab);
+    window.removeEventListener(SSH_EVENT.CLOSE_TAB, handleCloseTab);
+    window.removeEventListener(SSH_EVENT.INSERT_COMMAND, handleInsertCommand);
+    window.removeEventListener(SSH_EVENT.EXECUTE_CAPTURE_REQUEST, handleExecuteCaptureRequest);
     rejectAllSshCaptures('SSH panel unmounted');
   });
 

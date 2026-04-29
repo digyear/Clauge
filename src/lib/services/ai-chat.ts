@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { aiChat, recordAiUsage } from '$lib/commands/ai';
 import type { ChatMessage, ChatContext } from '$lib/types/ai';
+import { aiEvent } from '$lib/shared/constants/events';
 
 export interface ChatCallbacks {
   onText: (text: string) => void;
@@ -25,28 +26,28 @@ export async function sendChatMessage(
 ): Promise<() => void> {
   const unlisteners: UnlistenFn[] = [];
 
-  unlisteners.push(await listen<{ text: string }>(`ai:text:${sessionId}`, (e) => {
+  unlisteners.push(await listen<{ text: string }>(aiEvent.text(sessionId), (e) => {
     callbacks.onText(e.payload.text);
   }));
 
-  unlisteners.push(await listen<{ toolName: string }>(`ai:tool_start:${sessionId}`, (e) => {
+  unlisteners.push(await listen<{ toolName: string }>(aiEvent.toolStart(sessionId), (e) => {
     callbacks.onToolStart(e.payload.toolName);
   }));
 
-  unlisteners.push(await listen<{ toolName: string }>(`ai:tool_end:${sessionId}`, (e) => {
+  unlisteners.push(await listen<{ toolName: string }>(aiEvent.toolEnd(sessionId), (e) => {
     callbacks.onToolEnd(e.payload.toolName);
   }));
 
-  unlisteners.push(await listen<{ action: string; data: any }>(`ai:action:${sessionId}`, (e) => {
+  unlisteners.push(await listen<{ action: string; data: any }>(aiEvent.action(sessionId), (e) => {
     callbacks.onAction(e.payload.action, e.payload.data);
   }));
 
-  unlisteners.push(await listen<{ inputTokens: number; outputTokens: number }>(`ai:done:${sessionId}`, (e) => {
+  unlisteners.push(await listen<{ inputTokens: number; outputTokens: number }>(aiEvent.done(sessionId), (e) => {
     callbacks.onDone(e.payload.inputTokens, e.payload.outputTokens);
     recordAiUsage(chatMode, model, e.payload.inputTokens, e.payload.outputTokens).catch(() => {});
   }));
 
-  unlisteners.push(await listen<{ error: string }>(`ai:error:${sessionId}`, (e) => {
+  unlisteners.push(await listen<{ error: string }>(aiEvent.error(sessionId), (e) => {
     callbacks.onError(e.payload.error);
   }));
 

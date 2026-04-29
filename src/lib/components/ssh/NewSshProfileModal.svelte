@@ -5,6 +5,7 @@
   import { showToast } from '$lib/components/shared/toast';
   import type { SshAuthType } from '$lib/types/ssh';
   import { get } from 'svelte/store';
+  import { SSH_EVENT } from '$lib/shared/constants/events';
 
   let { show = $bindable(false) } = $props();
 
@@ -60,10 +61,10 @@
         passphrase: authType === 'key' && passphrase ? passphrase : null,
       });
       await loadSshProfiles();
-      window.dispatchEvent(new CustomEvent('ssh:profile-created', { detail: profile }));
+      window.dispatchEvent(new CustomEvent(SSH_EVENT.PROFILE_CREATED, { detail: profile }));
       // Auto-connect: open the new profile in a tab immediately. If the connection
       // fails it surfaces via the reconnect banner — no information is lost.
-      window.dispatchEvent(new CustomEvent('ssh:open-tab', { detail: profile }));
+      window.dispatchEvent(new CustomEvent(SSH_EVENT.OPEN_TAB, { detail: profile }));
       show = false;
       resetForm();
       showToast('SSH profile saved', 'success');

@@ -6,6 +6,7 @@
   import type { AgentSession } from '$lib/types/agent';
   import { tabs, addTab, activateTab } from '$lib/stores/tabs';
   import { get } from 'svelte/store';
+  import { AGENT_EVENT } from '$lib/shared/constants/events';
 
   // Teleport action: moves element to document.body to escape stacking context
   function teleport(node: HTMLElement) {
@@ -69,7 +70,7 @@
   });
 
   function handleNewSession() {
-    window.dispatchEvent(new CustomEvent('agent:new-session'));
+    window.dispatchEvent(new CustomEvent(AGENT_EVENT.NEW_SESSION));
   }
 
   function handleSelectSession(session: AgentSession) {
@@ -85,7 +86,7 @@
     // Don't re-select the already active session
     if ($activeAgentSession?.id === session.id) return;
     activeAgentSession.set(session);
-    window.dispatchEvent(new CustomEvent('agent:select-session', { detail: { session } }));
+    window.dispatchEvent(new CustomEvent(AGENT_EVENT.SELECT_SESSION, { detail: { session } }));
   }
 
   function toggleProject(name: string) {
@@ -130,7 +131,7 @@
         label: 'Edit',
         icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
         action: () => {
-          window.dispatchEvent(new CustomEvent('agent:edit-session', { detail: { session } }));
+          window.dispatchEvent(new CustomEvent(AGENT_EVENT.EDIT_SESSION, { detail: { session } }));
         },
       },
       {
@@ -140,7 +141,7 @@
           confirmTitle = 'Reset Session';
           confirmMessage = `Reset "${session.title}"? This will clear the Claude session ID and start fresh.`;
           confirmAction = async () => {
-            window.dispatchEvent(new CustomEvent('agent:reset-session', { detail: { session } }));
+            window.dispatchEvent(new CustomEvent(AGENT_EVENT.RESET_SESSION, { detail: { session } }));
           };
           confirmShow = true;
         },
@@ -154,7 +155,7 @@
           confirmTitle = 'Delete Session';
           confirmMessage = `Delete "${session.title}"? This cannot be undone.`;
           confirmAction = async () => {
-            window.dispatchEvent(new CustomEvent('agent:delete-session', { detail: { session } }));
+            window.dispatchEvent(new CustomEvent(AGENT_EVENT.DELETE_SESSION, { detail: { session } }));
           };
           confirmShow = true;
         },

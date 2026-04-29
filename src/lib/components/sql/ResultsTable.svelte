@@ -6,6 +6,7 @@
   import { setSqlPending, sqlRowLimit } from '$lib/stores/sql';
   import { sqlExecuteQuery } from '$lib/commands/sql_client';
   import { friendlyError } from '$lib/utils/errors';
+  import { APP_EVENT } from '$lib/shared/constants/events';
 
   interface Props {
     result: SqlQueryResult | null;
@@ -83,11 +84,11 @@
   }
 
   onMount(() => {
-    window.addEventListener('clauge:sql-save', handleGlobalSave);
+    window.addEventListener(APP_EVENT.SQL_SAVE, handleGlobalSave);
   });
 
   onDestroy(() => {
-    window.removeEventListener('clauge:sql-save', handleGlobalSave);
+    window.removeEventListener(APP_EVENT.SQL_SAVE, handleGlobalSave);
   });
 
   function computeColumnWidth(colName: string, colIdx: number): number {

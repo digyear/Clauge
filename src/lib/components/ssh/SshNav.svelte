@@ -7,6 +7,7 @@
   import NewSshProfileModal from './NewSshProfileModal.svelte';
   import EditSshProfileModal from './EditSshProfileModal.svelte';
   import type { SshProfile } from '$lib/types/ssh';
+  import { SSH_EVENT } from '$lib/shared/constants/events';
 
   // Teleport: lift modals/confirm dialog to body, escapes nav stacking context.
   function teleport(node: HTMLElement) {
@@ -59,7 +60,7 @@
     sshTouchProfile(profile.id)
       .then(() => loadSshProfiles())
       .catch(() => {});
-    window.dispatchEvent(new CustomEvent('ssh:open-tab', { detail: profile }));
+    window.dispatchEvent(new CustomEvent(SSH_EVENT.OPEN_TAB, { detail: profile }));
   }
 
   function showProfileMenu(e: MouseEvent, profile: SshProfile) {

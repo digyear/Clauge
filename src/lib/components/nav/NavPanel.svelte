@@ -7,6 +7,8 @@
   import SshNav from '$lib/components/ssh/SshNav.svelte';
   import HistoryPanel from './HistoryPanel.svelte';
   import ImportExportModal from '$lib/components/shared/ImportExportModal.svelte';
+  import { getNavPinned, setNavPinned } from '$lib/shared/constants/storage';
+  import { AGENT_EVENT } from '$lib/shared/constants/events';
 
   let searchPerMode = $state<Record<string, string>>({ rest: '', sql: '', nosql: '', agent: '', ssh: '' });
   let searchQuery = $derived(searchPerMode[$mode] ?? '');
@@ -18,13 +20,13 @@
   let showImportExport = $state(false);
 
   // Pin/unpin: pinned = always visible in layout, unpinned = overlay on hover (Arc browser style)
-  let navPinned = $state(localStorage.getItem('clauge_nav_pinned') !== 'false');
+  let navPinned = $state(getNavPinned());
   let hoverVisible = $state(false);
   let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 
   function togglePin() {
     navPinned = !navPinned;
-    localStorage.setItem('clauge_nav_pinned', String(navPinned));
+    setNavPinned(navPinned);
     if (navPinned) {
       navOpen.set(true);
       hoverVisible = false;
@@ -58,16 +60,16 @@
 
   import { onMount, onDestroy } from 'svelte';
   onMount(() => {
-    window.addEventListener('agent:edit-session', handleOverlayDismiss);
-    window.addEventListener('agent:reset-session', handleOverlayDismiss);
-    window.addEventListener('agent:relaunch-session', handleOverlayDismiss);
-    window.addEventListener('agent:new-session', handleOverlayDismiss);
+    window.addEventListener(AGENT_EVENT.EDIT_SESSION, handleOverlayDismiss);
+    window.addEventListener(AGENT_EVENT.RESET_SESSION, handleOverlayDismiss);
+    window.addEventListener(AGENT_EVENT.RELAUNCH_SESSION, handleOverlayDismiss);
+    window.addEventListener(AGENT_EVENT.NEW_SESSION, handleOverlayDismiss);
   });
   onDestroy(() => {
-    window.removeEventListener('agent:edit-session', handleOverlayDismiss);
-    window.removeEventListener('agent:reset-session', handleOverlayDismiss);
-    window.removeEventListener('agent:relaunch-session', handleOverlayDismiss);
-    window.removeEventListener('agent:new-session', handleOverlayDismiss);
+    window.removeEventListener(AGENT_EVENT.EDIT_SESSION, handleOverlayDismiss);
+    window.removeEventListener(AGENT_EVENT.RESET_SESSION, handleOverlayDismiss);
+    window.removeEventListener(AGENT_EVENT.RELAUNCH_SESSION, handleOverlayDismiss);
+    window.removeEventListener(AGENT_EVENT.NEW_SESSION, handleOverlayDismiss);
   });
 
   function setSearch(val: string) {
@@ -106,7 +108,7 @@
     } else if ($mode === 'nosql') {
       nosqlNavRef?.showAddConnection();
     } else if ($mode === 'agent') {
-      window.dispatchEvent(new CustomEvent('agent:new-session'));
+      window.dispatchEvent(new CustomEvent(AGENT_EVENT.NEW_SESSION));
     } else if ($mode === 'ssh') {
       sshNavRef?.showAddProfile();
     }

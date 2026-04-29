@@ -4,6 +4,7 @@
   import { loadSshProfiles } from '$lib/stores/ssh';
   import { showToast } from '$lib/components/shared/toast';
   import type { SshAuthType, SshProfile } from '$lib/types/ssh';
+  import { SSH_EVENT } from '$lib/shared/constants/events';
 
   let { show = $bindable(false), profile = $bindable<SshProfile | null>(null) } = $props();
 
@@ -72,7 +73,7 @@
         passphrase: authType === 'key' && passphrase ? passphrase : undefined,
       });
       await loadSshProfiles();
-      window.dispatchEvent(new CustomEvent('ssh:profile-updated', { detail: updated }));
+      window.dispatchEvent(new CustomEvent(SSH_EVENT.PROFILE_UPDATED, { detail: updated }));
       show = false;
       showToast('SSH profile updated', 'success');
     } catch (e: any) {
