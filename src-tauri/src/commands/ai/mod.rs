@@ -1,7 +1,6 @@
 pub mod types;
 pub mod usage;
 pub mod context;
-pub mod tools;
 pub mod anthropic;
 pub mod openai;
 

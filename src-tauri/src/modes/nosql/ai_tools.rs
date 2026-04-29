@@ -604,3 +604,58 @@ fn format_redis_value(value: &redis::Value) -> String {
         _ => format!("{:?}", value),
     }
 }
+
+// --- Dispatch registry integration -----------------------------------------
+//
+// Every NoSQL tool flows through `execute_nosql_tool` and its `match`. The
+// registry executor is a thin adapter that re-dispatches by tool name.
+
+use crate::shared::ai::dispatch::{register, ToolContext, ToolDescriptor, ToolFuture};
+
+macro_rules! nosql_tool_executor {
+    ($name:literal) => {{
+        fn exec<'a>(ctx: &'a ToolContext<'a>) -> ToolFuture<'a> {
+            Box::pin(async move {
+                execute_nosql_tool(
+                    $name,
+                    ctx.input,
+                    ctx.context,
+                    ctx.pool,
+                    ctx.app,
+                    ctx.session_id,
+                    ctx.nosql_conns,
+                )
+                .await
+            })
+        }
+        exec as crate::shared::ai::dispatch::ToolExecutor
+    }};
+}
+
+/// Register every NoSQL-mode AI tool with the shared dispatch registry.
+pub fn register_tools() {
+    let entries: &[(&'static str, &'static str, crate::shared::ai::dispatch::ToolExecutor)] = &[
+        ("list_nosql_connections", "List saved NoSQL connections", nosql_tool_executor!("list_nosql_connections")),
+        ("list_nosql_databases", "List databases on a NoSQL connection", nosql_tool_executor!("list_nosql_databases")),
+        ("list_nosql_collections", "List MongoDB collections in a database", nosql_tool_executor!("list_nosql_collections")),
+        ("find_documents", "Find MongoDB documents by filter", nosql_tool_executor!("find_documents")),
+        ("count_documents", "Count MongoDB documents matching a filter", nosql_tool_executor!("count_documents")),
+        ("aggregate", "Run a MongoDB aggregation pipeline", nosql_tool_executor!("aggregate")),
+        ("apply_nosql_query", "Send a NoSQL query suggestion to the user for approval", nosql_tool_executor!("apply_nosql_query")),
+        ("redis_list_keys", "List Redis keys matching a pattern", nosql_tool_executor!("redis_list_keys")),
+        ("redis_execute", "Execute an arbitrary Redis command", nosql_tool_executor!("redis_execute")),
+        ("sample_documents", "Sample documents from a MongoDB collection", nosql_tool_executor!("sample_documents")),
+        ("insert_documents", "Insert documents into a MongoDB collection", nosql_tool_executor!("insert_documents")),
+        ("get_collection_stats", "Get stats for a MongoDB collection", nosql_tool_executor!("get_collection_stats")),
+    ];
+
+    for (name, description, executor) in entries {
+        register(ToolDescriptor {
+            name,
+            mode: "nosql",
+            description,
+            schema: serde_json::json!({}),
+            executor: *executor,
+        });
+    }
+}

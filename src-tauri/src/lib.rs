@@ -234,6 +234,15 @@ pub fn run() {
             app.manage(modes::ssh::models::SshTerminalState::default());
             app.manage(commands::ai::types::PendingFrontendTools::default());
 
+            // Register every mode's AI tools into the shared dispatch registry.
+            // Adding a new tool to a mode = one new function + one entry in
+            // that mode's `register_tools()`; zero edits to the dispatch loop.
+            modes::agent::ai_tools::register_tools();
+            modes::rest::ai_tools::register_tools();
+            modes::sql::ai_tools::register_tools();
+            modes::nosql::ai_tools::register_tools();
+            modes::ssh::ai_tools::register_tools();
+
             // Apply vibrancy on macOS — use Sidebar material (what native macOS apps use)
             if let Some(window) = app.get_webview_window("main") {
                 let _ = appearance::vibrancy::apply_vibrancy(&window, &saved_material);

@@ -776,3 +776,56 @@ pub async fn execute_sql_tool(
         _ => format!("Unknown SQL tool: {}", tool_name),
     }
 }
+
+// --- Dispatch registry integration -----------------------------------------
+//
+// Every SQL tool is dispatched through the same `execute_sql_tool` match,
+// so each registered descriptor's executor is a thin adapter that captures
+// the tool name and forwards the rest of `ToolContext` into `execute_sql_tool`.
+
+use crate::shared::ai::dispatch::{register, ToolContext, ToolDescriptor, ToolFuture};
+
+macro_rules! sql_tool_executor {
+    ($name:literal) => {{
+        fn exec<'a>(ctx: &'a ToolContext<'a>) -> ToolFuture<'a> {
+            Box::pin(async move {
+                execute_sql_tool(
+                    $name,
+                    ctx.input,
+                    ctx.context,
+                    ctx.pool,
+                    ctx.app,
+                    ctx.session_id,
+                    ctx.sql_manager,
+                )
+                .await
+            })
+        }
+        exec as crate::shared::ai::dispatch::ToolExecutor
+    }};
+}
+
+/// Register every SQL-mode AI tool with the shared dispatch registry.
+pub fn register_tools() {
+    let entries: &[(&'static str, &'static str, crate::shared::ai::dispatch::ToolExecutor)] = &[
+        ("list_connections", "List saved SQL connections", sql_tool_executor!("list_connections")),
+        ("list_databases", "List databases on a SQL connection", sql_tool_executor!("list_databases")),
+        ("list_tables", "List tables in a SQL database/schema", sql_tool_executor!("list_tables")),
+        ("describe_table", "Describe columns of a SQL table", sql_tool_executor!("describe_table")),
+        ("execute_query", "Execute a SQL query against the active connection", sql_tool_executor!("execute_query")),
+        ("apply_query", "Send a SQL query suggestion to the user for approval", sql_tool_executor!("apply_query")),
+        ("list_schemas", "List schemas in a SQL database", sql_tool_executor!("list_schemas")),
+        ("get_schema", "Fetch the full schema (tables + columns) for a SQL database", sql_tool_executor!("get_schema")),
+        ("explain_query", "Run EXPLAIN on a SQL query", sql_tool_executor!("explain_query")),
+    ];
+
+    for (name, description, executor) in entries {
+        register(ToolDescriptor {
+            name,
+            mode: "sql",
+            description,
+            schema: serde_json::json!({}),
+            executor: *executor,
+        });
+    }
+}

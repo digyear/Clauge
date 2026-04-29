@@ -5,10 +5,10 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncBufReadExt;
 use tokio_stream::StreamExt;
 
-use super::tools::execute_tool;
 use super::types::ChatContext;
 use crate::modes::sql::client::SqlConnectionManager;
 use crate::modes::nosql::client::NoSqlConnections;
+use crate::shared::ai::dispatch::{self, ToolContext};
 use crate::shared::ai::ProviderConfig;
 
 pub async fn stream_openai(
@@ -338,16 +338,18 @@ pub async fn stream_openai(
                 let tool_input: serde_json::Value =
                     serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
 
-                let tool_result = execute_tool(
+                let tool_result = dispatch::execute(
                     name,
-                    id,
-                    &tool_input,
-                    context,
-                    pool,
-                    app,
-                    session_id,
-                    sql_manager,
-                    nosql_conns,
+                    ToolContext {
+                        tool_use_id: id,
+                        input: &tool_input,
+                        context,
+                        pool,
+                        app,
+                        session_id,
+                        sql_manager,
+                        nosql_conns,
+                    },
                 )
                 .await;
 

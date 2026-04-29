@@ -5,10 +5,10 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncBufReadExt;
 use tokio_stream::StreamExt;
 
-use super::tools::execute_tool;
 use super::types::ChatContext;
 use crate::modes::sql::client::SqlConnectionManager;
 use crate::modes::nosql::client::NoSqlConnections;
+use crate::shared::ai::dispatch::{self, ToolContext};
 use crate::shared::ai::ProviderConfig;
 
 pub async fn stream_anthropic(
@@ -191,16 +191,18 @@ pub async fn stream_anthropic(
                             serde_json::from_str(&current_tool_json)
                                 .unwrap_or(serde_json::json!({}));
 
-                        let tool_result = execute_tool(
+                        let tool_result = dispatch::execute(
                             &current_tool_name,
-                            &current_tool_id,
-                            &tool_input,
-                            context,
-                            pool,
-                            app,
-                            session_id,
-                            sql_manager,
-                            nosql_conns,
+                            ToolContext {
+                                tool_use_id: &current_tool_id,
+                                input: &tool_input,
+                                context,
+                                pool,
+                                app,
+                                session_id,
+                                sql_manager,
+                                nosql_conns,
+                            },
                         )
                         .await;
 
