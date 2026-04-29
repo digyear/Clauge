@@ -7,7 +7,7 @@ use tokio_stream::StreamExt;
 
 use super::tools::execute_tool;
 use super::types::ChatContext;
-use crate::commands::sql_client::SqlConnectionManager;
+use crate::modes::sql::client::SqlConnectionManager;
 use crate::modes::nosql::client::NoSqlConnections;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";

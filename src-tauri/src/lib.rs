@@ -228,7 +228,7 @@ pub fn run() {
             });
 
             app.manage(pool);
-            app.manage(Arc::new(commands::sql_client::SqlConnectionManager::new()));
+            app.manage(Arc::new(modes::sql::client::SqlConnectionManager::new()));
             app.manage(modes::nosql::client::create_nosql_state());
             app.manage(commands::agent_models::TerminalState::default());
             app.manage(modes::ssh::models::SshTerminalState::default());
@@ -327,24 +327,24 @@ pub fn run() {
             commands::import_export::import_postman,
             commands::import_export::import_curl,
             commands::import_export::export_as_curl,
-            commands::sql_client::sql_connect,
-            commands::sql_client::sql_connect_database,
-            commands::sql_client::sql_disconnect,
-            commands::sql_client::sql_test_connection,
-            commands::sql_client::sql_execute_query,
-            commands::sql_client::sql_list_databases,
-            commands::sql_client::sql_create_database,
-            commands::sql_client::sql_list_schemas,
-            commands::sql_client::sql_list_tables,
-            commands::sql_client::sql_describe_table,
-            commands::sql_client::sql_save_connection,
-            commands::sql_client::sql_list_saved_connections,
-            commands::sql_client::sql_delete_saved_connection,
-            commands::sql_client::sql_update_saved_connection,
-            commands::sql_client::sql_save_script,
-            commands::sql_client::sql_list_scripts,
-            commands::sql_client::sql_update_script,
-            commands::sql_client::sql_delete_script,
+            modes::sql::client::sql_connect,
+            modes::sql::client::sql_connect_database,
+            modes::sql::client::sql_disconnect,
+            modes::sql::client::sql_test_connection,
+            modes::sql::client::sql_execute_query,
+            modes::sql::client::sql_list_databases,
+            modes::sql::client::sql_create_database,
+            modes::sql::client::sql_list_schemas,
+            modes::sql::client::sql_list_tables,
+            modes::sql::client::sql_describe_table,
+            modes::sql::client::sql_save_connection,
+            modes::sql::client::sql_list_saved_connections,
+            modes::sql::client::sql_delete_saved_connection,
+            modes::sql::client::sql_update_saved_connection,
+            modes::sql::client::sql_save_script,
+            modes::sql::client::sql_list_scripts,
+            modes::sql::client::sql_update_script,
+            modes::sql::client::sql_delete_script,
             modes::nosql::client::nosql_connect,
             modes::nosql::client::nosql_disconnect,
             modes::nosql::client::nosql_test_connection,

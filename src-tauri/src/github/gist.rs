@@ -4,7 +4,7 @@ use std::sync::Mutex as StdMutex;
 use tauri::State;
 
 use crate::modes::nosql::client::NoSqlConnection;
-use crate::commands::sql_client::{SqlSavedConnection, SqlScript};
+use crate::modes::sql::client::{SqlSavedConnection, SqlScript};
 use crate::db::models::{
     Collection, EnvVariable, Environment, Request, RequestHeader, RequestParam,
 };

@@ -2,8 +2,8 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter};
 
-use super::types::ChatContext;
-use crate::commands::sql_client::SqlConnectionManager;
+use crate::commands::ai::types::ChatContext;
+use crate::modes::sql::client::SqlConnectionManager;
 
 /// Ensure a database pool exists for the given connection_id + database combo.
 /// Extracts saved_connection_id from context env_vars to build stable cache keys.
@@ -52,7 +52,7 @@ async fn ensure_pool(
 
     if let Some((_id, driver, host, port, db_name, username, password, ssl)) = saved {
         let target_db = database.unwrap_or(&db_name);
-        let config = crate::commands::sql_client::SqlConnectionConfig {
+        let config = crate::modes::sql::client::SqlConnectionConfig {
             name: String::new(),
             driver,
             host: host.clone(),
@@ -63,7 +63,7 @@ async fn ensure_pool(
             ssl: ssl == 1,
         };
 
-        let new_pool = crate::commands::sql_client::create_pool(&config).await
+        let new_pool = crate::modes::sql::client::create_pool(&config).await
             .map_err(|e| format!("Auto-connect failed for {}:{}/{}: {}", host, port, target_db, e))?;
 
         // Store under stable key so subsequent calls reuse the same pool
@@ -133,7 +133,7 @@ pub async fn execute_sql_tool(
                 None => return format!("Error: Pool '{}' not found after auto-connect.", pool_id),
             };
 
-            use crate::commands::sql_client::DatabasePool;
+            use crate::modes::sql::client::DatabasePool;
             let result = match pool_entry {
                 DatabasePool::Postgres(p) => {
                     sqlx::query_as::<_, (String,)>(
@@ -176,7 +176,7 @@ pub async fn execute_sql_tool(
                 None => return format!("Error: Pool '{}' not found after auto-connect.", pool_id),
             };
 
-            use crate::commands::sql_client::DatabasePool;
+            use crate::modes::sql::client::DatabasePool;
             let result = match pool_entry {
                 DatabasePool::Postgres(p) => {
                     sqlx::query_as::<_, (String,)>(
@@ -215,7 +215,7 @@ pub async fn execute_sql_tool(
                 None => return format!("Error: Pool '{}' not found after auto-connect.", pool_id),
             };
 
-            use crate::commands::sql_client::DatabasePool;
+            use crate::modes::sql::client::DatabasePool;
             let result: Result<Vec<(String, String)>, String> = match pool_entry {
                 DatabasePool::Postgres(p) => {
                     let schema_name = schema.unwrap_or_else(|| "public".to_string());
@@ -284,7 +284,7 @@ pub async fn execute_sql_tool(
                 None => return format!("Error: Pool '{}' not found after auto-connect.", pool_id),
             };
 
-            use crate::commands::sql_client::DatabasePool;
+            use crate::modes::sql::client::DatabasePool;
             let result: Result<Vec<serde_json::Value>, String> = match pool_entry {
                 DatabasePool::Postgres(p) => {
                     let schema_name = schema.unwrap_or_else(|| "public".to_string());
@@ -414,7 +414,7 @@ pub async fn execute_sql_tool(
                 None => return format!("Error: Pool '{}' not found after auto-connect.", pool_id),
             };
 
-            use crate::commands::sql_client::DatabasePool;
+            use crate::modes::sql::client::DatabasePool;
             use sqlx::{Column, Row};
 
             let start = std::time::Instant::now();
@@ -616,7 +616,7 @@ pub async fn execute_sql_tool(
 
             // Get tables
             let tables_result = match pool_entry {
-                crate::commands::sql_client::DatabasePool::Postgres(p) => {
+                crate::modes::sql::client::DatabasePool::Postgres(p) => {
                     let schema_filter = if schema.is_empty() { "public" } else { schema };
                     sqlx::query_as::<_, (String, String)>(
                         "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name"
@@ -625,7 +625,7 @@ pub async fn execute_sql_tool(
                     .fetch_all(p)
                     .await
                 }
-                crate::commands::sql_client::DatabasePool::MySql(p) => {
+                crate::modes::sql::client::DatabasePool::MySql(p) => {
                     if database.is_empty() {
                         sqlx::query_as::<_, (String, String)>(
                             "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name"
@@ -641,7 +641,7 @@ pub async fn execute_sql_tool(
                         .await
                     }
                 }
-                crate::commands::sql_client::DatabasePool::Sqlite(p) => {
+                crate::modes::sql::client::DatabasePool::Sqlite(p) => {
                     sqlx::query_as::<_, (String, String)>(
                         "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name"
                     )
@@ -656,7 +656,7 @@ pub async fn execute_sql_tool(
                     for (table_name, table_type) in &tables {
                         // Get columns for each table
                         let cols = match pool_entry {
-                            crate::commands::sql_client::DatabasePool::Postgres(p) => {
+                            crate::modes::sql::client::DatabasePool::Postgres(p) => {
                                 let sf = if schema.is_empty() { "public" } else { schema };
                                 sqlx::query_as::<_, (String, String, String)>(
                                     "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position"
@@ -666,7 +666,7 @@ pub async fn execute_sql_tool(
                                 .fetch_all(p)
                                 .await
                             }
-                            crate::commands::sql_client::DatabasePool::MySql(p) => {
+                            crate::modes::sql::client::DatabasePool::MySql(p) => {
                                 if database.is_empty() {
                                     sqlx::query_as::<_, (String, String, String)>(
                                         "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? ORDER BY ordinal_position"
@@ -684,7 +684,7 @@ pub async fn execute_sql_tool(
                                     .await
                                 }
                             }
-                            crate::commands::sql_client::DatabasePool::Sqlite(p) => {
+                            crate::modes::sql::client::DatabasePool::Sqlite(p) => {
                                 // PRAGMA doesn't fit the 3-column shape; format manually
                                 let pragma: Vec<(i32, String, String, i32, Option<String>, i32)> = sqlx::query_as(
                                     &format!("PRAGMA table_info(\"{}\")", table_name.replace('"', "\"\""))
@@ -730,19 +730,19 @@ pub async fn execute_sql_tool(
             };
 
             let explain_sql = match pool_entry {
-                crate::commands::sql_client::DatabasePool::Postgres(_) => format!("EXPLAIN ANALYZE {}", query),
-                crate::commands::sql_client::DatabasePool::MySql(_) => format!("EXPLAIN {}", query),
-                crate::commands::sql_client::DatabasePool::Sqlite(_) => format!("EXPLAIN QUERY PLAN {}", query),
+                crate::modes::sql::client::DatabasePool::Postgres(_) => format!("EXPLAIN ANALYZE {}", query),
+                crate::modes::sql::client::DatabasePool::MySql(_) => format!("EXPLAIN {}", query),
+                crate::modes::sql::client::DatabasePool::Sqlite(_) => format!("EXPLAIN QUERY PLAN {}", query),
             };
 
             let result = match pool_entry {
-                crate::commands::sql_client::DatabasePool::Postgres(p) => {
+                crate::modes::sql::client::DatabasePool::Postgres(p) => {
                     sqlx::query_scalar::<_, String>(&explain_sql)
                         .fetch_all(p)
                         .await
                         .map(|rows| rows.join("\n"))
                 }
-                crate::commands::sql_client::DatabasePool::MySql(p) => {
+                crate::modes::sql::client::DatabasePool::MySql(p) => {
                     use sqlx::Row;
                     sqlx::query(&explain_sql)
                         .fetch_all(p)
@@ -754,7 +754,7 @@ pub async fn execute_sql_tool(
                             }).collect::<Vec<_>>().join("\n")
                         })
                 }
-                crate::commands::sql_client::DatabasePool::Sqlite(p) => {
+                crate::modes::sql::client::DatabasePool::Sqlite(p) => {
                     use sqlx::Row;
                     sqlx::query(&explain_sql)
                         .fetch_all(p)

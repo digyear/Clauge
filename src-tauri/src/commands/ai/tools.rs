@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::types::{ChatContext, PendingFrontendTools};
-use crate::commands::sql_client::SqlConnectionManager;
+use crate::modes::sql::client::SqlConnectionManager;
 use crate::modes::nosql::client::NoSqlConnections;
 
 /// Resolve a request identifier — if it looks like a UUID use it directly,
@@ -842,7 +842,7 @@ async fn execute_tool_inner(
         // SQL tools — delegate to SQL handler
         "list_connections" | "list_databases" | "list_tables" | "describe_table"
         | "execute_query" | "apply_query" | "list_schemas" | "get_schema" | "explain_query" => {
-            super::tools_sql::execute_sql_tool(tool_name, input, context, pool, app, session_id, sql_manager)
+            crate::modes::sql::ai_tools::execute_sql_tool(tool_name, input, context, pool, app, session_id, sql_manager)
                 .await
         }
         // NoSQL tools — delegate to NoSQL handler

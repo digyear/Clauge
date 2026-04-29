@@ -5,7 +5,6 @@ pub mod http_executor;
 pub mod import_export;
 pub mod requests;
 pub mod settings;
-pub mod sql_client;
 pub mod ai;
 pub mod agent_models;
 pub mod agent;

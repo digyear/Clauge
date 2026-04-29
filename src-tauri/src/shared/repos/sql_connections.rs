@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 
-use crate::commands::sql_client::{SqlSavedConnection, SqlScript};
+use crate::modes::sql::client::{SqlSavedConnection, SqlScript};
 
 // ---------------------------------------------------------------------------
 // sql_connections
