@@ -14,6 +14,7 @@
   } from '$lib/stores/environments';
   import { activeModal } from '$lib/stores/app';
   import { showToast } from '$lib/components/shared/toast';
+  import { ENV_SAVE_DEBOUNCE_MS } from '$lib/shared/constants/timings';
 
   let show = $state(false);
 
@@ -84,7 +85,7 @@
           showToast('Failed to update environment', 'error');
         }
       }
-    }, 400);
+    }, ENV_SAVE_DEBOUNCE_MS);
   }
 
   function handleNameChange(val: string) {

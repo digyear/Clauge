@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import type { KVInput } from '$lib/types';
   import EnvInput from '$lib/components/shared/EnvInput.svelte';
+  import { KV_DEBOUNCE_MS, SUGGEST_CLOSE_MS } from '$lib/shared/constants/timings';
 
   let { items = [], label = 'Add item', showKeySuggestions = false, onchange }: {
     items: KVInput[];
@@ -58,7 +59,7 @@
       localChange = true;
       const toSave = localItems.filter(i => i.key.trim() !== '' || i.value.trim() !== '');
       onchange(toSave);
-    }, 300);
+    }, KV_DEBOUNCE_MS);
   }
 
   function updateKey(index: number, value: string) {
@@ -123,7 +124,7 @@
   }
 
   function handleKeyBlur() {
-    setTimeout(() => { suggestOpen = false; }, 150);
+    setTimeout(() => { suggestOpen = false; }, SUGGEST_CLOSE_MS);
   }
 </script>
 

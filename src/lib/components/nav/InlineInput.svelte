@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { INLINE_INPUT_BLUR_MS } from '$lib/shared/constants/timings';
 
   interface Props {
     placeholder?: string;
@@ -56,7 +57,7 @@
     // Only cancel on blur if nothing was submitted
     setTimeout(() => {
       if (!done) cancel();
-    }, 200);
+    }, INLINE_INPUT_BLUR_MS);
   }
 </script>
 

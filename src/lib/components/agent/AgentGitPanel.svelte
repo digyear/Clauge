@@ -8,6 +8,7 @@
     agentGitListBranches, agentGitSwitchBranch,
   } from '$lib/commands/agent';
   import type { GitFileChange } from '$lib/types/agent';
+  import { STATUS_MESSAGE_MS } from '$lib/shared/constants/timings';
 
   let { open = $bindable(false) } = $props();
 
@@ -48,7 +49,7 @@
   function showStatus(msg: string) {
     statusMsg = msg;
     if (statusTimer) clearTimeout(statusTimer);
-    statusTimer = setTimeout(() => { statusMsg = ''; }, 3000);
+    statusTimer = setTimeout(() => { statusMsg = ''; }, STATUS_MESSAGE_MS);
   }
 
   function confirmGitAction(label: string, description: string, action: () => void) {

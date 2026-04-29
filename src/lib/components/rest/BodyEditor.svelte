@@ -4,6 +4,7 @@
   import FormKVEditor from './FormKVEditor.svelte';
   import MultipartEditor from './MultipartEditor.svelte';
   import BinaryPicker from './BinaryPicker.svelte';
+  import { BODY_DEBOUNCE_MS } from '$lib/shared/constants/timings';
 
   let { body = '', bodyType = 'json', onchange }: {
     body: string;
@@ -57,7 +58,7 @@
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       onchange(localBody, localType);
-    }, 300);
+    }, BODY_DEBOUNCE_MS);
   }
 
   function formatJson() {

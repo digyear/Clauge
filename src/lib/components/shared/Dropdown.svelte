@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { CLICK_OUTSIDE_GUARD_MS } from '$lib/shared/constants/timings';
 
   interface DropdownItem {
     label: string;
@@ -85,7 +86,7 @@
     window.addEventListener('keydown', handleKeydown);
     setTimeout(() => {
       window.addEventListener('click', handleClickOutside);
-    }, 10);
+    }, CLICK_OUTSIDE_GUARD_MS);
   });
 
   onDestroy(() => {

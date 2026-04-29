@@ -21,6 +21,9 @@
   import { highlightJSON } from '$lib/utils/json-highlight';
   import SshExecuteConfirmModal from '$lib/components/ssh/SshExecuteConfirmModal.svelte';
   import { executeAndCaptureOnSsh } from '$lib/services/ssh-execute';
+  import { getSshAutoRun, setSshAutoRun, getAiPanelWidth, setAiPanelWidth } from '$lib/shared/constants/storage';
+  import { aiEvent } from '$lib/shared/constants/events';
+  import { COPY_FEEDBACK_MS } from '$lib/shared/constants/timings';
 
   marked.setOptions({ breaks: true, gfm: true });
 
@@ -64,7 +67,7 @@
             setTimeout(() => {
               btn.innerHTML = ICON_COPY;
               btn.classList.remove('copied');
-            }, 1500);
+            }, COPY_FEEDBACK_MS);
           } catch { /* clipboard denied — silent */ }
         });
         preEl.appendChild(btn);
@@ -129,14 +132,14 @@
   let sshAutoRunWarnShow = $state(false);
 
   onMount(() => {
-    sshAutoRun = localStorage.getItem('clauge_ssh_auto_run') === 'true';
+    sshAutoRun = getSshAutoRun();
   });
 
   function toggleSshAutoRun() {
     if (sshAutoRun) {
       // Turning off — silent
       sshAutoRun = false;
-      localStorage.setItem('clauge_ssh_auto_run', 'false');
+      setSshAutoRun(false);
     } else {
       // Turning on — confirm first so the user is unambiguous about what they're enabling
       sshAutoRunWarnShow = true;
@@ -145,7 +148,7 @@
 
   function confirmEnableAutoRun() {
     sshAutoRun = true;
-    localStorage.setItem('clauge_ssh_auto_run', 'true');
+    setSshAutoRun(true);
     sshAutoRunWarnShow = false;
   }
 
@@ -193,9 +196,7 @@
   const MIN_WIDTH = 300;
   const MAX_WIDTH = 700;
   const DEFAULT_WIDTH = 380;
-  let panelWidth = $state(
-    parseInt(localStorage.getItem('clauge_ai_panel_width') || '') || DEFAULT_WIDTH
-  );
+  let panelWidth = $state(getAiPanelWidth(DEFAULT_WIDTH));
   let isDragging = $state(false);
 
   function startDrag(e: MouseEvent) {
@@ -212,7 +213,7 @@
 
     function onUp() {
       isDragging = false;
-      localStorage.setItem('clauge_ai_panel_width', String(panelWidth));
+      setAiPanelWidth(panelWidth);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     }
@@ -449,7 +450,7 @@
     let _toolPendingOff: UnlistenFn | null = null;
     if (currentChatMode === 'ssh' || get(mode) === 'ssh') {
       _toolPendingOff = await listen<{ toolUseId: string; tool: string; command: string; reason: string }>(
-        `ai:tool_pending:${sessionId}`,
+        aiEvent.toolPending(sessionId),
         (e) => { handleSshToolPending(e.payload); },
       );
     }

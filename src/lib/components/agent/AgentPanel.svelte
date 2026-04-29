@@ -42,6 +42,18 @@
   import { getTerminalTheme } from '$lib/utils/theme';
   import { appearance } from '$lib/stores/settings';
   import { getPurposePrompt } from '$lib/prompts/agent';
+  import { AGENT_EVENT } from '$lib/shared/constants/events';
+  import {
+    AGENT_NOTIFY_DEBOUNCE_MS,
+    AGENT_NOTIFY_REPEAT_MS,
+    AGENT_CHIME_STOP_MS,
+    AGENT_ACTIVITY_WINDOW_MS,
+    AGENT_ACTIVITY_DONE_MS,
+    AGENT_SHELL_LOADER_MS,
+    AGENT_CONTEXT_USAGE_INTERVAL_MS,
+    AGENT_SESSION_CAPTURE_INTERVAL_MS,
+    RESIZE_DEBOUNCE_MS,
+  } from '$lib/shared/constants/timings';
 
   let terminalEl: HTMLDivElement;
   let shellEl: HTMLDivElement;
@@ -124,7 +136,7 @@
             return;
           }
           playChime();
-        }, 3000);
+        }, AGENT_NOTIFY_REPEAT_MS);
       }
     }
   }
@@ -146,7 +158,7 @@
       osc1.start();
       osc2.start();
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-      setTimeout(() => { osc1.stop(); osc2.stop(); ctx.close(); }, 400);
+      setTimeout(() => { osc1.stop(); osc2.stop(); ctx.close(); }, AGENT_CHIME_STOP_MS);
     } catch (_) {}
   }
 
@@ -160,7 +172,7 @@
       if (!document.hasFocus()) checkNotifyBuffer();
       // Also debounce for when data arrives in small chunks
       if (notifyBufferTimer) clearTimeout(notifyBufferTimer);
-      notifyBufferTimer = setTimeout(() => checkNotifyBuffer(), 300);
+      notifyBufferTimer = setTimeout(() => checkNotifyBuffer(), AGENT_NOTIFY_DEBOUNCE_MS);
     } catch (_) {}
   }
 
@@ -244,7 +256,7 @@
             if (dims) agentResizeTerminal(termId, dims.cols, dims.rows).catch(() => {});
           }
         } catch (_) {}
-      }, 100);
+      }, RESIZE_DEBOUNCE_MS);
     }).observe(container);
 
     const entry = { term: t, fitAddon: fa, container, terminalId: null as string | null, _exitBuffer: '' };
@@ -288,7 +300,7 @@
     // Safety fallback — if first data never arrives, drop the loader after 3s
     setTimeout(() => {
       shellLoadingSessions = shellLoadingSessions.filter(id => id !== sessionId);
-    }, 3000);
+    }, AGENT_SHELL_LOADER_MS);
 
     t.onData((data) => {
       const sIds = get(agentShellIds);
@@ -318,7 +330,7 @@
             if (dims) agentResizeTerminal(shellId, dims.cols, dims.rows).catch(() => {});
           }
         } catch (_) {}
-      }, 100);
+      }, RESIZE_DEBOUNCE_MS);
     }).observe(container);
 
     const sEntry = { term: t, fitAddon: fa, container, terminalId: null as string | null };
@@ -435,7 +447,7 @@
       if (s.claudeSessionId) {
         refreshAgentContextUsage(s.id, projectPath, s.claudeSessionId);
       }
-    }, 5000);
+    }, AGENT_CONTEXT_USAGE_INTERVAL_MS);
   }
 
   let _spawnLock = false;
@@ -729,7 +741,7 @@
                 agentSessionActivity.update(m => { m.set(sessionId, 'running'); return new Map(m); });
               }
               activityBytes = 0;
-            }, 500);
+            }, AGENT_ACTIVITY_WINDOW_MS);
           }
 
           if (activityTimer) clearTimeout(activityTimer);
@@ -738,7 +750,7 @@
             if (act.get(sessionId) === 'running') {
               agentSessionActivity.update(m => { m.set(sessionId, 'done'); return new Map(m); });
             }
-          }, 2000);
+          }, AGENT_ACTIVITY_DONE_MS);
         }
 
         // Capture session ID — retry every 3s until found (up to 30s)
@@ -765,10 +777,10 @@
                     const path = s.worktreePath || s.projectPath;
                     refreshAgentContextUsage(s.id, path, s.claudeSessionId);
                   }
-                }, 5000);
+                }, AGENT_CONTEXT_USAGE_INTERVAL_MS);
               }
             } catch (_) {}
-          }, 3000);
+          }, AGENT_SESSION_CAPTURE_INTERVAL_MS);
         }
       };
 
@@ -1112,10 +1124,10 @@
     } catch (_) {}
 
     // Listen for reset-session, delete-session, and close-tab-session events
-    window.addEventListener('agent:reset-session', handleResetSession);
-    window.addEventListener('agent:delete-session', handleDeleteSession);
-    window.addEventListener('agent:close-tab-session', handleCloseTabSession);
-    window.addEventListener('agent:relaunch-session', handleRelaunchSession);
+    window.addEventListener(AGENT_EVENT.RESET_SESSION, handleResetSession);
+    window.addEventListener(AGENT_EVENT.DELETE_SESSION, handleDeleteSession);
+    window.addEventListener(AGENT_EVENT.CLOSE_TAB_SESSION, handleCloseTabSession);
+    window.addEventListener(AGENT_EVENT.RELAUNCH_SESSION, handleRelaunchSession);
 
     // File drag-and-drop: write dropped file paths into the active terminal
     try {
@@ -1155,10 +1167,10 @@
     stopContextUsagePolling();
     if (notifyBufferTimer) clearTimeout(notifyBufferTimer);
     if (notifySoundInterval) clearInterval(notifySoundInterval);
-    window.removeEventListener('agent:reset-session', handleResetSession);
-    window.removeEventListener('agent:delete-session', handleDeleteSession);
-    window.removeEventListener('agent:close-tab-session', handleCloseTabSession);
-    window.removeEventListener('agent:relaunch-session', handleRelaunchSession);
+    window.removeEventListener(AGENT_EVENT.RESET_SESSION, handleResetSession);
+    window.removeEventListener(AGENT_EVENT.DELETE_SESSION, handleDeleteSession);
+    window.removeEventListener(AGENT_EVENT.CLOSE_TAB_SESSION, handleCloseTabSession);
+    window.removeEventListener(AGENT_EVENT.RELAUNCH_SESSION, handleRelaunchSession);
     if (unlistenFileDrop) unlistenFileDrop();
   });
 </script>

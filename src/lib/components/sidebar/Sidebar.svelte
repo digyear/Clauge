@@ -15,6 +15,7 @@
   import type { AppMode } from '$lib/stores/app';
   import { checkAndDownloadUpdate, showWhatsNewModal, whatsNewContent, updateAvailable } from '$lib/utils/updater';
   import { showToast } from '$lib/components/shared/toast';
+  import { FULLSCREEN_POLL_INTERVAL_MS } from '$lib/shared/constants/timings';
 
   let profileMenuOpen = $state(false);
   let previousMode: AppMode = 'rest';
@@ -25,7 +26,7 @@
     // Check fullscreen state periodically
     const checkFs = setInterval(async () => {
       try { isFullscreen = await getCurrentWindow().isFullscreen(); } catch {}
-    }, 1000);
+    }, FULLSCREEN_POLL_INTERVAL_MS);
     return () => clearInterval(checkFs);
   });
 

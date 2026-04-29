@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { contextMenu, closeContextMenu } from './contextmenu';
+  import { CLICK_OUTSIDE_GUARD_MS } from '$lib/shared/constants/timings';
 
   let menuEl: HTMLDivElement | undefined = $state();
 
@@ -37,7 +38,7 @@
     window.addEventListener('keydown', handleKeydown);
     setTimeout(() => {
       window.addEventListener('click', handleClickOutside);
-    }, 10);
+    }, CLICK_OUTSIDE_GUARD_MS);
   });
 
   onDestroy(() => {
