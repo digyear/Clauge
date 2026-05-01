@@ -20,7 +20,7 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 log = "0.4"
 image = { version = "0.25", default-features = false, features = ["png"] }
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-http = "2"
@@ -60,12 +60,6 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 cocoa = "0.26"
 objc = "0.2"
 window-vibrancy = "0.7"
-# macos-private-api enables vibrancy/transparent-window APIs that
-# tauri.macos.conf.json's macOSPrivateApi:true config consumes. The
-# Cargo feature and the JSON config must match per OS — Tauri's build
-# script errors out otherwise. Win/Linux builds neither set the config
-# nor enable the feature.
-tauri = { version = "2", features = ["macos-private-api"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 window-vibrancy = "0.7"
