@@ -57,18 +57,22 @@ pub async fn check_for_update_in_channel(
     };
 
     // Pre-download so the install step is fast and offline-tolerant. We
-    // stash the Update in state — the next call (install) will find it.
+    // stash both the Update *and* the downloaded bytes in state — the next
+    // call (install) needs the bytes back. `Update::install(bytes)` does
+    // not re-fetch on its own (the Rust Update has no internal byte cache,
+    // unlike the JS plugin's stateful Update object); passing an empty Vec
+    // makes `extract()` fail on every platform with no user feedback.
     let info = UpdateInfo {
         version: update.version.clone(),
         body: update.body.clone().unwrap_or_default(),
     };
 
-    update
+    let bytes = update
         .download(|_chunk_len, _content_len| {}, || {})
         .await
         .map_err(|e| format!("update download: {}", e))?;
 
-    pending.store(update);
+    pending.store(update, bytes);
     Ok(Some(info))
 }
 
@@ -108,11 +112,11 @@ pub async fn install_pending_update(
     app: AppHandle,
     pending: State<'_, PendingUpdate>,
 ) -> Result<(), String> {
-    let Some(update) = pending.take() else {
+    let Some((update, bytes)) = pending.take() else {
         return Err("no pending update — run check first".to_string());
     };
     update
-        .install(Vec::new())
+        .install(bytes)
         .map_err(|e| format!("update install: {}", e))?;
 
     // Windows: NSIS in `installMode: "passive"` auto-launches the new binary
