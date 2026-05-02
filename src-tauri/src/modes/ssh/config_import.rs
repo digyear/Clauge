@@ -102,8 +102,6 @@ pub async fn ssh_import_config_hosts(
     let existing_profiles = ssh_profiles_repo::list_all(pool.inner())
         .await
         .map_err(|e| e.to_string())?;
-    let existing_names: HashSet<String> =
-        existing_profiles.iter().map(|p| p.name.clone()).collect();
     let mut alias_to_id: std::collections::HashMap<String, String> = existing_profiles
         .into_iter()
         .map(|p| (p.name, p.id))
@@ -113,12 +111,19 @@ pub async fn ssh_import_config_hosts(
     let mut imported = 0usize;
 
     // Pass 1: insert each host with its ProxyCommand (if any) but WITHOUT
-    // a jump pointer. Record the new alias→id mapping as we go so a later
-    // host in the same batch can resolve a ProxyJump that points at an
-    // earlier host in the same import.
+    // a jump pointer. Record the new alias→id mapping as we go so:
+    //   (a) a later host in the same batch can resolve a ProxyJump that
+    //       points at an earlier host in the same import; AND
+    //   (b) a duplicate `Host <alias>` block in `~/.ssh/config` (which
+    //       OpenSSH itself merges silently) doesn't get inserted twice.
+    //       Without this dedup, two `Host flsit` entries would create two
+    //       separate profiles with the same name. The check uses
+    //       `alias_to_id.contains_key` rather than a separate
+    //       existing_names set so both pre-existing AND in-batch
+    //       duplicates are caught by the same predicate.
     let mut deferred_jumps: Vec<(String, Vec<String>)> = Vec::new();
     for h in &hosts {
-        if !wanted.contains(&h.alias) || existing_names.contains(&h.alias) {
+        if !wanted.contains(&h.alias) || alias_to_id.contains_key(&h.alias) {
             continue;
         }
         let id = uuid::Uuid::new_v4().to_string();
@@ -329,6 +334,18 @@ fn parse(content: &str) -> Vec<SshConfigHost> {
     if let Some(h) = current.take() {
         out.push(h.build());
     }
+
+    // Dedupe by alias keeping the first occurrence — matches OpenSSH
+    // semantics (ssh_config(5): "for each parameter, the first obtained
+    // value will be used"; duplicate `Host` blocks are effectively
+    // merged). Without this:
+    //   - the picker's `{#each ... as h (h.alias)}` Svelte block crashes
+    //     with `each_key_duplicate` when a config has a copy-pasted Host
+    //     entry (which happens often in real ssh_config files);
+    //   - the user could accidentally check the same alias twice in the
+    //     import picker, expecting two distinct profiles.
+    let mut seen: HashSet<String> = HashSet::new();
+    out.retain(|h| seen.insert(h.alias.clone()));
     out
 }
 

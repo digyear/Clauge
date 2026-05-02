@@ -177,11 +177,50 @@
     importableCount > 0 && importSelected.size === importableCount,
   );
 
+  // Reverse-lookup: "for each alias, who currently selected requires it as
+  // a ProxyJump dependency?". Drives the "Required by X" badge in the row
+  // template — and lets the user understand why a host got auto-checked.
+  // Only counts SELECTED hosts (not all hosts) since an unimported host's
+  // ProxyJump declaration shouldn't visually flag its target.
+  const requiredBy = $derived.by(() => {
+    const map = new Map<string, string[]>();
+    for (const sel of importSelected) {
+      const host = importHosts.find((h) => h.alias === sel);
+      if (!host) continue;
+      for (const dep of host.proxyJumpAliases) {
+        const existing = map.get(dep) ?? [];
+        if (!existing.includes(sel)) existing.push(sel);
+        map.set(dep, existing);
+      }
+    }
+    return map;
+  });
+
   function importToggle(alias: string, alreadyExists: boolean) {
     if (alreadyExists) return;
     const next = new Set(importSelected);
-    if (next.has(alias)) next.delete(alias);
-    else next.add(alias);
+    if (next.has(alias)) {
+      // Unchecking. Don't auto-uncheck anything that requires this — let
+      // the user explicitly drop dependents if they want; otherwise the
+      // dependent will import without a jump pointer (the import code
+      // surfaces this case implicitly by skipping unresolved aliases).
+      next.delete(alias);
+    } else {
+      next.add(alias);
+      // Auto-check any ProxyJump dependencies that are also in the
+      // import list and not already imported. Without this, importing
+      // `thetastrike` alone (which has `ProxyJump nx.thetasecure.com`)
+      // produces a profile with NULL jump_profile_id — connect would
+      // then try direct TCP to a private bastion-only host and fail
+      // with no clear hint why.
+      const host = importHosts.find((h) => h.alias === alias);
+      if (host?.proxyJumpAliases.length) {
+        for (const depAlias of host.proxyJumpAliases) {
+          const dep = importHosts.find((h) => h.alias === depAlias);
+          if (dep && !dep.alreadyExists) next.add(depAlias);
+        }
+      }
+    }
     importSelected = next;
   }
 
@@ -438,6 +477,9 @@
                 {:else if h.proxyJumpAliases.length > 0}
                   <span class="ic-badge ic-badge-proxy">via {h.proxyJumpAliases.join(' → ')}</span>
                 {/if}
+                {#if requiredBy.get(h.alias)?.length}
+                  <span class="ic-badge ic-badge-required">Required by {requiredBy.get(h.alias)!.join(', ')}</span>
+                {/if}
               </div>
             </div>
           </label>
@@ -642,5 +684,15 @@
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+  }
+  .ic-badge-proxy {
+    background: color-mix(in srgb, var(--ssh, var(--acc)) 18%, transparent);
+    color: var(--ssh, var(--acc));
+  }
+  .ic-badge-required {
+    background: color-mix(in srgb, var(--warn, #f5a623) 18%, transparent);
+    color: var(--warn, #f5a623);
+    text-transform: none;
+    letter-spacing: 0;
   }
 </style>
