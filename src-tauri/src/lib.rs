@@ -195,6 +195,7 @@ pub fn run() {
             shared::platform::install_type::get_install_type,
             shared::platform::install_type::supports_self_update,
             shared::updater::commands::check_for_update_in_channel,
+            shared::updater::commands::check_latest_version,
             shared::updater::commands::install_pending_update,
             modes::rest::collections::list_collections,
             modes::rest::collections::create_collection,

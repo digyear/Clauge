@@ -1,12 +1,19 @@
 <script lang="ts">
-  import { updateAvailable, restartToUpdate } from '$lib/utils/updater';
+  import { updateAvailable, restartToUpdate, openChangelogPage } from '$lib/utils/updater';
 
   let dismissed = $state(false);
   let installing = $state(false);
 
+  // Two action shapes. Installable (macOS / Windows / AppImage): "Restart
+  // to Update" runs `install_pending_update` which exits the app. Info-only
+  // (.deb / .rpm): "Download" opens the public changelog page.
   async function handleInstall() {
     installing = true;
     await restartToUpdate();
+  }
+
+  async function handleDownload() {
+    await openChangelogPage();
   }
 
   async function handleWhatsNew() {
@@ -24,19 +31,33 @@
 </script>
 
 {#if $updateAvailable && !dismissed}
+  {@const infoOnly = $updateAvailable.infoOnly === true}
   <div class="update-notif">
     <div class="un-header">
       <svg class="un-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
       <div class="un-text">
         <span class="un-title">Clauge v{$updateAvailable.version} is available</span>
-        <span class="un-desc">A new version has been downloaded. Restart to apply.</span>
+        <span class="un-desc">
+          {#if infoOnly}
+            Auto-update isn't supported for .deb / .rpm installs. Open the changelog to download the new package.
+          {:else}
+            A new version has been downloaded. Restart to apply.
+          {/if}
+        </span>
       </div>
       <button class="un-close" onclick={dismiss}>&times;</button>
     </div>
     <div class="un-actions">
-      <button class="un-btn primary" onclick={handleInstall} disabled={installing}>
-        {installing ? 'Restarting...' : 'Restart to Update'}
-      </button>
+      {#if infoOnly}
+        <button class="un-btn primary" onclick={handleDownload}>
+          Download
+          <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </button>
+      {:else}
+        <button class="un-btn primary" onclick={handleInstall} disabled={installing}>
+          {installing ? 'Restarting...' : 'Restart to Update'}
+        </button>
+      {/if}
       <button class="un-btn secondary" onclick={handleWhatsNew}>
         What's New
         <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>

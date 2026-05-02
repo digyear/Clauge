@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { updateAvailable, showWhatsNewModal, whatsNewContent, restartToUpdate, renderReleaseMarkdown } from '$lib/utils/updater';
+  import { updateAvailable, showWhatsNewModal, whatsNewContent, restartToUpdate, openChangelogPage, renderReleaseMarkdown } from '$lib/utils/updater';
   import { onMount, onDestroy } from 'svelte';
 
   function close() {
@@ -8,7 +8,15 @@
 
   function handleRestart() {
     close();
-    restartToUpdate();
+    // restartToUpdate already routes info-only updates to the changelog
+    // page, but we call openChangelogPage directly here so the UI thread
+    // doesn't briefly try to install. Functionally identical for the
+    // installable path, since this branch only runs when !infoOnly.
+    if ($updateAvailable?.infoOnly) {
+      openChangelogPage();
+    } else {
+      restartToUpdate();
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -46,7 +54,9 @@
         <div class="wn-body">{@html renderReleaseMarkdown($updateAvailable.body)}</div>
         <div class="wn-actions">
           <button class="wn-btn" onclick={close}>Later</button>
-          <button class="wn-btn wn-btn-primary" onclick={handleRestart}>Restart Now</button>
+          <button class="wn-btn wn-btn-primary" onclick={handleRestart}>
+            {$updateAvailable.infoOnly ? 'Download' : 'Restart Now'}
+          </button>
         </div>
       {:else if $whatsNewContent}
         <div class="wn-hdr">

@@ -90,7 +90,11 @@
     try {
       const result = await checkAndDownloadUpdate();
       if (result) {
-        showToast(`Update v${result.version} downloaded — ready to install`, 'success');
+        if (result.infoOnly) {
+          showToast(`v${result.version} available — open changelog to download`, 'success');
+        } else {
+          showToast(`Update v${result.version} downloaded — ready to install`, 'success');
+        }
       } else {
         showToast("You're on the latest version", 'success');
       }
