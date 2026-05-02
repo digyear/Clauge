@@ -1,6 +1,7 @@
 //! Tauri commands for channel-aware update check + install.
 
 use serde::Serialize;
+use sqlx::SqlitePool;
 use tauri::{AppHandle, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
@@ -21,9 +22,10 @@ pub struct UpdateInfo {
 /// signature verification stay in one place.
 async fn run_update_check(
     app: &AppHandle,
+    pool: &SqlitePool,
     channel: &str,
 ) -> Result<Option<Update>, String> {
-    let endpoint = resolve_endpoint(channel).await?;
+    let endpoint = resolve_endpoint(pool, channel).await?;
     let endpoint_url =
         url::Url::parse(&endpoint).map_err(|e| format!("invalid updater URL: {}", e))?;
 
@@ -46,10 +48,11 @@ async fn run_update_check(
 #[tauri::command]
 pub async fn check_for_update_in_channel(
     app: AppHandle,
+    pool: State<'_, SqlitePool>,
     pending: State<'_, PendingUpdate>,
     channel: String,
 ) -> Result<Option<UpdateInfo>, String> {
-    let Some(update) = run_update_check(&app, &channel).await? else {
+    let Some(update) = run_update_check(&app, pool.inner(), &channel).await? else {
         return Ok(None);
     };
 
@@ -80,9 +83,10 @@ pub async fn check_for_update_in_channel(
 #[tauri::command]
 pub async fn check_latest_version(
     app: AppHandle,
+    pool: State<'_, SqlitePool>,
     channel: String,
 ) -> Result<Option<UpdateInfo>, String> {
-    let Some(update) = run_update_check(&app, &channel).await? else {
+    let Some(update) = run_update_check(&app, pool.inner(), &channel).await? else {
         return Ok(None);
     };
     Ok(Some(UpdateInfo {

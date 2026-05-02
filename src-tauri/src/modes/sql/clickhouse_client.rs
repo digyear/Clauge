@@ -114,16 +114,29 @@ pub struct ClickhouseQueryRows {
 impl ClickhouseClient {
     /// Build a client. `host`/`port` come from `SqlConnectionConfig`;
     /// `ssl=true` switches the URL scheme to https.
-    pub fn new(config: &SqlConnectionConfig) -> Result<Self, String> {
+    ///
+    /// `app_pool` is the Clauge SQLite pool (used to read the global proxy
+    /// setting). When `Some`, the HTTP client honours the user's configured
+    /// proxy — important for users hitting ClickHouse Cloud from behind a
+    /// corporate proxy. `None` falls back to a vanilla client (used in
+    /// contexts without a pool, e.g. tests).
+    pub async fn new(
+        config: &SqlConnectionConfig,
+        app_pool: Option<&sqlx::SqlitePool>,
+    ) -> Result<Self, String> {
         let scheme = if config.ssl { "https" } else { "http" };
         let host = if config.host.is_empty() { "localhost".to_string() } else { config.host.clone() };
         let port = if config.port == 0 { 8123 } else { config.port };
         let base_url = format!("{}://{}:{}", scheme, host, port);
 
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()
-            .map_err(|e| format!("ClickHouse client build failed: {}", e))?;
+        let http = if let Some(pool) = app_pool {
+            crate::shared::http::build_app_http_client(pool).await?
+        } else {
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .map_err(|e| format!("ClickHouse client build failed: {}", e))?
+        };
 
         // ClickHouse defaults: user=default, empty password, database=default.
         let username = if config.username.is_empty() { "default".to_string() } else { config.username.clone() };

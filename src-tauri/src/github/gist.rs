@@ -217,7 +217,7 @@ async fn find_clauge_gist(
 #[tauri::command]
 pub async fn gist_check_exists(pool: State<'_, SqlitePool>) -> Result<bool, String> {
     let token = super::oauth::get_token(pool.inner()).await?;
-    let client = tauri_plugin_http::reqwest::Client::new();
+    let client = crate::shared::http::build_app_http_client(pool.inner()).await?;
     let gist_id = find_clauge_gist(&client, &token).await?;
     Ok(gist_id.is_some())
 }
@@ -254,7 +254,7 @@ pub async fn gist_sync_push(pool: State<'_, SqlitePool>) -> Result<String, Strin
         }
     }
 
-    let client = tauri_plugin_http::reqwest::Client::new();
+    let client = crate::shared::http::build_app_http_client(pool.inner()).await?;
 
     // Build the files payload
     let files = serde_json::json!({
@@ -343,7 +343,7 @@ pub async fn gist_sync_push(pool: State<'_, SqlitePool>) -> Result<String, Strin
 pub async fn gist_sync_pull(pool: State<'_, SqlitePool>) -> Result<String, String> {
     let token = super::oauth::get_token(pool.inner()).await?;
     log::info!("[Sync Pull] Token found, searching for gist...");
-    let client = tauri_plugin_http::reqwest::Client::new();
+    let client = crate::shared::http::build_app_http_client(pool.inner()).await?;
 
     // Find the Clauge gist
     let gist_id = find_clauge_gist(&client, &token)

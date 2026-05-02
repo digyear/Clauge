@@ -41,10 +41,11 @@ fn resolve_config(
 
 /// Helper to test an OpenAI-compatible API key (Groq, Mistral, etc.)
 async fn test_openai_key(
+    pool: &SqlitePool,
     api_key: &str,
     config: &ProviderConfig,
 ) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = crate::shared::http::build_app_http_client(pool).await?;
     let mut headers = HeaderMap::new();
     headers.insert(
         "Authorization",
@@ -92,10 +93,11 @@ async fn test_openai_key(
 
 /// Helper to test an Anthropic /v1/messages key.
 async fn test_anthropic_key(
+    pool: &SqlitePool,
     api_key: &str,
     config: &ProviderConfig,
 ) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = crate::shared::http::build_app_http_client(pool).await?;
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-api-key",
@@ -147,7 +149,11 @@ async fn test_anthropic_key(
 }
 
 #[tauri::command]
-pub async fn test_ai_key(api_key: String, provider: String) -> Result<String, String> {
+pub async fn test_ai_key(
+    pool: State<'_, SqlitePool>,
+    api_key: String,
+    provider: String,
+) -> Result<String, String> {
     let config = resolve_config(&provider, None)?;
 
     if let Some(prefix) = config.key_prefix {
@@ -166,8 +172,8 @@ pub async fn test_ai_key(api_key: String, provider: String) -> Result<String, St
     }
 
     match config.api_kind {
-        ApiKind::AnthropicMessages => test_anthropic_key(&api_key, config).await,
-        ApiKind::OpenAICompat => test_openai_key(&api_key, config).await,
+        ApiKind::AnthropicMessages => test_anthropic_key(pool.inner(), &api_key, config).await,
+        ApiKind::OpenAICompat => test_openai_key(pool.inner(), &api_key, config).await,
     }
 }
 
@@ -185,7 +191,7 @@ pub async fn ai_chat(
     tools: Vec<serde_json::Value>,
     provider: String,
 ) -> Result<(), String> {
-    let client = reqwest::Client::new();
+    let client = crate::shared::http::build_app_http_client(pool.inner()).await?;
     let conversation_msgs = build_api_messages(&messages, &context);
     let sql_mgr = sql_manager.inner().clone();
     let nosql_mgr = nosql_connections.inner().clone();

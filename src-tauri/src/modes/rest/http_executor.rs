@@ -7,6 +7,7 @@ use reqwest;
 use uuid::Uuid;
 
 use crate::db::models::{Request, RequestHeader, RequestParam};
+use crate::shared::http::{build_rest_http_client, classify_ssl_error, max_response_bytes};
 
 /// Walk the full error chain to get the root cause
 fn full_error_chain(err: &reqwest::Error) -> String {
@@ -17,6 +18,34 @@ fn full_error_chain(err: &reqwest::Error) -> String {
         source = std::error::Error::source(cause);
     }
     msg
+}
+
+/// Map a reqwest send error into a string the frontend can route on.
+///
+/// TLS / certificate failures get the `ssl-error: <reason>` prefix so the
+/// REST UI can offer "Disable SSL verification & retry" instead of just
+/// dumping the raw error text.
+fn map_send_error(err: &reqwest::Error) -> String {
+    if let Some(reason) = classify_ssl_error(err) {
+        format!("ssl-error: {}", reason)
+    } else {
+        format!("Request failed: {}", full_error_chain(err))
+    }
+}
+
+/// Body-cap enforcement. Used after `.bytes()` to fail loud rather than
+/// silently truncating. We additionally check Content-Length up-front in
+/// the executors so a 10 GB declared body fails fast without buffering.
+fn enforce_body_cap(actual: u64, cap: u64) -> Result<(), String> {
+    if actual > cap {
+        let cap_mb = cap / (1024 * 1024);
+        Err(format!(
+            "Response body is {} bytes, exceeds the {} MB cap from Settings → REST → Max Response Size",
+            actual, cap_mb
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -122,16 +151,9 @@ pub async fn execute_request(
         url_with_params = format!("{}{}{}", url_with_params, separator, query_parts.join("&"));
     }
 
-    // 5. Build reqwest request
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .danger_accept_invalid_certs(true)
-        .gzip(true)
-        .brotli(true)
-        .deflate(true)
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    // 5. Build reqwest request — settings come from Settings → REST + General
+    let client = build_rest_http_client(pool.inner()).await?;
+    let max_body = max_response_bytes(pool.inner()).await;
 
     let method = match request.method.to_uppercase().as_str() {
         "GET" => reqwest::Method::GET,
@@ -233,7 +255,7 @@ pub async fn execute_request(
     let response = req_builder
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", full_error_chain(&e)))?;
+        .map_err(|e| map_send_error(&e))?;
     let duration_ms = start.elapsed().as_millis() as u64;
 
     // 7. Read response
@@ -257,6 +279,7 @@ pub async fn execute_request(
         .await
         .map_err(|e| format!("Failed to read response body: {}", e))?;
     let size_bytes = body_bytes.len() as u64;
+    enforce_body_cap(size_bytes, max_body)?;
     let body = String::from_utf8_lossy(&body_bytes).to_string();
 
     // 8. Save to history
@@ -324,15 +347,8 @@ pub async fn quick_execute(
         .map(|(k, v)| (resolve_variables(k, &vars), resolve_variables(v, &vars)))
         .collect();
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .danger_accept_invalid_certs(true)
-        .gzip(true)
-        .brotli(true)
-        .deflate(true)
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = build_rest_http_client(pool.inner()).await?;
+    let max_body = max_response_bytes(pool.inner()).await;
 
     let http_method = match method.to_uppercase().as_str() {
         "GET" => reqwest::Method::GET,
@@ -422,7 +438,7 @@ pub async fn quick_execute(
     let response = req_builder
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", full_error_chain(&e)))?;
+        .map_err(|e| map_send_error(&e))?;
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let status = response.status().as_u16();
@@ -445,6 +461,7 @@ pub async fn quick_execute(
         .await
         .map_err(|e| format!("Failed to read response body: {}", e))?;
     let size_bytes = body_bytes.len() as u64;
+    enforce_body_cap(size_bytes, max_body)?;
     let body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
     // Save to history
@@ -534,15 +551,8 @@ pub async fn execute_request_internal(
         url_with_params = format!("{}{}{}", url_with_params, separator, query_parts.join("&"));
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .danger_accept_invalid_certs(true)
-        .gzip(true)
-        .brotli(true)
-        .deflate(true)
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = build_rest_http_client(pool).await?;
+    let max_body = max_response_bytes(pool).await;
 
     let method = match request.method.to_uppercase().as_str() {
         "GET" => reqwest::Method::GET,
@@ -628,7 +638,7 @@ pub async fn execute_request_internal(
     let response = req_builder
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", full_error_chain(&e)))?;
+        .map_err(|e| map_send_error(&e))?;
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let status = response.status().as_u16();
@@ -649,6 +659,7 @@ pub async fn execute_request_internal(
         .await
         .map_err(|e| format!("Failed to read response body: {}", e))?;
     let size_bytes = body_bytes.len() as u64;
+    enforce_body_cap(size_bytes, max_body)?;
     let body = String::from_utf8_lossy(&body_bytes).to_string();
 
     Ok(HttpResponse {
@@ -816,15 +827,8 @@ pub async fn quick_execute_internal(
     let resolved_url = ensure_scheme(&resolve_variables(url, &vars));
     let resolved_body = resolve_variables(body, &vars);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .danger_accept_invalid_certs(true)
-        .gzip(true)
-        .brotli(true)
-        .deflate(true)
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = build_rest_http_client(pool).await?;
+    let max_body = max_response_bytes(pool).await;
 
     let http_method = match method.to_uppercase().as_str() {
         "GET" => reqwest::Method::GET,
@@ -885,7 +889,7 @@ pub async fn quick_execute_internal(
     }
 
     let start = Instant::now();
-    let response = req_builder.send().await.map_err(|e| format!("Request failed: {}", full_error_chain(&e)))?;
+    let response = req_builder.send().await.map_err(|e| map_send_error(&e))?;
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let status = response.status().as_u16();
@@ -895,6 +899,7 @@ pub async fn quick_execute_internal(
         .collect();
     let body_bytes = response.bytes().await.map_err(|e| format!("Failed to read body: {}", e))?;
     let size_bytes = body_bytes.len() as u64;
+    enforce_body_cap(size_bytes, max_body)?;
     let body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
     Ok(HttpResponse { status, status_text, headers: response_headers, body: body_str, duration_ms, size_bytes })

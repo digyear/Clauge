@@ -215,13 +215,14 @@ pub async fn create_pool_with_tunnel(
         _ => (config.clone(), None),
     };
 
-    let pool = build_pool_inner(&effective_config, descriptor.dialect).await?;
+    let pool = build_pool_inner(&effective_config, descriptor.dialect, app_pool).await?;
     Ok((pool, tunnel))
 }
 
 async fn build_pool_inner(
     config: &SqlConnectionConfig,
     dialect: SqlDialect,
+    app_pool: Option<&SqlitePool>,
 ) -> Result<DatabasePool, String> {
     let url = build_connection_url(config)?;
     eprintln!("[Clauge SQL] create_pool driver={} host={} port={} db={} ssl={} user={}",
@@ -268,7 +269,7 @@ async fn build_pool_inner(
             // ClickhouseClient::new reads host/port from `config`, so the
             // tunneled config naturally points the HTTP base URL at
             // `127.0.0.1:<local_port>` when an SSH tunnel is in play.
-            let client = ClickhouseClient::new(config)?;
+            let client = ClickhouseClient::new(config, app_pool).await?;
             client
                 .ping()
                 .await

@@ -1,6 +1,7 @@
 //! Resolve the updater endpoint URL for a given channel.
 
 use serde::Deserialize;
+use sqlx::SqlitePool;
 
 const REPO_OWNER: &str = "ansxuman";
 const REPO_NAME: &str = "Clauge";
@@ -21,10 +22,14 @@ struct GhRelease {
 /// `pre` queries the releases API for the most recent pre-release that is
 /// not a draft, then returns its asset URL. If none exists, falls back to
 /// stable so the user still sees something.
-pub async fn resolve_endpoint(channel: &str) -> Result<String, String> {
+///
+/// Pool is needed because the pre-release lookup goes through our
+/// proxy-aware HTTP client so corp users behind a mandatory proxy can
+/// still reach the GitHub API.
+pub async fn resolve_endpoint(pool: &SqlitePool, channel: &str) -> Result<String, String> {
     match channel {
         "stable" => Ok(STABLE_ENDPOINT.to_string()),
-        "pre" => match find_latest_prerelease().await {
+        "pre" => match find_latest_prerelease(pool).await {
             Ok(Some(tag)) => Ok(format!(
                 "https://github.com/{}/{}/releases/download/{}/latest.json",
                 REPO_OWNER, REPO_NAME, tag
@@ -38,13 +43,14 @@ pub async fn resolve_endpoint(channel: &str) -> Result<String, String> {
     }
 }
 
-async fn find_latest_prerelease() -> Result<Option<String>, String> {
+async fn find_latest_prerelease(pool: &SqlitePool) -> Result<Option<String>, String> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/releases?per_page=10",
         REPO_OWNER, REPO_NAME
     );
+    let client = crate::shared::http::build_app_http_client(pool).await?;
     // GitHub API rejects requests without a User-Agent.
-    let releases: Vec<GhRelease> = reqwest::Client::new()
+    let releases: Vec<GhRelease> = client
         .get(&url)
         .header("User-Agent", "Clauge-Updater")
         .header("Accept", "application/vnd.github+json")

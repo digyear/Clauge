@@ -35,8 +35,12 @@
     getDefaultModelFor,
     type ProviderId,
   } from '$lib/shared/ai/providers';
+  import { isMac, mod } from '$lib/utils/platform';
 
-  type SettingsTab = 'general' | 'appearance' | 'ai' | 'agent' | 'proxy' | 'shortcuts' | 'about';
+  // 'general' is app-wide (currently: Proxy — applies to REST + AI + GitHub
+  // + Updater + ClickHouse). 'rest' holds REST-only knobs (timeout, redirects,
+  // SSL verify, max body).
+  type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'ai' | 'rest' | 'agent' | 'about';
 
   let show = $state(false);
   let activeTab = $state<SettingsTab>('general');
@@ -125,25 +129,46 @@
     document.body.style.zoom = '';
   });
 
-  const tabs: { key: SettingsTab; label: string; icon: string }[] = [
-    { key: 'general', label: 'General', icon: 'M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z' },
-    { key: 'appearance', label: 'Appearance', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z' },
-    { key: 'ai', label: 'AI Assistance', icon: 'M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z' },
-    { key: 'agent', label: 'Agent', icon: 'M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4zm0 2a2 2 0 0 1 2 2v2h-4V6a2 2 0 0 1 2-2zm-1 10v2h2v-2h2v-2h-2v-2h-2v2H9v2h2z' },
-    { key: 'proxy', label: 'Proxy', icon: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' },
-    { key: 'shortcuts', label: 'Shortcuts', icon: 'M18 3a3 3 0 00-3 3v12a3 3 0 003 3 3 3 0 003-3 3 3 0 00-3-3H6a3 3 0 00-3 3 3 3 0 003 3 3 3 0 003-3V6a3 3 0 00-3-3 3 3 0 00-3 3 3 3 0 003 3h12a3 3 0 003-3 3 3 0 00-3-3z' },
-    { key: 'about', label: 'About', icon: 'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z' },
+  // Sidebar items. `kind: 'header'` rows render as a small uppercase
+  // section label; `kind: 'tab'` rows are the clickable tabs.
+  //
+  // `icon` is the inner SVG markup (paths/circles/lines) — rendered with
+  // `{@html}` inside a fixed-attr <svg>. The mode icons (Agent / REST /
+  // etc.) are kept identical to the main Sidebar so users see the same
+  // glyph in both places.
+  type TabsItem =
+    | { kind: 'tab'; key: SettingsTab; label: string; icon: string }
+    | { kind: 'header'; label: string };
+
+  const tabs: TabsItem[] = [
+    { kind: 'tab', key: 'general', label: 'General', icon: '<path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/>' },
+    { kind: 'tab', key: 'appearance', label: 'Appearance', icon: '<path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>' },
+    { kind: 'tab', key: 'shortcuts', label: 'Shortcuts', icon: '<path d="M18 3a3 3 0 00-3 3v12a3 3 0 003 3 3 3 0 003-3 3 3 0 00-3-3H6a3 3 0 00-3 3 3 3 0 003 3 3 3 0 003-3V6a3 3 0 00-3-3 3 3 0 00-3 3 3 3 0 003 3h12a3 3 0 003-3 3 3 0 00-3-3z"/>' },
+    { kind: 'tab', key: 'ai', label: 'AI Assistance', icon: '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>' },
+    { kind: 'header', label: 'Modes' },
+    // Order + glyphs MUST match the main Sidebar (Agent, REST, ...).
+    { kind: 'tab', key: 'agent', label: 'Agent', icon: '<path d="M12 3l1.6 4.8L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.2L12 3z"/><path d="M18.5 14l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9.9-2.6z"/>' },
+    { kind: 'tab', key: 'rest', label: 'REST', icon: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>' },
+    { kind: 'tab', key: 'about', label: 'About', icon: '<path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>' },
   ];
 
-  const SHORTCUTS = [
-    { desc: 'Send request', keys: ['Cmd', 'Enter'] },
-    { desc: 'REST mode', keys: ['Cmd', '1'] },
-    { desc: 'SQL mode', keys: ['Cmd', '2'] },
-    { desc: 'NoSQL mode', keys: ['Cmd', '3'] },
-    { desc: 'Toggle nav', keys: ['Cmd', 'B'] },
-    { desc: 'Toggle AI', keys: ['Cmd', 'L'] },
-    { desc: 'Show shortcuts', keys: ['Cmd', '/'] },
-    { desc: 'Close modals', keys: ['Esc'] },
+  // Platform-aware shortcut list. `m` = "Cmd" on macOS, "Ctrl" elsewhere.
+  // Fullscreen + Minimize differ by OS so they're branched.
+  const m = mod();
+  const SHORTCUTS: { desc: string; keys: string[] }[] = [
+    { desc: 'Switch to Agent mode', keys: [m, '1'] },
+    { desc: 'Switch to REST mode', keys: [m, '2'] },
+    { desc: 'Switch to SQL mode', keys: [m, '3'] },
+    { desc: 'Switch to NoSQL mode', keys: [m, '4'] },
+    { desc: 'Send request / Execute query', keys: [m, 'Enter'] },
+    { desc: 'Save', keys: [m, 'S'] },
+    { desc: 'Close active tab', keys: [m, 'W'] },
+    { desc: 'Toggle nav sidebar', keys: [m, 'B'] },
+    { desc: 'Toggle AI assistant', keys: [m, 'L'] },
+    { desc: 'Show shortcuts overlay', keys: [m, '/'] },
+    { desc: 'Toggle fullscreen', keys: isMac() ? ['Cmd', 'Ctrl', 'F'] : ['F11'] },
+    ...(isMac() ? [{ desc: 'Minimize window', keys: ['Cmd', 'M'] }] : []),
+    { desc: 'Close modal / overlay', keys: ['Esc'] },
   ];
 
   async function handleSettingChange(key: string, value: string) {
@@ -315,8 +340,12 @@
   type AgentProvider = 'claude_code' | 'codex' | 'gemini_cli';
   let agentProvider = $state<AgentProvider>('claude_code');
 
-  const AGENT_PROVIDERS: Record<string, { name: string; icon: string; description: string; available: boolean }> = {
-    claude_code: { name: 'Claude Code', icon: 'M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z', description: 'Anthropic CLI agent', available: true },
+  // `iconSrc` (when present) renders an <img> so we can use brand assets
+  // — currently only Claude Code, which is the same mascot already used by
+  // the Topbar tab, AgentNav, and AgentPanel loading screens. Other
+  // providers fall back to a stroked SVG path.
+  const AGENT_PROVIDERS: Record<string, { name: string; icon: string; iconSrc?: string; description: string; available: boolean }> = {
+    claude_code: { name: 'Claude Code', icon: '', iconSrc: '/code-no-action.svg', description: 'Anthropic CLI agent', available: true },
     codex: { name: 'Codex', icon: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5', description: 'OpenAI CLI agent', available: false },
     gemini_cli: { name: 'Gemini CLI', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z', description: 'Google CLI agent', available: false },
   };
@@ -526,23 +555,77 @@
   <div class="stg-layout">
     <!-- Tab sidebar -->
     <div class="stg-tabs">
-      {#each tabs as tab}
-        <button
-          class="stg-tab"
-          class:active={activeTab === tab.key}
-          onclick={() => activeTab = tab.key}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d={tab.icon} />
-          </svg>
-          {tab.label}
-        </button>
+      {#each tabs as item}
+        {#if item.kind === 'header'}
+          <span class="stg-tab-section">{item.label}</span>
+        {:else}
+          <button
+            class="stg-tab"
+            class:active={activeTab === item.key}
+            onclick={() => activeTab = item.key}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              {@html item.icon}
+            </svg>
+            {item.label}
+          </button>
+        {/if}
       {/each}
     </div>
 
     <!-- Content pane -->
     <div class="stg-content">
       {#if activeTab === 'general'}
+        <div class="stg-section">
+          <span class="stg-section-label">Proxy</span>
+          <p class="stg-section-help">Applies system-wide. Leave blank to connect directly.</p>
+
+          <div class="stg-field">
+            <label class="stg-label">Proxy URL</label>
+            <input
+              class="stg-input"
+              type="text"
+              placeholder="http://proxy:8080"
+              value={proxyUrl}
+              onchange={(e) => handleSettingChange('proxy_url', e.currentTarget.value)}
+            />
+          </div>
+
+          <div class="stg-field">
+            <label class="stg-label">Proxy Authentication</label>
+            <label class="stg-toggle">
+              <input type="checkbox" checked={proxyAuth}
+                onchange={(e) => handleSettingChange('proxy_auth', String(e.currentTarget.checked))} />
+              <span class="stg-toggle-slider"></span>
+            </label>
+          </div>
+
+          {#if proxyAuth}
+            <div class="stg-field">
+              <label class="stg-label">Username</label>
+              <input
+                class="stg-input"
+                type="text"
+                value={proxyUsername}
+                placeholder="username"
+                onchange={(e) => handleSettingChange('proxy_username', e.currentTarget.value)}
+              />
+            </div>
+
+            <div class="stg-field">
+              <label class="stg-label">Password</label>
+              <input
+                class="stg-input"
+                type="password"
+                value={proxyPassword}
+                placeholder="password"
+                onchange={(e) => handleSettingChange('proxy_password', e.currentTarget.value)}
+              />
+            </div>
+          {/if}
+        </div>
+
+      {:else if activeTab === 'rest'}
         <div class="stg-section">
           <span class="stg-section-label">Request Settings</span>
 
@@ -880,7 +963,11 @@
                   onclick={() => { if (provider.available) agentProvider = key as AgentProvider; }}
                 >
                   <div class="agent-provider-icon">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d={provider.icon} /></svg>
+                    {#if provider.iconSrc}
+                      <img src={provider.iconSrc} alt="" width="20" height="20" />
+                    {:else}
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d={provider.icon} /></svg>
+                    {/if}
                   </div>
                   <div class="agent-provider-info">
                     <span class="agent-provider-name">{provider.name}</span>
@@ -1320,55 +1407,6 @@
             </div>
           {/if}
         {/if}
-
-      {:else if activeTab === 'proxy'}
-        <div class="stg-section">
-          <span class="stg-section-label">Proxy Configuration</span>
-
-          <div class="stg-field">
-            <label class="stg-label">Proxy URL</label>
-            <input
-              class="stg-input"
-              type="text"
-              placeholder="http://proxy:8080"
-              value={proxyUrl}
-              onchange={(e) => handleSettingChange('proxy_url', e.currentTarget.value)}
-            />
-          </div>
-
-          <div class="stg-field">
-            <label class="stg-label">Proxy Authentication</label>
-            <label class="stg-toggle">
-              <input type="checkbox" checked={proxyAuth}
-                onchange={(e) => handleSettingChange('proxy_auth', String(e.currentTarget.checked))} />
-              <span class="stg-toggle-slider"></span>
-            </label>
-          </div>
-
-          {#if proxyAuth}
-            <div class="stg-field">
-              <label class="stg-label">Username</label>
-              <input
-                class="stg-input"
-                type="text"
-                value={proxyUsername}
-                placeholder="username"
-                onchange={(e) => handleSettingChange('proxy_username', e.currentTarget.value)}
-              />
-            </div>
-
-            <div class="stg-field">
-              <label class="stg-label">Password</label>
-              <input
-                class="stg-input"
-                type="password"
-                value={proxyPassword}
-                placeholder="password"
-                onchange={(e) => handleSettingChange('proxy_password', e.currentTarget.value)}
-              />
-            </div>
-          {/if}
-        </div>
 
       {:else if activeTab === 'shortcuts'}
         <div class="stg-section">

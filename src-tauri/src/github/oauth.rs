@@ -42,7 +42,7 @@ async fn delete_token(pool: &SqlitePool) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn github_connect(pool: State<'_, SqlitePool>, token: String) -> Result<String, String> {
-    let client = tauri_plugin_http::reqwest::Client::new();
+    let client = crate::shared::http::build_app_http_client(pool.inner()).await?;
     let resp = client
         .get("https://api.github.com/user")
         .header("Authorization", format!("Bearer {}", token))
@@ -82,7 +82,7 @@ pub async fn github_get_status(pool: State<'_, SqlitePool>) -> Result<Option<Git
         None => return Ok(None),
     };
 
-    let client = tauri_plugin_http::reqwest::Client::new();
+    let client = crate::shared::http::build_app_http_client(pool.inner()).await?;
     let resp = client
         .get("https://api.github.com/user")
         .header("Authorization", format!("Bearer {}", token))
@@ -119,7 +119,7 @@ pub fn github_get_oauth_url() -> String {
 
 #[tauri::command]
 pub async fn github_connect_with_token(pool: State<'_, SqlitePool>, token: String) -> Result<String, String> {
-    let client = tauri_plugin_http::reqwest::Client::new();
+    let client = crate::shared::http::build_app_http_client(pool.inner()).await?;
     let resp = client
         .get("https://api.github.com/user")
         .header("Authorization", format!("Bearer {}", token))

@@ -48,6 +48,23 @@
     flex-shrink: 0;
   }
 
+  /* Sidebar group header (e.g. "Modes"). Sits between tab groups. */
+  .stg-tab-section {
+    display: block;
+    padding: 14px 14px 4px;
+    font-family: var(--ui);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--t4, var(--t3));
+    user-select: none;
+  }
+  /* Avoid extra top padding when a header is the first child. */
+  .stg-tab-section:first-child {
+    padding-top: 8px;
+  }
+
   /* -- Content pane -- */
   .stg-content {
     flex: 1;
@@ -70,6 +87,15 @@
     margin-bottom: 14px;
     font-family: var(--ui);
     font-weight: 600;
+  }
+
+  /* Optional helper text under a section label. */
+  .stg-section-help {
+    margin: -8px 0 14px;
+    font-size: 12px;
+    color: var(--t3);
+    font-family: var(--ui);
+    line-height: 1.5;
   }
 
   /* -- Field row -- */
@@ -156,6 +182,20 @@
   .stg-input:focus {
     border-color: var(--acc);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 12%, transparent);
+  }
+
+  /* Hide WebKit's native number-input spinner buttons. They render as a
+     dark native control that doesn't respect our themes. Users can still
+     bump values with keyboard up/down arrows when the field is focused. */
+  .stg-input[type="number"]::-webkit-inner-spin-button,
+  .stg-input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+  .stg-input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
   }
 
   .stg-select {
