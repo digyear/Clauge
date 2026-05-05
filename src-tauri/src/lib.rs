@@ -63,12 +63,10 @@ pub fn run() {
         // modes), but it does NOT touch the Clauge schema.
         .plugin(tauri_plugin_sql::Builder::default().build())
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
+            // Rolling file logger — per-day folder, per-hour file, 30-day retention.
+            // Replaces the debug-only tauri-plugin-log initialisation.
+            if let Ok(log_dir) = app.path().app_log_dir() {
+                let _ = shared::logger::init(&log_dir);
             }
 
             // Per-OS window chrome (rounded corners on macOS/Win11, dock icon
@@ -261,6 +259,8 @@ pub fn run() {
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::get_all_settings,
+            commands::logs::get_log_dir,
+            commands::logs::open_log_folder,
             appearance::vibrancy::set_vibrancy,
             appearance::vibrancy::get_appearance,
             appearance::vibrancy::set_appearance,
@@ -379,6 +379,7 @@ pub fn run() {
             modes::agent::usage::agent_get_session_context_usage,
             modes::agent::commands::agent_update_tray_title,
             modes::agent::commands::agent_get_claude_plan,
+            modes::agent::commands::agent_check_claude_installed,
             // SSH mode
             modes::ssh::profiles::ssh_list_profiles,
             modes::ssh::profiles::ssh_create_profile,

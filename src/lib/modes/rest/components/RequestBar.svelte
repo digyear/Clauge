@@ -613,6 +613,7 @@
   .method-sel {
     height: 32px;
     padding: 0 8px;
+    padding-right: 24px;
     border-radius: 5px;
     border: 1px solid;
     font-family: var(--mono);
@@ -622,6 +623,12 @@
     cursor: default;
     outline: none;
     flex-shrink: 0;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 5 6 8 9 5'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    background-size: 9px 9px;
   }
 
   .url-wrap {

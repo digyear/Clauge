@@ -149,6 +149,7 @@
     padding: 0 12px;
     gap: 16px;
     flex-shrink: 0;
+    position: relative;
   }
   .si {
     font-size: 10px;

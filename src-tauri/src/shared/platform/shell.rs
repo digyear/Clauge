@@ -103,7 +103,15 @@ pub fn default_user_shell() -> (String, ShellKind) {
             std::env::var("COMSPEC").unwrap_or_else(|_| "powershell.exe".to_string())
         }
     } else {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+        std::env::var("SHELL").unwrap_or_else(|_| {
+            // zsh is macOS default but not shipped on Ubuntu/Debian.
+            // Prefer bash (universal) then fall back to POSIX sh.
+            if std::path::Path::new("/bin/bash").exists() {
+                "/bin/bash".to_string()
+            } else {
+                "/bin/sh".to_string()
+            }
+        })
     };
     let kind = ShellKind::detect(&path);
     (path, kind)

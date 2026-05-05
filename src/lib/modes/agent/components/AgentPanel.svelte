@@ -38,7 +38,9 @@
     agentKillTerminal,
     agentRemoveWorktree,
     agentDeleteSession,
+    agentCheckClaudeInstalled,
   } from '../commands';
+  import ClaudeNotInstalledModal from './ClaudeNotInstalledModal.svelte';
   import { refreshAgentGitStatus, refreshAgentContextUsage, loadAgentSessions, agentGitBranchName, agentGitFiles, agentGitAhead, agentGitBehind } from '../stores';
   import { getTerminalTheme } from '$lib/utils/theme';
   import { appearance } from '$lib/stores/settings';
@@ -89,6 +91,8 @@
 
   // Suppress auto-switch on exit (set by reset/close actions)
   let _suppressExit = false;
+
+  let showClaudeNotInstalled = $state(false);
 
   // --- Notification system for action-required prompts ---
   let notifyOutputBuffer = '';
@@ -512,6 +516,19 @@
       showTermEntry(entry);
       refreshAgentGitStatus();
       return;
+    }
+
+    // Gate on claude being installed before creating any terminal state
+    try {
+      const claudeInstalled = await agentCheckClaudeInstalled();
+      if (!claudeInstalled) {
+        showClaudeNotInstalled = true;
+        spawning = false;
+        return;
+      }
+    } catch (_) {
+      // If the check itself fails (e.g. IPC not ready), let the spawn proceed
+      // and surface any real error from the terminal itself.
     }
 
     const currentGen = (_spawnGenerations.get(session.id) || 0) + 1;
@@ -1219,6 +1236,8 @@
     if (unlistenFileDrop) unlistenFileDrop();
   });
 </script>
+
+<ClaudeNotInstalledModal bind:show={showClaudeNotInstalled} />
 
 {#if $activeAgentSession}
   {@const _activeId = $activeAgentSession.id}

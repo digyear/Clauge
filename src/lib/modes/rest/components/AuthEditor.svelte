@@ -124,12 +124,19 @@
     border: 1px solid var(--b1);
     border-radius: 5px;
     padding: 5px 10px;
+    padding-right: 28px;
     color: var(--t1);
     font-family: var(--mono);
     font-size: 12.5px;
     outline: none;
     cursor: pointer;
     margin-bottom: 12px;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23b0b0c8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 5 6 8 9 5'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 10px 10px;
   }
   .auth-panel label {
     display: block;

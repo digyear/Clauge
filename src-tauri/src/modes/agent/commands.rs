@@ -1,4 +1,5 @@
 use crate::modes::agent::models::{AgentContext, AgentSession};
+use crate::shared::cli::{claude::CLAUDE, runner::CliRunner};
 use crate::shared::repos::sessions as sessions_repo;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
@@ -205,6 +206,14 @@ pub fn agent_update_tray_title(app_handle: tauri::AppHandle, title: String) -> R
         tray.set_title(Some(&title)).map_err(|e| format!("Tray error: {}", e))?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn agent_check_claude_installed() -> bool {
+    let cli: &dyn CliRunner = &CLAUDE;
+    // resolve_binary_path returns the bare binary name if `which`/`where.exe` fails.
+    // A resolved absolute path means the binary exists on PATH.
+    cli.resolve_binary_path() != cli.binary_name()
 }
 
 #[tauri::command]

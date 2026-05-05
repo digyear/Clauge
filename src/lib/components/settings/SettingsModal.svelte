@@ -87,6 +87,26 @@
   let proxyUsername = $derived($settings['proxy_username'] ?? '');
   let proxyPassword = $derived($settings['proxy_password'] ?? '');
 
+  // --- Logs ---
+  let logDir = $state('');
+
+  $effect(() => {
+    if (activeTab === 'general' && !logDir) {
+      import('$lib/commands/logs').then(({ getLogDir }) =>
+        getLogDir().then(p => { logDir = p; }).catch(() => {})
+      );
+    }
+  });
+
+  async function handleOpenLogFolder() {
+    try {
+      const { openLogFolder } = await import('$lib/commands/logs');
+      await openLogFolder();
+    } catch {
+      showToast('Failed to open log folder', 'error');
+    }
+  }
+
   // AI Assistance state
   let aiSubTab = $state<'config' | 'usage'>('config');
   let aiProvider = $state<string>('claude');
@@ -583,7 +603,7 @@
           <div class="stg-field">
             <label class="stg-label">Proxy URL</label>
             <input
-              class="stg-input"
+              class="stg-input stg-input-lg"
               type="text"
               placeholder="http://proxy:8080"
               value={proxyUrl}
@@ -623,6 +643,22 @@
               />
             </div>
           {/if}
+        </div>
+
+        <div class="stg-section">
+          <span class="stg-section-label">Logs</span>
+          <p class="stg-section-help">Per-hour log files organized by day. Logs older than 30 days are removed automatically.</p>
+          <div class="stg-field">
+            <label class="stg-label">Log Folder</label>
+            <div class="log-path-row">
+              <span class="log-path">{logDir}</span>
+              <button class="log-open-btn" onclick={handleOpenLogFolder} title="Open in file manager">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
 
       {:else if activeTab === 'rest'}

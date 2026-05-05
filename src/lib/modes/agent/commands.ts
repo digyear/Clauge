@@ -98,3 +98,4 @@ export const agentGetSessionContextUsage = (projectPath: string, sessionId: stri
 // System
 export const agentUpdateTrayTitle = (title: string) => invoke<void>('agent_update_tray_title', { title });
 export const agentGetClaudePlan = () => invoke<string>('agent_get_claude_plan');
+export const agentCheckClaudeInstalled = () => invoke<boolean>('agent_check_claude_installed');

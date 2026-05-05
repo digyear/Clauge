@@ -1,6 +1,7 @@
 <script lang="ts">
   import Modal from '$lib/shared/primitives/Modal.svelte';
-  import { agentCreateSession, agentDiscoverSessions, agentListContexts, agentAttachContext, agentUpdateSessionId } from '../commands';
+  import ClaudeNotInstalledModal from './ClaudeNotInstalledModal.svelte';
+  import { agentCreateSession, agentDiscoverSessions, agentListContexts, agentAttachContext, agentUpdateSessionId, agentCheckClaudeInstalled } from '../commands';
   import type { AgentContext, DiscoveredSession } from '../types';
   import { loadAgentSessions, agentSessions, activeAgentSession } from '../stores';
   import { tabs as tabsStore, addTab, activateTab } from '$lib/shared/stores/tabs';
@@ -9,6 +10,8 @@
   import { get } from 'svelte/store';
 
   let { show = $bindable(false) } = $props();
+
+  let showClaudeNotInstalled = $state(false);
 
   // Form state — matches original Clauge exactly
   let projectPath = $state('');
@@ -76,6 +79,17 @@
   async function handleCreate() {
     if (!projectPath.trim() || !title.trim() || !purpose) return;
     if (gitEnabled && (!gitName.trim() || !gitEmail.trim())) return;
+
+    try {
+      const claudeInstalled = await agentCheckClaudeInstalled();
+      if (!claudeInstalled) {
+        showClaudeNotInstalled = true;
+        return;
+      }
+    } catch (_) {
+      // If the check fails, fall through and let the spawn surface the error.
+    }
+
     loading = true;
     try {
       const session = await agentCreateSession({
@@ -308,6 +322,8 @@
   </div>
 </Modal>
 
+<ClaudeNotInstalledModal bind:show={showClaudeNotInstalled} />
+
 <style>
   .ns-form { display: flex; flex-direction: column; gap: 12px; }
   .ns-field { display: flex; flex-direction: column; gap: 4px; }
@@ -329,9 +345,11 @@
   .ns-textarea:focus { border-color: var(--acc); }
   .ns-textarea::placeholder { color: var(--t3); }
   .ns-select {
-    width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--b1);
+    width: 100%; padding: 7px 10px; padding-right: 28px; border-radius: 6px; border: 1px solid var(--b1);
     background: var(--e); color: var(--t1); font-size: 12px; font-family: var(--ui);
-    appearance: none; cursor: pointer; outline: none;
+    -webkit-appearance: none; appearance: none; cursor: pointer; outline: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23b0b0c8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 5 6 8 9 5'/></svg>");
+    background-repeat: no-repeat; background-position: right 10px center; background-size: 10px 10px;
   }
   .ns-select option { background: var(--n); color: var(--t1); }
   .ns-path-row { display: flex; gap: 8px; }

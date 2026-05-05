@@ -197,11 +197,18 @@
     border: 1px solid var(--b1);
     border-radius: var(--radius-md);
     padding: 0 8px;
+    padding-right: 24px;
     font-size: 11px;
     font-family: var(--mono);
     color: var(--t1);
     outline: none;
     cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23b0b0c8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 5 6 8 9 5'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 7px center;
+    background-size: 9px 9px;
   }
   .te-select:focus {
     border-color: var(--acc);

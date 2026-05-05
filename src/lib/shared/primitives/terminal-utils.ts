@@ -4,6 +4,7 @@
 // keep it in the panel; this module is intentionally narrow.
 
 import type { Terminal } from '@xterm/xterm';
+import { isLinux } from '$lib/utils/platform';
 
 /**
  * Decode the base64-encoded PTY chunk emitted by the Rust backend into a
@@ -44,6 +45,9 @@ export function deferUntilFrame(callback: () => void): void {
  * the addon module is dynamically imported to keep it out of the main bundle.
  */
 export async function loadWebGLAddon(term: Terminal): Promise<void> {
+  // WebGL crashes the WebKitGTK GPU/compositor process on Linux (Wayland and X11),
+  // leaving a blank window with no JS console error. Canvas renderer is stable.
+  if (isLinux()) return;
   try {
     const { WebglAddon } = await import('@xterm/addon-webgl');
     const webgl = new WebglAddon();

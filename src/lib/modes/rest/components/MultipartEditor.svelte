@@ -182,11 +182,18 @@
 
   .mp-type-sel {
     height: 28px; padding: 0 4px;
+    padding-right: 20px;
     border: 1px solid var(--b1); border-radius: 5px;
     background: transparent; color: var(--t3);
     font-size: 11px; font-family: var(--mono);
     cursor: pointer; outline: none; flex-shrink: 0;
-    width: 56px;
+    width: 64px;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23b0b0c8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 5 6 8 9 5'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 5px center;
+    background-size: 8px 8px;
   }
   .mp-type-sel:focus { border-color: var(--acc); }
 

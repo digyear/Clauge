@@ -164,6 +164,7 @@
   .body-type-sel {
     height: 20px;
     padding: 0 6px;
+    padding-right: 22px;
     border-radius: 4px;
     border: 1px solid var(--b1);
     background: transparent;
@@ -173,6 +174,12 @@
     cursor: pointer;
     outline: none;
     transition: border-color 0.1s, color 0.1s;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23b0b0c8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 5 6 8 9 5'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 5px center;
+    background-size: 8px 8px;
   }
   .body-type-sel:hover {
     border-color: var(--b2);

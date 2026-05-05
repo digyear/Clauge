@@ -179,6 +179,8 @@
     transition: border-color 0.15s, box-shadow 0.15s;
   }
 
+  .stg-input-lg { flex: 1; min-width: 0; }
+
   .stg-input:focus {
     border-color: var(--acc);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 12%, transparent);
@@ -203,6 +205,7 @@
     border: 1px solid var(--b1);
     border-radius: var(--radius-md);
     padding: 6px 10px;
+    padding-right: 28px;
     color: var(--t1);
     font-family: var(--mono);
     font-size: 12.5px;
@@ -210,6 +213,12 @@
     cursor: default;
     min-width: 120px;
     transition: border-color 0.15s, box-shadow 0.15s;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23b0b0c8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 5 6 8 9 5'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 10px 10px;
   }
 
   .stg-select:focus {
@@ -632,12 +641,13 @@
     letter-spacing: 0.4px;
   }
   .ai-cfg-select {
-    -webkit-appearance: menulist;
-    appearance: menulist;
+    -webkit-appearance: none;
+    appearance: none;
     background: rgba(255,255,255,0.04);
     border: 1px solid var(--b1);
     border-radius: var(--radius-md);
     padding: 8px 12px;
+    padding-right: 28px;
     color: var(--t1);
     font-family: var(--ui);
     font-size: 12.5px;
@@ -647,6 +657,10 @@
     transition: border-color 0.15s, box-shadow 0.15s;
     height: 34px;
     box-sizing: border-box;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23b0b0c8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 5 6 8 9 5'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 10px 10px;
   }
   .ai-cfg-select:focus {
     border-color: var(--acc);
@@ -1176,3 +1190,20 @@
   .ud-live-bar { flex: 1; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
   .ud-live-fill { height: 100%; border-radius: 2px; transition: width 0.3s ease; }
   .ud-live-pct { font-size: 12px; font-weight: 600; width: 44px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+  /* -- Logs -- */
+  .log-path-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .log-path {
+    flex: 1; min-width: 0;
+    font-family: var(--mono); font-size: 11px; color: var(--t2);
+    background: var(--c); border: 1px solid var(--b1); border-radius: 6px;
+    padding: 6px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    user-select: all;
+  }
+  .log-open-btn {
+    flex-shrink: 0; width: 30px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--b1); border-radius: 6px;
+    background: transparent; color: var(--t3); cursor: pointer;
+    transition: color 0.1s, border-color 0.1s, background 0.1s;
+  }
+  .log-open-btn:hover { color: var(--t1); border-color: var(--b2); background: rgba(255,255,255,0.05); }
