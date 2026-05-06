@@ -64,6 +64,11 @@
 
   function updateKey(index: number, value: string) {
     localItems[index].key = value;
+    if (value.trim()) {
+      localItems[index].enabled = 1;
+    } else if (!localItems[index].value.trim()) {
+      localItems[index].enabled = 0;
+    }
     if (showKeySuggestions && value.length > 0) {
       suggestFilter = value;
       suggestRowIdx = index;
