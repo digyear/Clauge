@@ -266,6 +266,7 @@
     agent: 'var(--acc)',
     ssh: 'var(--ssh)',
     explorer: 'var(--explorer)',
+    workspace: 'var(--acc)',
     history: 'var(--t2)',
   };
 
@@ -276,6 +277,7 @@
     agent: 'Agent',
     ssh: 'SSH',
     explorer: 'Explorer',
+    workspace: 'Workspace',
     history: 'History',
   };
 
@@ -286,6 +288,7 @@
     agent: 'Ask about your agent sessions',
     ssh: 'e.g. show disk usage on this server',
     explorer: 'e.g. list large files in /var/log',
+    workspace: 'Ask about your notes or boards',
     history: 'Ask about your request history',
   };
 
@@ -296,6 +299,7 @@
     agent: 'Agent mode has its own built-in AI assistance via Claude Code sessions.',
     ssh: 'Ask for shell commands to run on the connected server. Suggested commands appear as code blocks with an Insert button — destructive ones are blocked.',
     explorer: 'Browse remote storage with natural language: list, search, read, upload, download, rename, delete. Mutations require your confirmation.',
+    workspace: 'Ask the assistant to find a note, summarize a board, or draft a page. The agent in Agent mode can also edit your workspaces directly.',
     history: 'Ask about your request history and I\'ll help you find what you need.',
   };
 

@@ -2,9 +2,9 @@ import { writable } from 'svelte/store';
 import type { AIMessage } from '$lib/types/ai';
 import { STORAGE_KEYS } from '$lib/shared/constants/storage';
 
-export type AppMode = 'agent' | 'rest' | 'sql' | 'nosql' | 'ssh' | 'explorer' | 'history';
+export type AppMode = 'agent' | 'rest' | 'sql' | 'nosql' | 'ssh' | 'explorer' | 'workspace' | 'history';
 
-const VALID_MODES: AppMode[] = ['agent', 'rest', 'sql', 'nosql', 'ssh', 'explorer'];
+const VALID_MODES: AppMode[] = ['agent', 'rest', 'sql', 'nosql', 'ssh', 'explorer', 'workspace'];
 
 function loadInitialMode(): AppMode {
   try {
@@ -61,5 +61,42 @@ export function clearModeChatMessages(currentMode: string) {
   aiChatHistory.update(h => {
     delete h[currentMode];
     return { ...h };
+  });
+}
+
+/** Clear AI chat history across every mode. Used by Settings → General →
+ *  Chat History → Clear, alongside the REST history table. */
+export function clearAllChatMessages() {
+  aiChatHistory.set({});
+}
+
+/** Total AI chat messages (across all modes). */
+export function countAllChatMessages(): number {
+  const h = loadChatHistory();
+  let n = 0;
+  for (const k in h) n += h[k]?.length ?? 0;
+  return n;
+}
+
+/** Approx. byte size of the AI chat localStorage payload (JSON length). */
+export function chatHistorySizeBytes(): number {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.AI_CHAT_HISTORY);
+    return raw ? new Blob([raw]).size : 0;
+  } catch { return 0; }
+}
+
+/** Drop AI chat messages older than `retentionMs` from now (each mode
+ *  filtered independently). Used on app/settings load. */
+export function purgeOldChatMessages(retentionMs: number) {
+  if (!Number.isFinite(retentionMs) || retentionMs <= 0) return;
+  const cutoff = Date.now() - retentionMs;
+  aiChatHistory.update(h => {
+    const next: Record<string, AIMessage[]> = {};
+    for (const k of Object.keys(h)) {
+      const filtered = (h[k] ?? []).filter(m => (m.timestamp ?? 0) >= cutoff);
+      if (filtered.length > 0) next[k] = filtered;
+    }
+    return next;
   });
 }

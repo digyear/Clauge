@@ -30,3 +30,23 @@ pub async fn delete_history_entry(
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn count_history(pool: State<'_, SqlitePool>) -> Result<i64, String> {
+    history_repo::count_all(pool.inner())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn purge_history(
+    pool: State<'_, SqlitePool>,
+    seconds: i64,
+) -> Result<u64, String> {
+    if seconds <= 0 {
+        return Ok(0);
+    }
+    history_repo::purge_older_than(pool.inner(), seconds)
+        .await
+        .map_err(|e| e.to_string())
+}

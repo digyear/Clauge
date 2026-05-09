@@ -1,10 +1,12 @@
 import { writable, get } from 'svelte/store';
 import type { KVInput } from '$lib/types';
 
+export type TabMode = 'rest' | 'sql' | 'nosql' | 'agent' | 'ssh' | 'explorer' | 'history' | 'workspace';
+
 export interface Tab {
   id: number;
   label: string;
-  mode: 'rest' | 'sql' | 'nosql' | 'agent' | 'ssh' | 'explorer';
+  mode: TabMode;
   key: string | null;
   dot: string;
   dirty: boolean;
@@ -29,7 +31,7 @@ export const tabs = writable<Tab[]>([]);
 export const activeTabId = writable<number>(-1);
 export const draftRequests = writable<Map<number, Partial<DraftRequest>>>(new Map());
 
-export function addTab(label: string, mode: 'rest' | 'sql' | 'nosql' | 'agent' | 'ssh' | 'explorer', key: string | null, dot: string): Tab {
+export function addTab(label: string, mode: TabMode, key: string | null, dot: string): Tab {
   const isNew = key === null;
   const tab: Tab = { id: nextId++, label, mode, key, dot, dirty: false, unsaved: isNew };
   tabs.update(t => [...t, tab]);

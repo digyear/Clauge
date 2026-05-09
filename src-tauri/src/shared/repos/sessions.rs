@@ -24,6 +24,25 @@ pub async fn get_session_by_id(
         .await
 }
 
+/// Most recently-used session bound to `project_path`. Drives the
+/// workspace auto-link flow: when an agent mutates a card via MCP, we
+/// don't know its session id directly, so we stamp the card with the
+/// session most likely to be the one calling — i.e. the one the user
+/// has been actively interacting with for this project.
+pub async fn find_recent_session_for_project(
+    pool: &SqlitePool,
+    project_path: &str,
+) -> Result<Option<AgentSession>, sqlx::Error> {
+    sqlx::query_as::<_, AgentSession>(
+        "SELECT * FROM agent_sessions \
+         WHERE project_path = ? \
+         ORDER BY last_used_at DESC LIMIT 1",
+    )
+    .bind(project_path)
+    .fetch_optional(pool)
+    .await
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_session(
     pool: &SqlitePool,

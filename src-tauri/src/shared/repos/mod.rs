@@ -9,3 +9,4 @@ pub mod sessions;
 pub mod settings;
 pub mod sql_connections;
 pub mod ssh_profiles;
+pub mod workspaces;

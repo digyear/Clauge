@@ -135,6 +135,10 @@ pub fn run() {
             modes::nosql::ai_tools::register_tools();
             modes::ssh::ai_tools::register_tools();
             modes::explorer::ai_tools::register_tools();
+            modes::workspace::ai_tools::register_tools();
+            // Workspace MCP server state — single global handle.
+            // Started/stopped via workspace_mcp_start/stop commands.
+            app.manage(modes::workspace::commands::McpServerState::default());
 
             // Apply vibrancy on macOS — use Sidebar material (what native macOS apps use)
             if let Some(window) = app.get_webview_window("main") {
@@ -256,6 +260,8 @@ pub fn run() {
             modes::rest::history::list_history,
             modes::rest::history::clear_history,
             modes::rest::history::delete_history_entry,
+            modes::rest::history::count_history,
+            modes::rest::history::purge_history,
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::get_all_settings,
@@ -395,6 +401,45 @@ pub fn run() {
             modes::ssh::ssh_session::ssh_submit_auth_prompts,
             modes::ssh::config_import::ssh_read_config_hosts,
             modes::ssh::config_import::ssh_import_config_hosts,
+            // Workspace mode
+            modes::workspace::commands::workspace_list,
+            modes::workspace::commands::workspace_get,
+            modes::workspace::commands::workspace_create,
+            modes::workspace::commands::workspace_update,
+            modes::workspace::commands::workspace_delete,
+            modes::workspace::commands::workspace_note_list,
+            modes::workspace::commands::workspace_note_get,
+            modes::workspace::commands::workspace_note_create,
+            modes::workspace::commands::workspace_note_update,
+            modes::workspace::commands::workspace_note_delete,
+            modes::workspace::commands::workspace_board_list,
+            modes::workspace::commands::workspace_board_get,
+            modes::workspace::commands::workspace_board_create,
+            modes::workspace::commands::workspace_board_rename,
+            modes::workspace::commands::workspace_board_set_project,
+            modes::workspace::commands::workspace_board_delete,
+            modes::workspace::commands::workspace_column_list,
+            modes::workspace::commands::workspace_card_list,
+            modes::workspace::commands::workspace_card_create,
+            modes::workspace::commands::workspace_card_update,
+            modes::workspace::commands::workspace_card_move,
+            modes::workspace::commands::workspace_card_clear_review,
+            modes::workspace::commands::workspace_card_delete,
+            modes::workspace::commands::workspace_card_add_comment,
+            modes::workspace::commands::workspace_card_comment_list,
+            modes::workspace::commands::workspace_card_comment_delete,
+            modes::workspace::commands::workspace_card_push_to_repo,
+            modes::workspace::commands::workspace_card_set_linked_session,
+            modes::workspace::commands::workspace_card_mention_session,
+            modes::workspace::commands::workspace_inbox_list,
+            modes::workspace::commands::workspace_mcp_status,
+            modes::workspace::commands::workspace_mcp_start,
+            modes::workspace::commands::workspace_mcp_stop,
+            modes::workspace::commands::workspace_mcp_register,
+            modes::workspace::commands::workspace_mcp_unregister,
+            modes::workspace::commands::workspace_mcp_new_token,
+            modes::workspace::commands::workspace_scan_project_issues,
+            modes::workspace::commands::workspace_scan_project_issues_by_url,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

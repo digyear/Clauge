@@ -7,12 +7,13 @@
   import SshNav from '$lib/modes/ssh/components/SshNav.svelte';
   import ExplorerNav from '$lib/modes/explorer/components/ExplorerNav.svelte';
   import HistoryPanel from './HistoryPanel.svelte';
+  import WorkspaceNav from '$lib/modes/workspace/components/WorkspaceNav.svelte';
   import ImportExportModal from '$lib/shared/primitives/ImportExportModal.svelte';
   import { getNavPinned, setNavPinned } from '$lib/shared/constants/storage';
-  import { AGENT_EVENT } from '$lib/shared/constants/events';
+  import { AGENT_EVENT, WORKSPACE_EVENT } from '$lib/shared/constants/events';
   import { showContextMenu } from '$lib/shared/primitives/contextmenu';
 
-  let searchPerMode = $state<Record<string, string>>({ rest: '', sql: '', nosql: '', agent: '', ssh: '' });
+  let searchPerMode = $state<Record<string, string>>({ rest: '', sql: '', nosql: '', agent: '', ssh: '', workspace: '' });
   let searchQuery = $derived(searchPerMode[$mode] ?? '');
   let restNavRef: ReturnType<typeof RestNav> | undefined = $state();
   let sqlNavRef: ReturnType<typeof SqlNav> | undefined = $state();
@@ -71,6 +72,7 @@
     ssh: 'Search SSH profiles…',
     explorer: 'Search connections…',
     history: 'Search history…',
+    workspace: 'Search workspaces…',
   } as const;
 
   function handleAddClick() {
@@ -86,6 +88,11 @@
       sshNavRef?.showAddProfile();
     } else if ($mode === 'explorer') {
       window.dispatchEvent(new CustomEvent('explorer:add-connection'));
+    } else if ($mode === 'workspace') {
+      // Workspaces aren't name-only — they accept an optional project
+      // link, so the full modal is the right surface (REST collections
+      // are name-only and inline creation makes sense there).
+      window.dispatchEvent(new CustomEvent(WORKSPACE_EVENT.NEW_WORKSPACE));
     }
   }
 
@@ -97,6 +104,7 @@
     agent: 'New session',
     ssh: 'New SSH profile',
     explorer: 'New connection',
+    workspace: 'New workspace',
   } as const;
 
   /** Open the overflow menu at a button's position. Per-mode items are
@@ -168,6 +176,8 @@
   <div class="nav-body">
     {#if $mode === 'history'}
       <HistoryPanel />
+    {:else if $mode === 'workspace'}
+      <WorkspaceNav {searchQuery} />
     {:else if $mode === 'rest'}
       <RestNav bind:this={restNavRef} {searchQuery} />
     {:else if $mode === 'sql'}

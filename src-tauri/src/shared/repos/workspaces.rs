@@ -1,0 +1,871 @@
+use sqlx::SqlitePool;
+
+use crate::modes::workspace::models::{
+    Workspace, WorkspaceBoard, WorkspaceBoardCard, WorkspaceBoardColumn,
+    WorkspaceCardComment, WorkspaceNote,
+};
+
+// ---------------------------------------------------------------------------
+// workspaces
+// ---------------------------------------------------------------------------
+
+pub async fn list_workspaces(pool: &SqlitePool) -> Result<Vec<Workspace>, sqlx::Error> {
+    sqlx::query_as::<_, Workspace>("SELECT * FROM workspaces ORDER BY updated_at DESC")
+        .fetch_all(pool)
+        .await
+}
+
+pub async fn get_workspace_by_id(pool: &SqlitePool, id: &str) -> Result<Workspace, sqlx::Error> {
+    sqlx::query_as::<_, Workspace>("SELECT * FROM workspaces WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+}
+
+/// Find a workspace whose `project_path` matches exactly. Returns
+/// None if there isn't one. Used by the MCP convenience tools so an
+/// agent can resolve "current project" → workspace in one call.
+pub async fn find_workspace_by_project_path(
+    pool: &SqlitePool,
+    project_path: &str,
+) -> Result<Option<Workspace>, sqlx::Error> {
+    sqlx::query_as::<_, Workspace>(
+        "SELECT * FROM workspaces WHERE project_path = ? LIMIT 1",
+    )
+    .bind(project_path)
+    .fetch_optional(pool)
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_workspace(
+    pool: &SqlitePool,
+    id: &str,
+    name: &str,
+    project_path: Option<&str>,
+    project_name: Option<&str>,
+    color: Option<&str>,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO workspaces \
+         (id, name, project_path, project_name, color, \
+          created_at, created_by, updated_at, updated_by) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(project_path)
+    .bind(project_name)
+    .bind(color)
+    .bind(now)
+    .bind(actor)
+    .bind(now)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn update_workspace(
+    pool: &SqlitePool,
+    id: &str,
+    name: &str,
+    project_path: Option<&str>,
+    project_name: Option<&str>,
+    color: Option<&str>,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspaces \
+         SET name = ?, project_path = ?, project_name = ?, color = ?, \
+             updated_at = ?, updated_by = ? \
+         WHERE id = ?",
+    )
+    .bind(name)
+    .bind(project_path)
+    .bind(project_name)
+    .bind(color)
+    .bind(now)
+    .bind(actor)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_workspace(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM workspaces WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// notes
+// ---------------------------------------------------------------------------
+
+pub async fn list_notes_in_workspace(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> Result<Vec<WorkspaceNote>, sqlx::Error> {
+    sqlx::query_as::<_, WorkspaceNote>(
+        "SELECT * FROM workspace_notes WHERE workspace_id = ? ORDER BY updated_at DESC",
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_note_by_id(pool: &SqlitePool, id: &str) -> Result<WorkspaceNote, sqlx::Error> {
+    sqlx::query_as::<_, WorkspaceNote>("SELECT * FROM workspace_notes WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+}
+
+/// Find a note by exact (case-insensitive) title within a single
+/// workspace. Used by `notes_upsert_for_project` — lets the agent
+/// evolve a single doc ("Overview", "Architecture") across calls
+/// instead of stacking duplicates.
+pub async fn find_note_by_title_in_workspace(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    title: &str,
+) -> Result<Option<WorkspaceNote>, sqlx::Error> {
+    sqlx::query_as::<_, WorkspaceNote>(
+        "SELECT * FROM workspace_notes \
+         WHERE workspace_id = ? AND LOWER(title) = LOWER(?) \
+         ORDER BY updated_at DESC LIMIT 1",
+    )
+    .bind(workspace_id)
+    .bind(title)
+    .fetch_optional(pool)
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_note(
+    pool: &SqlitePool,
+    id: &str,
+    workspace_id: &str,
+    title: &str,
+    content: &str,
+    tags_json: &str,
+    linked_session_id: Option<&str>,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO workspace_notes \
+         (id, workspace_id, title, content, tags, linked_session_id, \
+          created_at, created_by, updated_at, updated_by) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(workspace_id)
+    .bind(title)
+    .bind(content)
+    .bind(tags_json)
+    .bind(linked_session_id)
+    .bind(now)
+    .bind(actor)
+    .bind(now)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn update_note(
+    pool: &SqlitePool,
+    id: &str,
+    title: &str,
+    content: &str,
+    tags_json: &str,
+    linked_session_id: Option<&str>,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspace_notes \
+         SET title = ?, content = ?, tags = ?, linked_session_id = ?, \
+             updated_at = ?, updated_by = ? \
+         WHERE id = ?",
+    )
+    .bind(title)
+    .bind(content)
+    .bind(tags_json)
+    .bind(linked_session_id)
+    .bind(now)
+    .bind(actor)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_note(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM workspace_notes WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// boards + columns
+// ---------------------------------------------------------------------------
+
+pub async fn list_boards_in_workspace(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> Result<Vec<WorkspaceBoard>, sqlx::Error> {
+    sqlx::query_as::<_, WorkspaceBoard>(
+        "SELECT * FROM workspace_boards WHERE workspace_id = ? ORDER BY position ASC, created_at ASC",
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_board_by_id(pool: &SqlitePool, id: &str) -> Result<WorkspaceBoard, sqlx::Error> {
+    sqlx::query_as::<_, WorkspaceBoard>("SELECT * FROM workspace_boards WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+}
+
+pub async fn insert_board(
+    pool: &SqlitePool,
+    id: &str,
+    workspace_id: &str,
+    name: &str,
+    source: &str,
+    source_config: Option<&str>,
+    position: i32,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO workspace_boards \
+         (id, workspace_id, name, source, source_config, position, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(workspace_id)
+    .bind(name)
+    .bind(source)
+    .bind(source_config)
+    .bind(position)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn update_board_name(
+    pool: &SqlitePool,
+    id: &str,
+    name: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE workspace_boards SET name = ?, updated_at = ? WHERE id = ?")
+        .bind(name)
+        .bind(now)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Set or clear the board's source_config JSON. Used to override the
+/// parent workspace's project_path on a per-board basis.
+pub async fn update_board_source_config(
+    pool: &SqlitePool,
+    id: &str,
+    source_config: Option<&str>,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspace_boards SET source_config = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(source_config)
+    .bind(now)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_board(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM workspace_boards WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn list_columns_in_board(
+    pool: &SqlitePool,
+    board_id: &str,
+) -> Result<Vec<WorkspaceBoardColumn>, sqlx::Error> {
+    sqlx::query_as::<_, WorkspaceBoardColumn>(
+        "SELECT * FROM workspace_board_columns WHERE board_id = ? ORDER BY position ASC",
+    )
+    .bind(board_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn insert_column(
+    pool: &SqlitePool,
+    id: &str,
+    board_id: &str,
+    name: &str,
+    color: Option<&str>,
+    position: i32,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO workspace_board_columns \
+         (id, board_id, name, color, position, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(board_id)
+    .bind(name)
+    .bind(color)
+    .bind(position)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// cards
+// ---------------------------------------------------------------------------
+
+pub async fn list_cards_in_board(
+    pool: &SqlitePool,
+    board_id: &str,
+) -> Result<Vec<WorkspaceBoardCard>, sqlx::Error> {
+    // Fetch every card whose column belongs to this board, ordered by
+    // (column.position, card.position) so the frontend can group without
+    // a second pass.
+    sqlx::query_as::<_, WorkspaceBoardCard>(
+        "SELECT c.* FROM workspace_board_cards c \
+         JOIN workspace_board_columns col ON col.id = c.column_id \
+         WHERE col.board_id = ? \
+         ORDER BY col.position ASC, c.position ASC",
+    )
+    .bind(board_id)
+    .fetch_all(pool)
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_card(
+    pool: &SqlitePool,
+    id: &str,
+    column_id: &str,
+    title: &str,
+    description: &str,
+    priority: Option<&str>,
+    tags_json: &str,
+    position: i32,
+    external_id: Option<&str>,
+    external_url: Option<&str>,
+    linked_session_id: Option<&str>,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO workspace_board_cards \
+         (id, column_id, title, description, priority, tags, position, \
+          external_id, external_url, linked_session_id, \
+          review_pending, review_checklist, \
+          created_at, created_by, updated_at, updated_by) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(column_id)
+    .bind(title)
+    .bind(description)
+    .bind(priority)
+    .bind(tags_json)
+    .bind(position)
+    .bind(external_id)
+    .bind(external_url)
+    .bind(linked_session_id)
+    .bind(now)
+    .bind(actor)
+    .bind(now)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn update_card(
+    pool: &SqlitePool,
+    id: &str,
+    title: &str,
+    description: &str,
+    priority: Option<&str>,
+    tags_json: &str,
+    review_checklist: Option<&str>,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspace_board_cards \
+         SET title = ?, description = ?, priority = ?, tags = ?, \
+             review_checklist = ?, updated_at = ?, updated_by = ? \
+         WHERE id = ?",
+    )
+    .bind(title)
+    .bind(description)
+    .bind(priority)
+    .bind(tags_json)
+    .bind(review_checklist)
+    .bind(now)
+    .bind(actor)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Move a card to a new column + position. Sets `review_pending` to 1
+/// when the actor is an AI agent (not the user) — that drives the
+/// "Pending review" badge on the destination column. The user can then
+/// approve (clear flag) or request changes (clear flag, move back).
+pub async fn move_card(
+    pool: &SqlitePool,
+    id: &str,
+    column_id: &str,
+    position: i32,
+    review_pending: i32,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspace_board_cards \
+         SET column_id = ?, position = ?, review_pending = ?, \
+             updated_at = ?, updated_by = ? \
+         WHERE id = ?",
+    )
+    .bind(column_id)
+    .bind(position)
+    .bind(review_pending)
+    .bind(now)
+    .bind(actor)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn clear_review_pending(
+    pool: &SqlitePool,
+    id: &str,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspace_board_cards \
+         SET review_pending = 0, updated_at = ?, updated_by = ? \
+         WHERE id = ?",
+    )
+    .bind(now)
+    .bind(actor)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_card(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM workspace_board_cards WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Inbox — items recently mutated by an agent. We don't keep a separate
+// activity log; we query the existing tables filtered by `updated_by`
+// not starting with 'user'. The Inbox view UNIONs notes, boards, and
+// cards into a single chronological list. Workspace_id resolution for
+// cards goes through their column → board → workspace.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxItem {
+    pub kind: String,           // 'note' | 'board' | 'card'
+    pub id: String,
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub label: String,          // note title / board name / card title
+    pub board_id: Option<String>,    // for cards: parent board id
+    pub board_name: Option<String>,  // for cards: parent board name
+    pub updated_by: String,
+    pub updated_at: String,
+}
+
+// ---------------------------------------------------------------------------
+// v1.1 helpers — search, summary, freeze, link, repo URL, surgical edits.
+// All back the MCP tools added 2026-05-08 (FTS5 in migration 12).
+// ---------------------------------------------------------------------------
+
+pub async fn search_notes(
+    pool: &SqlitePool,
+    query: &str,
+    workspace_id: Option<&str>,
+    limit: i32,
+) -> Result<Vec<WorkspaceNote>, sqlx::Error> {
+    // FTS5 matches on title + content; we then join back to the base
+    // table to return the full row. `bm25(workspace_notes_fts)` ranks
+    // by relevance — lower = better.
+    let sql = if workspace_id.is_some() {
+        "SELECT n.* FROM workspace_notes n \
+         JOIN workspace_notes_fts f ON f.note_id = n.id \
+         WHERE workspace_notes_fts MATCH ? AND n.workspace_id = ? \
+         ORDER BY bm25(workspace_notes_fts) ASC LIMIT ?"
+    } else {
+        "SELECT n.* FROM workspace_notes n \
+         JOIN workspace_notes_fts f ON f.note_id = n.id \
+         WHERE workspace_notes_fts MATCH ? \
+         ORDER BY bm25(workspace_notes_fts) ASC LIMIT ?"
+    };
+    let mut q = sqlx::query_as::<_, WorkspaceNote>(sql).bind(query);
+    if let Some(ws) = workspace_id { q = q.bind(ws); }
+    q.bind(limit).fetch_all(pool).await
+}
+
+pub async fn search_cards(
+    pool: &SqlitePool,
+    query: &str,
+    workspace_id: Option<&str>,
+    limit: i32,
+) -> Result<Vec<WorkspaceBoardCard>, sqlx::Error> {
+    let sql = if workspace_id.is_some() {
+        "SELECT c.* FROM workspace_board_cards c \
+         JOIN workspace_board_cards_fts f ON f.card_id = c.id \
+         JOIN workspace_board_columns col ON col.id = c.column_id \
+         JOIN workspace_boards b ON b.id = col.board_id \
+         WHERE workspace_board_cards_fts MATCH ? AND b.workspace_id = ? \
+         ORDER BY bm25(workspace_board_cards_fts) ASC LIMIT ?"
+    } else {
+        "SELECT c.* FROM workspace_board_cards c \
+         JOIN workspace_board_cards_fts f ON f.card_id = c.id \
+         WHERE workspace_board_cards_fts MATCH ? \
+         ORDER BY bm25(workspace_board_cards_fts) ASC LIMIT ?"
+    };
+    let mut q = sqlx::query_as::<_, WorkspaceBoardCard>(sql).bind(query);
+    if let Some(ws) = workspace_id { q = q.bind(ws); }
+    q.bind(limit).fetch_all(pool).await
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnCount {
+    pub column_id: String,
+    pub column_name: String,
+    pub count: i64,
+}
+
+pub async fn count_cards_per_column(
+    pool: &SqlitePool,
+    board_id: &str,
+) -> Result<Vec<ColumnCount>, sqlx::Error> {
+    sqlx::query_as::<_, ColumnCount>(
+        "SELECT col.id AS column_id, col.name AS column_name, \
+                COUNT(c.id) AS count \
+         FROM workspace_board_columns col \
+         LEFT JOIN workspace_board_cards c ON c.column_id = col.id \
+         WHERE col.board_id = ? \
+         GROUP BY col.id, col.name, col.position \
+         ORDER BY col.position ASC",
+    )
+    .bind(board_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn count_cards_in_workspace(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> Result<i64, sqlx::Error> {
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM workspace_board_cards c \
+         JOIN workspace_board_columns col ON col.id = c.column_id \
+         JOIN workspace_boards b ON b.id = col.board_id \
+         WHERE b.workspace_id = ?",
+    )
+    .bind(workspace_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+pub async fn count_notes_in_workspace(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> Result<i64, sqlx::Error> {
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM workspace_notes WHERE workspace_id = ?",
+    )
+    .bind(workspace_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+pub async fn count_review_pending_in_board(
+    pool: &SqlitePool,
+    board_id: &str,
+) -> Result<i64, sqlx::Error> {
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM workspace_board_cards c \
+         JOIN workspace_board_columns col ON col.id = c.column_id \
+         WHERE col.board_id = ? AND c.review_pending = 1",
+    )
+    .bind(board_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+pub async fn list_review_pending_cards(
+    pool: &SqlitePool,
+    workspace_id: Option<&str>,
+) -> Result<Vec<WorkspaceBoardCard>, sqlx::Error> {
+    let sql = if workspace_id.is_some() {
+        "SELECT c.* FROM workspace_board_cards c \
+         JOIN workspace_board_columns col ON col.id = c.column_id \
+         JOIN workspace_boards b ON b.id = col.board_id \
+         WHERE c.review_pending = 1 AND b.workspace_id = ? \
+         ORDER BY c.updated_at DESC LIMIT 100"
+    } else {
+        "SELECT * FROM workspace_board_cards \
+         WHERE review_pending = 1 \
+         ORDER BY updated_at DESC LIMIT 100"
+    };
+    let mut q = sqlx::query_as::<_, WorkspaceBoardCard>(sql);
+    if let Some(ws) = workspace_id { q = q.bind(ws); }
+    q.fetch_all(pool).await
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorCount {
+    pub actor: String,
+    pub count: i64,
+}
+
+pub async fn count_recent_edits_by_actor(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> Result<Vec<ActorCount>, sqlx::Error> {
+    sqlx::query_as::<_, ActorCount>(
+        "SELECT actor, SUM(c) AS count FROM ( \
+            SELECT updated_by AS actor, COUNT(*) AS c \
+            FROM workspace_notes WHERE workspace_id = ? GROUP BY updated_by \
+            UNION ALL \
+            SELECT c.updated_by AS actor, COUNT(*) AS c \
+            FROM workspace_board_cards c \
+            JOIN workspace_board_columns col ON col.id = c.column_id \
+            JOIN workspace_boards b ON b.id = col.board_id \
+            WHERE b.workspace_id = ? GROUP BY c.updated_by \
+         ) GROUP BY actor ORDER BY count DESC LIMIT 20",
+    )
+    .bind(workspace_id)
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn set_note_frozen(
+    pool: &SqlitePool,
+    id: &str,
+    frozen: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE workspace_notes SET frozen = ? WHERE id = ?")
+        .bind(frozen).bind(id).execute(pool).await?;
+    Ok(())
+}
+
+pub async fn set_card_frozen(
+    pool: &SqlitePool,
+    id: &str,
+    frozen: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE workspace_board_cards SET frozen = ? WHERE id = ?")
+        .bind(frozen).bind(id).execute(pool).await?;
+    Ok(())
+}
+
+pub async fn is_note_frozen(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::Error> {
+    let row: Option<(i32,)> = sqlx::query_as("SELECT frozen FROM workspace_notes WHERE id = ?")
+        .bind(id).fetch_optional(pool).await?;
+    Ok(matches!(row, Some((1,))))
+}
+
+pub async fn is_card_frozen(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::Error> {
+    let row: Option<(i32,)> = sqlx::query_as("SELECT frozen FROM workspace_board_cards WHERE id = ?")
+        .bind(id).fetch_optional(pool).await?;
+    Ok(matches!(row, Some((1,))))
+}
+
+pub async fn set_workspace_repo_url(
+    pool: &SqlitePool,
+    id: &str,
+    repo_url: Option<&str>,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspaces SET repo_url = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+    )
+    .bind(repo_url).bind(now).bind(actor).bind(id)
+    .execute(pool).await?;
+    Ok(())
+}
+
+pub async fn update_note_linked_session(
+    pool: &SqlitePool,
+    id: &str,
+    session_id: Option<&str>,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspace_notes SET linked_session_id = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+    )
+    .bind(session_id).bind(now).bind(actor).bind(id)
+    .execute(pool).await?;
+    Ok(())
+}
+
+pub async fn update_card_linked_session(
+    pool: &SqlitePool,
+    id: &str,
+    session_id: Option<&str>,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspace_board_cards SET linked_session_id = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+    )
+    .bind(session_id).bind(now).bind(actor).bind(id)
+    .execute(pool).await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Card comments — migration 13. Replaces the markdown-blockquote-in-
+// description pattern.
+// ---------------------------------------------------------------------------
+
+pub async fn insert_card_comment(
+    pool: &SqlitePool,
+    id: &str,
+    card_id: &str,
+    actor: &str,
+    body: &str,
+    parent_id: Option<&str>,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    // Insert the row, then bump the parent card's updated_at + updated_by.
+    // Two separate statements (no transaction) is fine — the FK ensures the
+    // card exists; if the second fails, the comment still got written.
+    sqlx::query(
+        "INSERT INTO workspace_card_comments \
+         (id, card_id, actor, body, parent_id, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(card_id)
+    .bind(actor)
+    .bind(body)
+    .bind(parent_id)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    // Mirror the card's last-touch metadata so the inbox + per-card
+    // unread tracking pick up comment activity without needing a
+    // separate query path.
+    sqlx::query(
+        "UPDATE workspace_board_cards \
+         SET updated_at = ?, updated_by = ? \
+         WHERE id = ?",
+    )
+    .bind(now)
+    .bind(actor)
+    .bind(card_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn list_card_comments(
+    pool: &SqlitePool,
+    card_id: &str,
+) -> Result<Vec<WorkspaceCardComment>, sqlx::Error> {
+    sqlx::query_as::<_, WorkspaceCardComment>(
+        "SELECT * FROM workspace_card_comments \
+         WHERE card_id = ? ORDER BY created_at ASC",
+    )
+    .bind(card_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn delete_card_comment(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM workspace_card_comments WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn list_inbox(
+    pool: &SqlitePool,
+    limit: i32,
+) -> Result<Vec<InboxItem>, sqlx::Error> {
+    sqlx::query_as::<_, InboxItem>(
+        "SELECT 'note' AS kind, n.id AS id, n.workspace_id AS workspace_id,
+                w.name AS workspace_name, n.title AS label,
+                NULL AS board_id, NULL AS board_name,
+                n.updated_by AS updated_by, n.updated_at AS updated_at
+         FROM workspace_notes n
+         JOIN workspaces w ON w.id = n.workspace_id
+         WHERE n.updated_by NOT LIKE 'user%'
+         UNION ALL
+         SELECT 'card' AS kind, c.id AS id, w.id AS workspace_id,
+                w.name AS workspace_name, c.title AS label,
+                b.id AS board_id, b.name AS board_name,
+                c.updated_by AS updated_by, c.updated_at AS updated_at
+         FROM workspace_board_cards c
+         JOIN workspace_board_columns col ON col.id = c.column_id
+         JOIN workspace_boards b ON b.id = col.board_id
+         JOIN workspaces w ON w.id = b.workspace_id
+         WHERE c.updated_by NOT LIKE 'user%'
+         ORDER BY updated_at DESC
+         LIMIT ?",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}

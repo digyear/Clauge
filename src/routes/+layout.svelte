@@ -14,6 +14,14 @@
   import NewSessionModal from '$lib/modes/agent/components/NewSessionModal.svelte';
   import EditSessionModal from '$lib/modes/agent/components/EditSessionModal.svelte';
   import UsageDashboard from '$lib/modes/agent/components/UsageDashboard.svelte';
+  import NewWorkspaceModal from '$lib/modes/workspace/components/NewWorkspaceModal.svelte';
+  import {
+    loadWorkspaces, createNote, createBoard, activeWorkspaceId,
+    workspaces as workspacesStore, notesByWorkspace, boardsByWorkspace,
+    loadNotes as loadWorkspaceNotes, loadBoards as loadWorkspaceBoards,
+    loadMcpStatus, refreshInboxUnread,
+  } from '$lib/modes/workspace/stores';
+  import { showContextMenu } from '$lib/shared/primitives/contextmenu';
   import favicon from '$lib/assets/favicon.svg';
 
   import { onMount, onDestroy } from 'svelte';
@@ -49,7 +57,7 @@
   import SshAuthPromptsModal from '$lib/modes/ssh/components/SshAuthPromptsModal.svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { get } from 'svelte/store';
-  import { SSH_EVENT, AGENT_EVENT, APP_EVENT, EXPLORER_EVENT } from '$lib/shared/constants/events';
+  import { SSH_EVENT, AGENT_EVENT, APP_EVENT, EXPLORER_EVENT, WORKSPACE_EVENT } from '$lib/shared/constants/events';
   import { PERIODIC_SYNC_INTERVAL_MS, USAGE_LIMITS_POLL_INTERVAL_MS, SPLASH_FADE_OUT_MS } from '$lib/shared/constants/timings';
   import { DEFAULT_ACCENT_COLOR } from '$lib/shared/constants/colors';
 
@@ -67,6 +75,10 @@
   let showNewSessionModal = $state(false);
   let showEditSessionModal = $state(false);
   let showUsageDashboard = $state(false);
+  let showNewWorkspaceModal = $state(false);
+  // When set, NewWorkspaceModal runs in edit mode (pre-fills name +
+  // project, calls workspaceUpdate). Cleared on modal close.
+  let editingWorkspace = $state<import('$lib/modes/workspace/types').Workspace | null>(null);
   let editSessionTarget = $state<AgentSession | null>(null);
   let showSessionPicker = $state(false);
   let showSshPicker = $state(false);
@@ -78,6 +90,139 @@
 
   function handleAgentNewSession() {
     showNewSessionModal = true;
+  }
+
+  function handleNewWorkspace() {
+    editingWorkspace = null;
+    showNewWorkspaceModal = true;
+  }
+
+  function handleEditWorkspace(e: Event) {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.workspace) {
+      editingWorkspace = detail.workspace;
+      showNewWorkspaceModal = true;
+    }
+  }
+
+  /** Topbar + button handler. No workspaces → modal directly. With
+   *  workspaces → categorized context menu: each workspace name as a
+   *  pseudo-header, its notes + boards inline, and "Create new" at the
+   *  bottom (mirrors SQL/SSH pattern). */
+  async function handleWorkspaceAddTab(e: Event) {
+    const detail = (e as CustomEvent).detail;
+    const x = detail?.x ?? 290;
+    const y = detail?.y ?? 48;
+    const ws = get(workspacesStore);
+    if (ws.length === 0) {
+      showNewWorkspaceModal = true;
+      return;
+    }
+    // Make sure each workspace has its notes + boards loaded.
+    await Promise.all(ws.flatMap(w => [
+      get(notesByWorkspace).has(w.id) ? Promise.resolve() : loadWorkspaceNotes(w.id),
+      get(boardsByWorkspace).has(w.id) ? Promise.resolve() : loadWorkspaceBoards(w.id),
+    ]));
+    const items: any[] = [];
+    const notesMap = get(notesByWorkspace);
+    const boardsMap = get(boardsByWorkspace);
+    // Icons must match the workspace identity used elsewhere — 2×2 grid
+    // for the workspace itself, document + kanban for its items.
+    const wsIcon =
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
+    const noteIcon =
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="1.6"/><line x1="8.5" y1="8.5" x2="15.5" y2="8.5"/><line x1="8.5" y1="12" x2="15.5" y2="12"/><line x1="8.5" y1="15.5" x2="13" y2="15.5"/></svg>';
+    const boardIcon =
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="6" width="3.5" height="12" rx="0.6"/><rect x="10.25" y="6" width="3.5" height="7" rx="0.6"/><rect x="16.5" y="6" width="3.5" height="10" rx="0.6"/></svg>';
+    const plusIcon =
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+
+    const { tabs: tabsStore, addTab, activateTab } = await import('$lib/shared/stores/tabs');
+    const openItem = (kind: 'note' | 'board', id: string, label: string) => {
+      const key = `${kind}:${id}`;
+      const existing = get(tabsStore).find(t => t.mode === 'workspace' && t.key === key);
+      if (existing) activateTab(existing.id);
+      else addTab(label, 'workspace', key, kind === 'note' ? 'var(--acc)' : '#a78bfa');
+      mode.set('workspace');
+    };
+
+    ws.forEach((w, idx) => {
+      // Workspace name as a clickable header — activates the workspace
+      // and closes the menu. Lets the user "open" a workspace in one
+      // click without picking a specific item.
+      items.push({
+        label: w.name.toUpperCase(),
+        icon: wsIcon,
+        action: () => {
+          activeWorkspaceId.set(w.id);
+          mode.set('workspace');
+        },
+      });
+      const notes = notesMap.get(w.id) ?? [];
+      const boards = boardsMap.get(w.id) ?? [];
+      boards.forEach(b => {
+        items.push({ label: b.name, icon: boardIcon, action: () => openItem('board', b.id, b.name) });
+      });
+      notes.forEach(n => {
+        items.push({ label: n.title || 'Untitled', icon: noteIcon, action: () => openItem('note', n.id, n.title || 'Untitled') });
+      });
+      if (idx < ws.length - 1) items.push({ label: '', action: () => {}, separator: true });
+    });
+    // Single create-new entry pinned at the bottom.
+    items.push({ label: '', action: () => {}, separator: true });
+    items.push({
+      label: 'Create new workspace',
+      icon: plusIcon,
+      action: () => { showNewWorkspaceModal = true; },
+    });
+    showContextMenu(x, y, items);
+  }
+
+  async function handleNewNote(e: Event) {
+    const detail = (e as CustomEvent).detail;
+    const wsId = detail?.workspaceId ?? get(activeWorkspaceId);
+    if (!wsId) return;
+    try {
+      // Auto-link: if there's an active agent session and its
+      // project_path matches this workspace's project_path, hand the
+      // session id to the note on creation. The user explicitly asked
+      // for this — saves a tap on every new note inside an active
+      // session's project. Mismatch (or no active session) → null,
+      // and the user can still link manually from the note properties.
+      const ws = get(workspacesStore).find(w => w.id === wsId);
+      const session = get(activeAgentSession);
+      const linkedSessionId =
+        session && ws?.projectPath && session.projectPath === ws.projectPath
+          ? session.id
+          : null;
+      const note = await createNote(wsId, 'Untitled', linkedSessionId);
+      // Open the new note in a Topbar tab.
+      const { addTab, activateTab, tabs: tabsStore } = await import('$lib/shared/stores/tabs');
+      const key = `note:${note.id}`;
+      const existing = get(tabsStore).find(t => t.mode === 'workspace' && t.key === key);
+      if (existing) activateTab(existing.id);
+      else addTab(note.title, 'workspace', key, 'var(--acc)');
+      mode.set('workspace');
+    } catch (e) {
+      showToast(`Failed to create note: ${e}`, 'error');
+    }
+  }
+
+  async function handleNewBoard(e: Event) {
+    const detail = (e as CustomEvent).detail;
+    const wsId = detail?.workspaceId ?? get(activeWorkspaceId);
+    if (!wsId) return;
+    try {
+      const board = await createBoard(wsId, 'New Board');
+      const { addTab, activateTab, tabs: tabsStore } = await import('$lib/shared/stores/tabs');
+      const key = `board:${board.id}`;
+      const existing = get(tabsStore).find(t => t.mode === 'workspace' && t.key === key);
+      if (existing) activateTab(existing.id);
+      else addTab(board.name, 'workspace', key, '#a78bfa');
+      mode.set('workspace');
+    } catch (e) {
+      showToast(`Failed to create board: ${e}`, 'error');
+    }
   }
 
   function handleAgentShowUsageDashboard() {
@@ -252,6 +397,11 @@
     window.removeEventListener(AGENT_EVENT.ADD_TAB, handleAgentAddTab);
     window.removeEventListener(SSH_EVENT.ADD_TAB, handleSshAddTab);
     window.removeEventListener(EXPLORER_EVENT.ADD_TAB, handleExplorerAddTab);
+    window.removeEventListener(WORKSPACE_EVENT.NEW_WORKSPACE, handleNewWorkspace);
+    window.removeEventListener(WORKSPACE_EVENT.NEW_NOTE, handleNewNote);
+    window.removeEventListener(WORKSPACE_EVENT.NEW_BOARD, handleNewBoard);
+    window.removeEventListener(WORKSPACE_EVENT.ADD_TAB, handleWorkspaceAddTab);
+    window.removeEventListener(WORKSPACE_EVENT.EDIT_WORKSPACE, handleEditWorkspace);
     deepLinkUnlisten?.();
     if (syncInterval) clearInterval(syncInterval);
     if (usageLimitsInterval) clearInterval(usageLimitsInterval);
@@ -286,6 +436,11 @@
     window.addEventListener(AGENT_EVENT.ADD_TAB, handleAgentAddTab);
     window.addEventListener(SSH_EVENT.ADD_TAB, handleSshAddTab);
     window.addEventListener(EXPLORER_EVENT.ADD_TAB, handleExplorerAddTab);
+    window.addEventListener(WORKSPACE_EVENT.NEW_WORKSPACE, handleNewWorkspace);
+    window.addEventListener(WORKSPACE_EVENT.NEW_NOTE, handleNewNote);
+    window.addEventListener(WORKSPACE_EVENT.NEW_BOARD, handleNewBoard);
+    window.addEventListener(WORKSPACE_EVENT.ADD_TAB, handleWorkspaceAddTab);
+    window.addEventListener(WORKSPACE_EVENT.EDIT_WORKSPACE, handleEditWorkspace);
 
     // Apply to existing and future inputs/textareas
     document.querySelectorAll('input, textarea').forEach(disableAutocorrect);
@@ -327,9 +482,75 @@
       loadAgentSessions(),
       loadAgentContexts(),
       loadExplorerConnections(),
+      loadWorkspaces(),
+      loadMcpStatus(),
+      refreshInboxUnread(),
     ]);
 
     applyAppearanceOnStartup();
+
+    // Apply chat-history retention once settings are loaded. Backend purges
+    // the REST history table; client purges per-mode AI chat in localStorage.
+    try {
+      const { settings } = await import('$lib/stores/settings');
+      const { retentionSeconds } = await import('$lib/modes/rest/stores');
+      const { purgeHistory } = await import('$lib/modes/rest/commands');
+      const { purgeOldChatMessages } = await import('$lib/stores/app');
+      const { get } = await import('svelte/store');
+      const seconds = retentionSeconds(get(settings)['chat_history_retention']);
+      if (seconds !== null) {
+        purgeHistory(seconds).catch(() => {});
+        purgeOldChatMessages(seconds * 1000);
+      }
+    } catch { /* non-fatal */ }
+
+    // Auto-start the workspace MCP server. Default-on: only the explicit
+    // string 'false' suppresses startup, so first-run users don't need
+    // to toggle anything. The flag's main job is "remember I disabled it".
+    try {
+      const { settings } = await import('$lib/stores/settings');
+      const { workspaceMcpStart, workspaceMcpRegister, workspaceMcpNewToken } =
+        await import('$lib/modes/workspace/commands');
+      const { mcpStatus, loadMcpStatus } = await import('$lib/modes/workspace/stores');
+      const { get } = await import('svelte/store');
+      const { setSetting } = await import('$lib/stores/settings');
+      const { showToast } = await import('$lib/shared/primitives/toast');
+      const s = get(settings);
+      const enabledRaw = s['workspace_mcp_enabled'];
+      const userOptedOut = enabledRaw === 'false';
+      if (!userOptedOut) {
+        let token = s['workspace_mcp_token'] ?? '';
+        if (!token) {
+          token = await workspaceMcpNewToken();
+          await setSetting('workspace_mcp_token', token);
+        }
+        const port = Number(s['workspace_mcp_port'] ?? '7421') || 7421;
+        try {
+          const status = await workspaceMcpStart(port, token);
+          mcpStatus.set(status);
+          // Refresh registration in case the user moved between
+          // machines or the file was hand-edited.
+          await workspaceMcpRegister(port, token).catch((e) => {
+            // Registration write is non-fatal — the server is running
+            // even if ~/.claude.json wasn't writable.
+            console.warn('MCP register failed:', e);
+          });
+          // Persist the implicit "on" so a later toggle-off has something
+          // to flip. Skip if the user already set the flag explicitly.
+          if (enabledRaw === undefined) {
+            await setSetting('workspace_mcp_enabled', 'true');
+          }
+        } catch (e) {
+          // Surface the failure — silent grey dot is exactly the
+          // bug we're trying to avoid.
+          console.warn('MCP auto-start failed:', e);
+          showToast(`MCP server failed to start: ${e}`, 'error');
+          await loadMcpStatus();
+        }
+      }
+    } catch (e) {
+      console.warn('MCP auto-start setup failed:', e);
+    }
 
     // ── Deep-link handling (centralized) ────────────────────────────────────
     // On Linux, onOpenUrl() only fires when the single-instance plugin
@@ -593,6 +814,11 @@
   onclose={() => editingNoSqlConnection.set(null)}
 />
 <NewSessionModal bind:show={showNewSessionModal} />
+<NewWorkspaceModal
+  bind:show={showNewWorkspaceModal}
+  editing={editingWorkspace}
+  onclose={() => { editingWorkspace = null; }}
+/>
 <EditSessionModal bind:show={showEditSessionModal} bind:session={editSessionTarget} />
 <UsageDashboard bind:show={showUsageDashboard} />
 
@@ -617,6 +843,10 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    /* Containing block for absolutely-positioned overlays inside the
+     * workspace (e.g. CardEditorDrawer). Without `relative`, those
+     * overlays anchor to the viewport and cover Topbar/StatusBar. */
+    position: relative;
   }
 
   .session-picker-overlay {

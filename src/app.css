@@ -2,6 +2,12 @@
    Clauge — Global Styles
    ══════════════════════════════════════════════════════════════ */
 
+/* Workspace mode — Milkdown editor popover skin. Imported here (not
+   inside a component) because Crepe portals slash-menu / toolbar /
+   link-edit / block-edit popovers to <body>, where Svelte's scoped
+   :global() selectors don't always reach. */
+@import './lib/modes/workspace/milkdown-overrides.css';
+
 /* ── Font Faces ── */
 @font-face {
   font-family: 'JetBrains Mono';

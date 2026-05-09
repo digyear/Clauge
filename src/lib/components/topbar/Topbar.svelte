@@ -16,7 +16,7 @@
   import { sshKillTerminal } from '$lib/modes/ssh/commands';
   import { profileIdFromTabKey } from '$lib/modes/ssh/tabkey';
   import { showContextMenu } from '$lib/shared/primitives/contextmenu';
-  import { SSH_EVENT, AGENT_EVENT, APP_EVENT } from '$lib/shared/constants/events';
+  import { SSH_EVENT, AGENT_EVENT, APP_EVENT, WORKSPACE_EVENT } from '$lib/shared/constants/events';
   import { activateTabAcrossMode } from '$lib/utils/tabActivation';
 
   // SQL disconnect
@@ -103,6 +103,10 @@
     if (closingTab?.mode === 'sql') clearSqlTabData(tabId);
     if (closingTab?.mode === 'rest') clearDraft(tabId);
     if (closingTab?.mode === 'nosql') clearNoSqlTabData(tabId);
+    if (closingTab?.mode === 'history') {
+      const { clearHistoryEntryForTab } = await import('$lib/modes/rest/stores');
+      clearHistoryEntryForTab(tabId);
+    }
     if (closingTab?.mode === 'explorer' && closingTab.key) {
       // Tear down the Rust-side session for this Explorer tab.
       // Fire-and-forget — the user is closing the tab regardless of result.
@@ -256,7 +260,12 @@
 
   // "+" button
   function handleAddTab(btn?: HTMLElement) {
-    const m = get(mode) as 'rest' | 'sql' | 'nosql' | 'agent' | 'ssh' | 'explorer';
+    const m = get(mode) as 'rest' | 'sql' | 'nosql' | 'agent' | 'ssh' | 'explorer' | 'workspace';
+    if (m === 'workspace') {
+      const rect = btn?.getBoundingClientRect();
+      window.dispatchEvent(new CustomEvent(WORKSPACE_EVENT.ADD_TAB, { detail: { x: rect?.left ?? 290, y: rect?.bottom ?? 48 } }));
+      return;
+    }
     if (m === 'ssh') {
       // Mirrors agent: no profiles → open create modal; otherwise show picker.
       // The +layout.svelte handler decides which based on profiles count.
@@ -452,6 +461,12 @@
           <svg class="tab-mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
         {:else if tab.mode === 'explorer'}
           <svg class="tab-mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+        {:else if tab.mode === 'history'}
+          <svg class="tab-mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        {:else if tab.mode === 'workspace' && tab.key?.startsWith('board:')}
+          <svg class="tab-mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="16" rx="1"/><rect x="11" y="4" width="6" height="10" rx="1"/><rect x="19" y="4" width="2" height="14" rx="1"/></svg>
+        {:else if tab.mode === 'workspace'}
+          <svg class="tab-mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="14 3 14 9 20 9"/></svg>
         {/if}
         <span class="tab-label">{tab.label}</span>
         <span
@@ -465,7 +480,20 @@
   </div>
 
   {#if $mode !== 'history'}
-    <button class="tab-add" title="New tab" onclick={(e) => { handleAddTab(e.currentTarget as HTMLElement); }}>+</button>
+    <button
+      class="tab-add"
+      title="New tab"
+      onclick={(e) => {
+        // stopPropagation: same click event reaches the global
+        // ContextMenu's window.click listener and immediately closes
+        // the menu we're about to open. Symptom: + opens the menu
+        // once, then "becomes unresponsive" after the user dismisses
+        // it by clicking outside. Killing propagation here keeps
+        // showContextMenu's open state intact across re-clicks.
+        e.stopPropagation();
+        handleAddTab(e.currentTarget as HTMLElement);
+      }}
+    >+</button>
   {/if}
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->

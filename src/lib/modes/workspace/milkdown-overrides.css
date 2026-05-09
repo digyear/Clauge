@@ -1,0 +1,156 @@
+/* Milkdown / Crepe theme — Clauge skin.
+ *
+ * Crepe's frame-dark theme is driven by a small set of CSS custom
+ * properties scoped to `.milkdown` (see
+ * @milkdown/crepe/lib/theme/frame-dark/style.css). Overriding those
+ * vars here with Clauge tokens propagates to every Crepe surface in
+ * one shot — slash menu, block-edit handle, link tooltip, toolbar,
+ * placeholder, table, code blocks. No selector-by-selector chase.
+ *
+ * `!important` is used because Crepe's theme stylesheet defines the
+ * same vars at the same specificity (`.milkdown {…}`); whichever loads
+ * last would otherwise win, and bundle order is fragile across builds.
+ */
+
+.milkdown {
+  /* Surface palette — every popover (slash menu, link picker, etc.)
+     reads from these. Mapping:
+       background      → editor body
+       surface         → popover background
+       surface-low     → popover hover row / muted block
+       on-*            → text on each
+       primary         → accent (bold/italic toolbar active state)
+       secondary       → muted accent for inline tags
+       hover/selected  → row hover and active-item state */
+  --crepe-color-background: var(--n, #0d1117) !important;
+  --crepe-color-on-background: var(--t1) !important;
+  --crepe-color-surface: var(--n2, #161620) !important;
+  --crepe-color-surface-low: var(--e, #11111a) !important;
+  --crepe-color-on-surface: var(--t1) !important;
+  --crepe-color-on-surface-variant: var(--t3) !important;
+  --crepe-color-outline: var(--b1) !important;
+  --crepe-color-primary: var(--acc) !important;
+  --crepe-color-secondary: color-mix(in srgb, var(--acc) 20%, transparent) !important;
+  --crepe-color-on-secondary: var(--t1) !important;
+  --crepe-color-inverse: var(--t1) !important;
+  --crepe-color-on-inverse: var(--n) !important;
+
+  /* Inline code + error — Clauge accent + standard error token. */
+  --crepe-color-inline-code: var(--acc) !important;
+  --crepe-color-error: var(--err, #f85149) !important;
+
+  /* Hover and selected — match how the rest of the app's menus feel. */
+  --crepe-color-hover: rgba(255, 255, 255, 0.05) !important;
+  --crepe-color-selected: color-mix(in srgb, var(--acc) 18%, transparent) !important;
+
+  /* Inline-edit area background (e.g. when editing a link inline). */
+  --crepe-color-inline-area: rgba(255, 255, 255, 0.04) !important;
+
+  /* Fonts — pull Clauge's own faces in so the editor reads as part of
+     the same app, not a third-party widget. */
+  --crepe-font-title: var(--ui) !important;
+  --crepe-font-default: var(--ui) !important;
+  --crepe-font-code: var(--mono) !important;
+
+  /* Drop the white inner-glow shadow Crepe ships in dark mode — it
+     reads as harsh white-on-dark in our palette. */
+  --crepe-shadow-1: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+  --crepe-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Slash menu rounded corners + tighter padding to match Clauge's other
+   popovers / context menus. Pure visual polish, doesn't fight Crepe's
+   layout. */
+.milkdown .milkdown-slash-menu,
+.milkdown .milkdown-toolbar,
+.milkdown .milkdown-link-edit,
+.milkdown .milkdown-block-edit {
+  border: 1px solid var(--b1) !important;
+  border-radius: 8px !important;
+}
+
+/* Slash menu items — slightly tighter rows than Crepe's defaults. */
+.milkdown .milkdown-slash-menu ul li {
+  padding: 8px 10px !important;
+  font-size: 12.5px !important;
+  border-radius: 6px !important;
+}
+.milkdown .milkdown-slash-menu .menu-groups li {
+  padding: 7px 10px !important;
+}
+
+/* Slash-menu item icons — Crepe colours them with `--crepe-color-outline`
+   for both `color` and `fill`. We map that var to `--b1` (border colour)
+   above to keep dividers / outlines subtle, but the same value applied
+   to slash-menu glyphs is too faint to see. Override the icons
+   directly so they read as part of the menu, and tint the active /
+   hovered row's icon with the accent. */
+.milkdown .milkdown-slash-menu .menu-groups .menu-group li svg,
+.milkdown .milkdown-slash-menu .menu-groups .menu-group li svg path,
+.milkdown .milkdown-slash-menu .menu-groups .menu-group li svg rect,
+.milkdown .milkdown-slash-menu .menu-groups .menu-group li svg line,
+.milkdown .milkdown-slash-menu .menu-groups .menu-group li svg polyline,
+.milkdown .milkdown-slash-menu .menu-groups .menu-group li svg circle {
+  color: var(--t2) !important;
+  fill: var(--t2) !important;
+  stroke: var(--t2) !important;
+}
+.milkdown .milkdown-slash-menu .menu-groups .menu-group li.hover svg,
+.milkdown .milkdown-slash-menu .menu-groups .menu-group li.active svg,
+.milkdown .milkdown-slash-menu .menu-groups .menu-group li:hover svg {
+  color: var(--acc) !important;
+  fill: var(--acc) !important;
+  stroke: var(--acc) !important;
+}
+/* Same for the section heading colour and the row text on hover so
+   the whole row reads consistently. */
+.milkdown .milkdown-slash-menu .menu-groups .menu-group h6 {
+  color: var(--t4) !important;
+  font-family: var(--ui) !important;
+}
+.milkdown .milkdown-slash-menu .menu-groups .menu-group li > span {
+  color: var(--t1) !important;
+  font-family: var(--ui) !important;
+}
+
+/* Caret / cursors — Crepe wires every cursor (typing caret, gap
+   cursor, drop indicator) to `--crepe-color-outline`, which we
+   re-map to Clauge's border token above so dividers stay subtle.
+   That same token leaves the typing caret near-invisible. Override
+   the cursor-specific variables to use the accent so the user can
+   always see where they're typing, regardless of theme. */
+.milkdown {
+  /* Typing caret colour — used by both browser-native caret and the
+     prosemirror-virtual-cursor plugin Crepe ships. */
+  caret-color: var(--acc) !important;
+  --prosemirror-virtual-cursor-color: var(--acc) !important;
+}
+.milkdown .ProseMirror,
+.milkdown .ProseMirror-focused {
+  caret-color: var(--acc) !important;
+  --prosemirror-virtual-cursor-color: var(--acc) !important;
+}
+/* Gap cursor (between blocks). */
+.milkdown .ProseMirror-gapcursor:after {
+  border-top-color: var(--acc) !important;
+}
+/* Drop indicator when dragging blocks. */
+.milkdown .crepe-drop-cursor {
+  background-color: var(--acc) !important;
+  opacity: 0.85 !important;
+}
+
+/* Inline code chip — keep readable on Clauge's surfaces. */
+.milkdown code {
+  background: rgba(255, 255, 255, 0.05) !important;
+  padding: 1px 6px !important;
+  border-radius: 4px !important;
+  font-size: 12.5px !important;
+}
+
+/* Code block surround. */
+.milkdown pre {
+  background: var(--e, #11111a) !important;
+  border: 1px solid var(--b1) !important;
+  border-radius: 8px !important;
+}

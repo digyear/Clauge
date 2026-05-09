@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { githubConnected, syncing, lastSyncedAt } from '$lib/stores/github';
   import { updateAvailable, showWhatsNewModal } from '$lib/utils/updater';
   import { mode } from '$lib/stores/app';
   import { agentGitBranchName, agentGitFiles, agentGitAhead, agentGitBehind, activeAgentSession, agentUsageLimits, agentShellOpen, agentSessionKey } from '$lib/modes/agent/stores';
   import { activeModal } from '$lib/stores/app';
   import AgentGitPanel from '$lib/modes/agent/components/AgentGitPanel.svelte';
   import { USAGE_DANGER, USAGE_WARN } from '$lib/shared/constants/colors';
+  import { mcpStatus } from '$lib/modes/workspace/stores';
 
   let gitPanelOpen = $state(false);
 
@@ -20,17 +20,9 @@
     }
   });
 
-  let syncLabel = $derived(
-    $syncing ? 'Syncing...' :
-    $githubConnected ? ($lastSyncedAt ? 'Gist synced' : 'Connected') :
-    'Not connected'
-  );
-
-  let syncColor = $derived(
-    $syncing ? 'var(--warn)' :
-    $githubConnected ? 'var(--ok)' :
-    'var(--t3)'
-  );
+  function openMcpSettings() {
+    activeModal.set('settings:workspace');
+  }
 
   interface UsageChip { label: string; pct: number; color: string; }
 
@@ -115,16 +107,21 @@
       <svg style="width:10px;height:10px;stroke:{$agentShellOpen ? 'var(--acc)' : 'var(--t3)'};fill:none;stroke-width:1.7;stroke-linecap:round" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
       <span style="color:{$agentShellOpen ? 'var(--acc)' : ''}">Shell</span>
     </div>
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="si mcp-clickable" onclick={openMcpSettings} title={$mcpStatus.running ? `MCP server running on :${$mcpStatus.port}` : 'MCP server stopped — click to configure'}>
+      <span class="sled mcp-led" class:on={$mcpStatus.running}></span>
+      <span>MCP{$mcpStatus.running ? ` · :${$mcpStatus.port}` : ' · off'}</span>
+    </div>
     {#if appVersion}<div class="si">Clauge v{appVersion}</div>{/if}
   </div>
 </footer>
 {:else}
 <footer class="statusbar glass-surface">
   <div class="sr">
-    <div class="si">
-      <span class="sled" style="background:{syncColor}"></span>
-      <svg style="width:10px;height:10px;stroke:var(--t3);fill:none;stroke-width:1.7;stroke-linecap:round" viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>
-      <span>{syncLabel}</span>
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="si mcp-clickable" onclick={openMcpSettings} title={$mcpStatus.running ? `MCP server running on :${$mcpStatus.port}` : 'MCP server stopped — click to configure'}>
+      <span class="sled mcp-led" class:on={$mcpStatus.running}></span>
+      <span>MCP{$mcpStatus.running ? ` · :${$mcpStatus.port}` : ' · off'}</span>
     </div>
     {#if $updateAvailable}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -165,6 +162,26 @@
     border-radius: 50%;
     flex-shrink: 0;
   }
+
+  /* MCP indicator. Grey dot when stopped; green pulse when running.
+     Clickable; opens Settings → Workspace tab via activeModal. */
+  .mcp-led {
+    background: var(--t4);
+  }
+  .mcp-led.on {
+    background: var(--ok, #1dc880);
+    box-shadow: 0 0 6px var(--ok, #1dc880);
+    animation: mcpPulse 1.6s ease-in-out infinite;
+  }
+  @keyframes mcpPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--ok, #1dc880); }
+    50% { opacity: 0.55; box-shadow: 0 0 12px var(--ok, #1dc880); }
+  }
+  .mcp-clickable {
+    cursor: default;
+    transition: color 0.1s;
+  }
+  .mcp-clickable:hover { color: var(--t1); }
   .sl {
     display: flex;
     gap: 16px;

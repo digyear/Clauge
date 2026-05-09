@@ -1,15 +1,29 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { history, loadHistory, clearHistory, activeHistoryEntry } from '$lib/modes/rest/stores';
+  import {
+    history,
+    loadHistory,
+    clearHistory,
+    openHistoryTab,
+  } from '$lib/modes/rest/stores';
+  import { tabs, activeTabId } from '$lib/shared/stores/tabs';
+  import { settings } from '$lib/stores/settings';
   import { METHOD_COLORS } from '$lib/utils/theme';
   import { showToast } from '$lib/shared/primitives/toast';
   import ConfirmDialog from '$lib/shared/primitives/ConfirmDialog.svelte';
   import type { HistoryEntry } from '$lib/types';
 
+  /** entry id of the currently active history tab in the global Topbar
+   *  (null when the active tab is in another mode, or no tabs are open). */
+  const activeHistoryEntryId = $derived.by(() => {
+    const t = $tabs.find(x => x.id === $activeTabId);
+    return t && t.mode === 'history' ? t.key : null;
+  });
+
   let showClearConfirm = $state(false);
 
   onMount(() => {
-    loadHistory();
+    loadHistory(50, $settings['chat_history_retention']);
   });
 
   function methodLabel(method: string) {
@@ -68,7 +82,7 @@
   }
 
   function openHistoryEntry(entry: HistoryEntry) {
-    activeHistoryEntry.set(entry);
+    openHistoryTab(entry);
   }
 
   async function handleClear() {
@@ -90,7 +104,11 @@
         {@const colors = METHOD_COLORS[entry.method] ?? { color: '#888', bg: '#1a1a1a' }}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="hist-item" onclick={() => openHistoryEntry(entry)}>
+        <div
+          class="hist-item"
+          class:active={activeHistoryEntryId === entry.id}
+          onclick={() => openHistoryEntry(entry)}
+        >
           <div class="hist-top">
             <span class="hist-method" style="background:{colors.bg};color:{colors.color}">{methodLabel(entry.method)}</span>
             <span class="hist-path" title={entry.url}>{entryTitle(entry)}</span>
@@ -164,6 +182,11 @@
   .hist-item:hover {
     background: rgba(255,255,255,0.04);
   }
+  .hist-item.active {
+    background: rgba(255,255,255,0.06);
+    border-left: 2px solid var(--acc);
+    padding-left: 10px;
+  }
   .hist-top {
     display: flex;
     align-items: center;
@@ -234,9 +257,18 @@
     flex-shrink: 0;
     font-family: var(--mono);
   }
+  /* Sticky footer. NavPanel's .nav-body is the scroll container, so a
+     plain flex-shrink:0 footer would still scroll out of view when the
+     list overflows. position: sticky pins this footer to the bottom of
+     the nav viewport regardless of scroll, while still occupying layout
+     space at the end of the list (no overlap on the last row). */
   .hist-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
     padding: 8px 12px;
     border-top: 1px solid var(--b1);
+    background: var(--n2, var(--e, #1a1a20));
     flex-shrink: 0;
   }
   .hist-clear {

@@ -2,7 +2,7 @@
 // per-request env overrides, and request history. Consolidated from
 // former $lib/stores/{collections,environments,history}.ts.
 
-import { writable, get } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import type {
   Collection,
   Request,
@@ -253,10 +253,104 @@ export function getEffectiveEnvId(
 
 export const history = writable<HistoryEntry[]>([]);
 export const historyOpen = writable<boolean>(false);
-export const activeHistoryEntry = writable<HistoryEntry | null>(null);
 
-export async function loadHistory(limit: number = 50) {
+/** History entries indexed by the SHARED tab id (number). The actual
+ *  tab list lives in `$lib/shared/stores/tabs` so history tabs render in
+ *  the global Topbar alongside REST/SQL/etc. — same look, same close UX,
+ *  no duplicate tab strip. */
+import {
+  tabs as sharedTabs,
+  activeTabId as sharedActiveTabId,
+  addTab as sharedAddTab,
+  closeTab as sharedCloseTab,
+  activateTab as sharedActivateTab,
+} from '$lib/shared/stores/tabs';
+
+export const historyEntries = writable<Map<number, HistoryEntry>>(new Map());
+
+/** Active entry = the entry whose tab is currently focused, IF that tab
+ *  is a history tab. Returns null when the active tab is in another mode
+ *  (REST request, SQL query, etc.) or when no tabs are open. */
+export const activeHistoryEntry = derived(
+  [sharedTabs, sharedActiveTabId, historyEntries],
+  ([$tabs, $id, $entries]) => {
+    const tab = $tabs.find(t => t.id === $id);
+    if (!tab || tab.mode !== 'history') return null;
+    return $entries.get(tab.id) ?? null;
+  },
+);
+
+/** Find an existing history tab for `entryId`. */
+function findHistoryTabFor(entryId: string): number | null {
+  const t = get(sharedTabs).find(x => x.mode === 'history' && x.key === entryId);
+  return t ? t.id : null;
+}
+
+function entryTabLabel(entry: HistoryEntry): string {
+  const name = entry.requestName?.trim();
+  if (name) return name;
+  try { return new URL(entry.url).pathname || entry.url; } catch { return entry.url; }
+}
+
+/** Open an entry in a tab. If a tab for that entry already exists,
+ *  switch to it instead of duplicating. */
+export function openHistoryTab(entry: HistoryEntry) {
+  const existing = findHistoryTabFor(entry.id);
+  if (existing !== null) {
+    sharedActivateTab(existing);
+    return;
+  }
+  const tab = sharedAddTab(entryTabLabel(entry), 'history', entry.id, 'var(--acc)');
+  historyEntries.update(m => {
+    const next = new Map(m);
+    next.set(tab.id, entry);
+    return next;
+  });
+}
+
+/** Internal — drop a history tab's stored entry data. The Topbar's
+ *  doCloseTab calls this when the tab is closed (kept here so the data
+ *  layer owns the cleanup). */
+export function clearHistoryEntryForTab(tabId: number) {
+  historyEntries.update(m => {
+    if (!m.has(tabId)) return m;
+    const next = new Map(m);
+    next.delete(tabId);
+    return next;
+  });
+}
+
+export function closeAllHistoryTabs() {
+  const ids = get(sharedTabs).filter(t => t.mode === 'history').map(t => t.id);
+  for (const id of ids) sharedCloseTab(id);
+  historyEntries.set(new Map());
+}
+
+/** Default chat-history retention when the user hasn't picked one yet.
+ *  30 days is conservative enough to keep recent context while preventing
+ *  the request log + AI chat from growing unbounded. */
+export const DEFAULT_CHAT_RETENTION = '30d';
+
+/** Map a retention value (24h/7d/30d/1y/never) to seconds.
+ *  Returns null only for `'never'`; an unset/unknown value falls back to
+ *  the default retention so first-run users get cleanup automatically. */
+export function retentionSeconds(value: string | undefined | null): number | null {
+  switch (value) {
+    case 'never': return null;
+    case '24h':   return 24 * 60 * 60;
+    case '7d':    return 7 * 24 * 60 * 60;
+    case '1y':    return 365 * 24 * 60 * 60;
+    case '30d':
+    default:      return 30 * 24 * 60 * 60;
+  }
+}
+
+export async function loadHistory(limit: number = 50, retention?: string) {
   try {
+    const seconds = retentionSeconds(retention);
+    if (seconds !== null) {
+      try { await cmd.purgeHistory(seconds); } catch { /* non-fatal */ }
+    }
     const entries = await cmd.listHistory(limit);
     history.set(entries);
   } catch (err) {
@@ -267,9 +361,16 @@ export async function loadHistory(limit: number = 50) {
 export async function clearHistory() {
   await cmd.clearHistory();
   history.set([]);
+  closeAllHistoryTabs();
 }
 
 export async function deleteHistoryEntry(id: string) {
   await cmd.deleteHistoryEntry(id);
   history.update(h => h.filter(x => x.id !== id));
+  // If a Topbar tab is open for this entry, close it too.
+  const tabId = findHistoryTabFor(id);
+  if (tabId !== null) {
+    sharedCloseTab(tabId);
+    clearHistoryEntryForTab(tabId);
+  }
 }

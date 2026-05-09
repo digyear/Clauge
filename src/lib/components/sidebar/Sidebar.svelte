@@ -3,7 +3,6 @@
   import { mode, navOpen, aiPanelOpen, activeModal } from '$lib/stores/app';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { isMac, isLinux } from '$lib/utils/platform';
-  import { activeHistoryEntry } from '$lib/modes/rest/stores';
   import { githubConnected, githubUsername, githubAvatarUrl, syncing, lastSyncedAt, setSyncing, setLastSynced, setDisconnected, showSyncRestorePrompt, markSynced } from '$lib/stores/github';
   import { gistSyncPush, gistSyncPull, githubDisconnect } from '$lib/commands/github';
   import { loadCollections } from '$lib/modes/rest/stores';
@@ -61,7 +60,6 @@
     }
     if (m !== 'history') previousMode = m;
     mode.set(m);
-    activeHistoryEntry.set(null);
     navOpen.set(true);
     realignActiveTabToMode(m);
   }
@@ -69,9 +67,8 @@
   // After a mode switch, if the currently active tab belongs to a different
   // mode, activate the most recent tab of the new mode so the highlighted
   // tab matches the visible panel. Required for AI panel context and
-  // terminal/session-coupled UI to stay coherent. History has no tabs.
+  // terminal/session-coupled UI to stay coherent.
   function realignActiveTabToMode(m: AppMode) {
-    if (m === 'history') return;
     const currentActiveId = get(activeTabId);
     const allTabs = get(tabs);
     const currentTab = allTabs.find((t) => t.id === currentActiveId);
@@ -85,7 +82,6 @@
   function toggleHistory() {
     if ($mode === 'history' && $navOpen) {
       mode.set(previousMode);
-      activeHistoryEntry.set(null);
       navOpen.set(false);
       realignActiveTabToMode(previousMode);
       return;
@@ -252,6 +248,11 @@
   <SidebarButton label="Agent" tip="Agent" active={$mode === 'agent'} dotColor="var(--agent, #d2a8ff)" id="sbi-agent" onclick={() => setMode('agent')}>
     <!-- Sparkle — universal AI/agent icon (Claude, Cursor, Notion AI) -->
     <svg viewBox="0 0 24 24"><path d="M12 3l1.6 4.8L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.2L12 3z"/><path d="M18.5 14l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9.9-2.6z"/></svg>
+  </SidebarButton>
+  <SidebarButton label="Workspace" tip="Workspaces (Notes & Boards)" active={$mode === 'workspace'} id="sbi-workspace" onclick={() => setMode('workspace')}>
+    <!-- 2×2 grid — workspace = a dashboard of mixed items. Distinct
+         from Explorer's folder, REST's globe, etc. -->
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
   </SidebarButton>
   <SidebarButton label="REST" tip="REST API" active={$mode === 'rest'} dotColor="var(--rest)" id="sbi-rest" onclick={() => setMode('rest')}>
     <!-- Globe — clearly "web/HTTP" -->

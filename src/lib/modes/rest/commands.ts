@@ -143,6 +143,14 @@ export async function deleteHistoryEntry(id: string): Promise<void> {
   return invoke('delete_history_entry', { id });
 }
 
+export async function countHistory(): Promise<number> {
+  return invoke('count_history');
+}
+
+export async function purgeHistory(seconds: number): Promise<number> {
+  return invoke('purge_history', { seconds });
+}
+
 // ── Import / Export ────────────────────────────────────────────────────
 
 export async function exportCollection(collectionId: string): Promise<string> {

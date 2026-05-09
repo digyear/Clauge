@@ -66,6 +66,15 @@ export const AGENT_EVENT = {
   SHOW_USAGE_DASHBOARD: 'agent:show-usage-dashboard',
 } as const;
 
+export const WORKSPACE_EVENT = {
+  ADD_TAB: 'workspace:add-tab',
+  NEW_WORKSPACE: 'workspace:new-workspace',
+  EDIT_WORKSPACE: 'workspace:edit-workspace',
+  DELETE_WORKSPACE: 'workspace:delete-workspace',
+  NEW_NOTE: 'workspace:new-note',
+  NEW_BOARD: 'workspace:new-board',
+} as const;
+
 export const APP_EVENT = {
   TAB_CLOSE_PROMPT: 'clauge:tab-close-prompt',
   SQL_SAVE: 'clauge:sql-save',

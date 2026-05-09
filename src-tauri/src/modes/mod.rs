@@ -6,3 +6,4 @@ pub mod sql;
 pub mod rest;
 pub mod agent;
 pub mod explorer;
+pub mod workspace;

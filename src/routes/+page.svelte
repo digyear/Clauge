@@ -7,6 +7,7 @@
   import NoSqlPanel from '$lib/modes/nosql/components/NoSqlPanel.svelte';
   import SshPanel from '$lib/modes/ssh/components/SshPanel.svelte';
   import ExplorerPanel from '$lib/modes/explorer/components/ExplorerPanel.svelte';
+  import WorkspacePanel from '$lib/modes/workspace/components/WorkspacePanel.svelte';
   import HistoryViewer from '$lib/modes/rest/components/HistoryViewer.svelte';
 </script>
 
@@ -61,6 +62,10 @@
 
   <div class="panel" class:active={$mode === 'explorer'}>
     <ExplorerPanel />
+  </div>
+
+  <div class="panel" class:active={$mode === 'workspace'}>
+    <WorkspacePanel />
   </div>
 </div>
 
