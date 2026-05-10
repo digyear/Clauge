@@ -6,12 +6,73 @@ use crate::modes::agent::models::{AgentContext, AgentSession};
 // agent_sessions
 // ---------------------------------------------------------------------------
 
+/// Manual sessions only (the user-spawned terminal sessions surfaced
+/// in the Agent panel). Hidden card-driven sessions are filtered out
+/// so they don't pollute the panel's list — they're addressed via the
+/// card drawer instead, see `find_hidden_session_for_card`.
 pub async fn list_sessions(pool: &SqlitePool) -> Result<Vec<AgentSession>, sqlx::Error> {
     sqlx::query_as::<_, AgentSession>(
-        "SELECT * FROM agent_sessions ORDER BY last_used_at DESC",
+        "SELECT * FROM agent_sessions \
+         WHERE origin = 'manual' \
+         ORDER BY last_used_at DESC",
     )
     .fetch_all(pool)
     .await
+}
+
+/// Hidden session for a (card, coworker) pair, if any. Drawer chat
+/// looks this up before creating a new one — same persona on the same
+/// card always reuses its session (which preserves Claude's resume
+/// thread for that conversation).
+pub async fn find_hidden_session_for_card_and_coworker(
+    pool: &SqlitePool,
+    card_id: &str,
+    coworker_id: &str,
+) -> Result<Option<AgentSession>, sqlx::Error> {
+    sqlx::query_as::<_, AgentSession>(
+        "SELECT * FROM agent_sessions \
+         WHERE card_id = ? AND coworker_id = ? AND origin = 'card' \
+         ORDER BY last_used_at DESC LIMIT 1",
+    )
+    .bind(card_id)
+    .bind(coworker_id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Insert a hidden ('card'-origin) session attached to a coworker.
+/// Caller fills in title + project context; we stamp origin='card',
+/// card_id, and coworker_id.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_hidden_session(
+    pool: &SqlitePool,
+    id: &str,
+    title: &str,
+    project_path: &str,
+    project_name: &str,
+    card_id: &str,
+    coworker_id: &str,
+    created_at: &str,
+    last_used_at: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO agent_sessions \
+         (id, title, purpose, project_path, project_name, context_prompt, \
+          skip_permissions, git_name, git_email, created_at, last_used_at, \
+          origin, card_id, coworker_id) \
+         VALUES (?, ?, '', ?, ?, '', 0, NULL, NULL, ?, ?, 'card', ?, ?)",
+    )
+    .bind(id)
+    .bind(title)
+    .bind(project_path)
+    .bind(project_name)
+    .bind(created_at)
+    .bind(last_used_at)
+    .bind(card_id)
+    .bind(coworker_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub async fn get_session_by_id(
@@ -24,18 +85,20 @@ pub async fn get_session_by_id(
         .await
 }
 
-/// Most recently-used session bound to `project_path`. Drives the
-/// workspace auto-link flow: when an agent mutates a card via MCP, we
-/// don't know its session id directly, so we stamp the card with the
-/// session most likely to be the one calling — i.e. the one the user
-/// has been actively interacting with for this project.
+/// Most recently-used MANUAL session bound to `project_path`. Drives
+/// the workspace auto-link + cards_claim heuristic: when an agent
+/// mutates a card via MCP, we don't know its session id directly, so
+/// we stamp the card with the session most likely to be the one
+/// calling — i.e. the one the user has been actively interacting
+/// with. Hidden ('card'-origin) sessions are excluded so a drawer
+/// chat doesn't look like the calling terminal session.
 pub async fn find_recent_session_for_project(
     pool: &SqlitePool,
     project_path: &str,
 ) -> Result<Option<AgentSession>, sqlx::Error> {
     sqlx::query_as::<_, AgentSession>(
         "SELECT * FROM agent_sessions \
-         WHERE project_path = ? \
+         WHERE project_path = ? AND origin = 'manual' \
          ORDER BY last_used_at DESC LIMIT 1",
     )
     .bind(project_path)

@@ -101,17 +101,27 @@ pub struct McpHandle {
 struct McpAppState {
     pool: SqlitePool,
     token: String,
+    /// Optional Tauri handle so MCP-side mutations can emit live
+    /// events (e.g. `workspace:card-updated`). None when MCP runs
+    /// before the Tauri app is fully bootstrapped — emits become
+    /// no-ops in that window.
+    app: Option<tauri::AppHandle>,
 }
 
 /// Bind a listener on 127.0.0.1:`port`, spawn the axum server, and
 /// return a handle whose `shutdown` sender stops the server.
-pub async fn start(pool: SqlitePool, port: u16, token: String) -> Result<McpHandle, String> {
+pub async fn start(
+    pool: SqlitePool,
+    port: u16,
+    token: String,
+    app: Option<tauri::AppHandle>,
+) -> Result<McpHandle, String> {
     let addr = format!("127.0.0.1:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|e| format!("Failed to bind {}: {}", addr, e))?;
 
-    let state = McpAppState { pool, token };
+    let state = McpAppState { pool, token, app };
     let app = Router::new()
         .route("/mcp", post(handle_mcp))
         .route("/healthz", axum::routing::get(|| async { "ok" }))
@@ -169,7 +179,7 @@ async fn handle_mcp(
         })),
         "notifications/initialized" => Ok(Value::Null),
         "tools/list" => Ok(json!({ "tools": tool_descriptors() })),
-        "tools/call" => dispatch_tool(&state.pool, params, &actor).await,
+        "tools/call" => dispatch_tool(&state.pool, state.app.as_ref(), params, &actor).await,
         "ping" => Ok(json!({})),
         _ => Err((-32601, format!("Method not found: {}", method))),
     };
@@ -300,31 +310,34 @@ fn tool_descriptors() -> Value {
         },
         {
             "name": "cards_create",
-            "description": "Create a new card inside a column.",
+            "description": "Create a new card inside a column. Pass `coworkerId` to attribute the card to a persona (the persona's avatar/name will appear on the card foot). Pass `parentCardId` to record lineage when this card is spawned from another card's discussion — the UI shows a 'From card X' breadcrumb.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "columnId": { "type": "string" },
-                    "title": { "type": "string" },
-                    "description": { "type": "string" },
-                    "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
-                    "tags": { "type": "array", "items": { "type": "string" } }
+                    "columnId":     { "type": "string" },
+                    "title":        { "type": "string" },
+                    "description":  { "type": "string" },
+                    "priority":     { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+                    "tags":         { "type": "array", "items": { "type": "string" } },
+                    "coworkerId":   { "type": "string", "description": "Persona that's creating this card. Use your declared coworker_id when acting as a persona." },
+                    "parentCardId": { "type": "string", "description": "Card this one was spawned from, for lineage." }
                 },
                 "required": ["columnId", "title"]
             }
         },
         {
             "name": "cards_update",
-            "description": "Update a card's title, description, priority, tags, or review checklist.",
+            "description": "Update a card's title, description, priority, tags, or review checklist. Pass `coworkerId` to record which persona made the change.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string" },
-                    "title": { "type": "string" },
-                    "description": { "type": "string" },
-                    "priority": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "reviewChecklist": { "type": "string" }
+                    "id":              { "type": "string" },
+                    "title":           { "type": "string" },
+                    "description":     { "type": "string" },
+                    "priority":        { "type": "string" },
+                    "tags":            { "type": "array", "items": { "type": "string" } },
+                    "reviewChecklist": { "type": "string" },
+                    "coworkerId":      { "type": "string" }
                 },
                 "required": ["id"]
             }
@@ -553,26 +566,66 @@ fn tool_descriptors() -> Value {
         },
         {
             "name": "cards_add_comment",
-            "description": "Post a comment on a card. Appended to the description as a markdown blockquote prefixed with the actor name and timestamp. Use this for back-and-forth notes (e.g. answering a user's question on a card) instead of overwriting the description.",
+            "description": "Post a comment on a card. Comments live in the card's thread (visible in the drawer). Pass `coworkerId` when you're acting as a persona — your comment renders with that persona's avatar + name.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string" },
-                    "body": { "type": "string" }
+                    "id":         { "type": "string" },
+                    "body":       { "type": "string" },
+                    "coworkerId": { "type": "string", "description": "Persona authoring the comment, when applicable." }
                 },
                 "required": ["id", "body"]
             }
         },
         {
-            "name": "cards_mention_session",
-            "description": "Trigger the agent session linked to this card. The body is posted as a user comment, then the linked agent (Claude, Codex, Gemini, OpenCode — provider-aware) is invoked one-shot with the card thread as context. Its reply is appended as another comment under the agent's slug. Errors if the card has no linked session, the session was deleted, or the provider isn't yet supported. Card-as-conversation pattern.",
+            "name": "cards_start_work",
+            "description": "Create an isolated git worktree + branch for this card and attach it to the active hidden session. Call this BEFORE you make file edits in a card-driven chat — your subsequent edits go into the worktree, keeping the user's main checkout clean. No-op if the card already has a worktree. Errors when the card is owned by a manual terminal session (those manage their own worktrees).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "Card id." },
-                    "body": { "type": "string", "description": "User message to post + send to the session." }
+                    "id": { "type": "string", "description": "Card id." }
                 },
-                "required": ["id", "body"]
+                "required": ["id"]
+            }
+        },
+        {
+            "name": "cards_call_coworker",
+            "description": "Invoke a specific coworker (persona) to chat on a card. The system: (1) posts your message as a comment from the calling agent, (2) creates-or-reuses the card's hidden session for that coworker, (3) runs the coworker as an agent with their persona prompt, (4) posts the response as a comment from the coworker, and (5) returns the response text so you can summarise back to the user. Use this when the user asks you to involve a specific coworker on a card without leaving your own session. The card becomes claimed by the coworker after this call.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id":         { "type": "string", "description": "Card id." },
+                    "coworkerId": { "type": "string", "description": "Coworker to invoke." },
+                    "message":    { "type": "string", "description": "What to ask them — e.g. 'Brainstorm OAuth approaches for this card'." }
+                },
+                "required": ["id", "coworkerId", "message"]
+            }
+        },
+        {
+            "name": "coworkers_list",
+            "description": "List all coworkers (personas) the user has set up. Each coworker has a name, role, system_prompt that's appended at agent spawn, avatar, and underlying provider. Use this to know who's on the team — e.g. when the user asks 'who's working with me?'.",
+            "inputSchema": { "type": "object", "properties": {}, "required": [] }
+        },
+        {
+            "name": "cards_claim",
+            "description": "Claim ownership of a card for this agent's calling session — the agent becomes the single work-stream allowed to drive the card going forward. The drawer in the UI will show 'Active in <session-title>' and disable its in-drawer chat. Use this when the user tells you to 'work on card X' from the terminal: claim, then proceed to add comments / move columns / write code as normal. Errors when the card is already claimed by a different session.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Card id." }
+                },
+                "required": ["id"]
+            }
+        },
+        {
+            "name": "cards_release",
+            "description": "Release the claim this session holds on a card. Use when finished working — the card unlocks and the drawer can host new chats again. No-op when the card isn't claimed by this session.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Card id." }
+                },
+                "required": ["id"]
             }
         },
         {
@@ -584,6 +637,43 @@ fn tool_descriptors() -> Value {
                     "id": { "type": "string" }
                 },
                 "required": ["id"]
+            }
+        },
+        {
+            "name": "cards_commit",
+            "description": "Stage and commit any pending changes in the card's worktree with the given message. Requires an active claim + worktree (call cards_start_work first if needed). Errors with 'no changes' when the worktree is clean. ONLY call this when the user explicitly asks to commit — never on your own initiative. Drops a 'Commit on <branch>' bubble on the card thread so the user sees the activity.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cardId":  { "type": "string", "description": "Card id." },
+                    "message": { "type": "string", "description": "Commit message. Should describe the change in present tense — e.g. 'Add login rate-limit guard'." }
+                },
+                "required": ["cardId", "message"]
+            }
+        },
+        {
+            "name": "cards_raise_pr",
+            "description": "Push the card's branch and (if no PR exists yet) open a GitHub PR / GitLab MR for it. Idempotent — when the card already has a pr_url, this just pushes new commits to the existing PR's branch (no second PR is opened). Requires worktree + branch + workspace repo URL. ONLY call when the user explicitly asks ('raise a PR', 'ship it', 'push it') — never autonomously. Returns { prUrl, alreadyExisted, branch }.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cardId": { "type": "string", "description": "Card id." },
+                    "title":  { "type": "string", "description": "Optional PR title. Defaults to the card title." },
+                    "body":   { "type": "string", "description": "Optional PR body. Defaults to a one-line reference to the card thread." }
+                },
+                "required": ["cardId"]
+            }
+        },
+        {
+            "name": "cards_link_pr",
+            "description": "Stamp a PR / MR URL onto a card without running any CLI. Use when you raised a PR via raw bash (legacy path) and want the card's UI to show the link. The preferred path is cards_raise_pr — it does the push + open + link in one step.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cardId": { "type": "string", "description": "Card id." },
+                    "prUrl":  { "type": "string", "description": "Full PR / MR URL." }
+                },
+                "required": ["cardId", "prUrl"]
             }
         }
     ])
@@ -640,7 +730,7 @@ async fn upsert_workspace_for_project(
     let columns: &[(&str, &str)] = &[
         ("Backlog", "#5b6776"),
         ("Todo", "#6aa9ff"),
-        ("Doing", "#f4c150"),
+        ("In Review", "#f4c150"),
         ("Review", "#a78bfa"),
         ("Done", "#2ee08a"),
     ];
@@ -771,7 +861,12 @@ fn ok_text(value: Value) -> Value {
     })
 }
 
-async fn dispatch_tool(pool: &SqlitePool, params: Value, actor: &str) -> Result<Value, (i32, String)> {
+async fn dispatch_tool(
+    pool: &SqlitePool,
+    app: Option<&tauri::AppHandle>,
+    params: Value,
+    actor: &str,
+) -> Result<Value, (i32, String)> {
     let name = params
         .get("name")
         .and_then(|v| v.as_str())
@@ -957,15 +1052,23 @@ async fn dispatch_tool(pool: &SqlitePool, params: Value, actor: &str) -> Result<
             let description = str_arg("description").unwrap_or_default();
             let priority = str_arg("priority");
             let tags_json = serde_json::to_string(&str_array("tags")).unwrap_or("[]".into());
+            let coworker_id = str_arg("coworkerId");
+            let parent_card_id = str_arg("parentCardId");
             // Place at end of the destination column.
-            let existing_in_col: Vec<_> = repo::list_cards_in_board(pool, &column_id) // best-effort; column_id != board_id, but acceptable for v1
+            let existing_in_col: Vec<_> = repo::list_cards_in_board(pool, &column_id)
                 .await.unwrap_or_default()
                 .into_iter().filter(|c| c.column_id == column_id).collect();
             let pos = existing_in_col.len() as i32;
             let id = new_id();
-            repo::insert_card(pool, &id, &column_id, &title, &description,
-                priority.as_deref(), &tags_json, pos, None, None, None, actor, &now)
-                .await.map_err(map_db)?;
+            repo::insert_card(
+                pool, &id, &column_id, &title, &description,
+                priority.as_deref(), &tags_json, pos,
+                None, None, None,
+                parent_card_id.as_deref(),
+                coworker_id.as_deref(),
+                actor, &now,
+            )
+            .await.map_err(map_db)?;
             auto_link_card_to_recent_session(pool, &id, actor, &now).await;
             Ok(ok_text(json!({ "id": id })))
         }
@@ -974,8 +1077,6 @@ async fn dispatch_tool(pool: &SqlitePool, params: Value, actor: &str) -> Result<
             if repo::is_card_frozen(pool, &id).await.map_err(map_db)? {
                 return Err((-32000, "Card is frozen".into()));
             }
-            // No single-card getter on the repo today; build patched fields directly.
-            // Pull the current row with a quick SELECT.
             let row: Option<(String, String, Option<String>, String, Option<String>)> =
                 sqlx::query_as(
                     "SELECT title, description, priority, tags, review_checklist \
@@ -1000,9 +1101,14 @@ async fn dispatch_tool(pool: &SqlitePool, params: Value, actor: &str) -> Result<
             } else {
                 cur_check
             };
-            repo::update_card(pool, &id, &title, &description, priority.as_deref(),
-                &tags_json, review_checklist.as_deref(), actor, &now)
-                .await.map_err(map_db)?;
+            let coworker_id = str_arg("coworkerId");
+            repo::update_card(
+                pool, &id, &title, &description, priority.as_deref(),
+                &tags_json, review_checklist.as_deref(),
+                coworker_id.as_deref(),
+                actor, &now,
+            )
+            .await.map_err(map_db)?;
             auto_link_card_to_recent_session(pool, &id, actor, &now).await;
             Ok(ok_text(json!({ "id": id, "ok": true })))
         }
@@ -1024,7 +1130,10 @@ async fn dispatch_tool(pool: &SqlitePool, params: Value, actor: &str) -> Result<
                 .await
                 .map_err(map_db)?;
                 match row {
-                    Some((name,)) if name.to_lowercase().contains("review") => 1,
+                    // Same matcher as commands.rs — strict "review"
+                    // column (not "in review", which is the active-
+                    // work column).
+                    Some((name,)) if super::commands::is_review_only_column(&name) => 1,
                     _ => 0,
                 }
             };
@@ -1068,7 +1177,7 @@ async fn dispatch_tool(pool: &SqlitePool, params: Value, actor: &str) -> Result<
             if let Some(comment) = str_arg("comment") {
                 if !comment.trim().is_empty() {
                     let cid = new_id();
-                    repo::insert_card_comment(pool, &cid, &id, actor, comment.trim(), None, &now)
+                    repo::insert_card_comment(pool, &cid, &id, actor, None, comment.trim(), None, &now)
                         .await.map_err(map_db)?;
                 }
             }
@@ -1085,7 +1194,7 @@ async fn dispatch_tool(pool: &SqlitePool, params: Value, actor: &str) -> Result<
             let trimmed = feedback.trim();
             if !trimmed.is_empty() {
                 let cid = new_id();
-                repo::insert_card_comment(pool, &cid, &id, actor, trimmed, None, &now)
+                repo::insert_card_comment(pool, &cid, &id, actor, None, trimmed, None, &now)
                     .await.map_err(map_db)?;
             }
             // Optional move first (so the column-name review check sees
@@ -1263,9 +1372,15 @@ async fn dispatch_tool(pool: &SqlitePool, params: Value, actor: &str) -> Result<
             .await
             .map_err(map_db)?;
             let pos = existing.first().map(|r| r.0).unwrap_or(0) as i32;
-            repo::insert_card(pool, &id, &column_id, &title, &description,
-                None, "[]", pos, Some(&branch), None, None, actor, &now)
-                .await.map_err(map_db)?;
+            repo::insert_card(
+                pool, &id, &column_id, &title, &description,
+                None, "[]", pos,
+                Some(&branch), None, None,
+                None, // parent_card_id — branch-created cards are top-level
+                None, // coworker_id — branches don't carry persona context
+                actor, &now,
+            )
+            .await.map_err(map_db)?;
             auto_link_card_to_recent_session(pool, &id, actor, &now).await;
             Ok(ok_text(json!({
                 "id": id,
@@ -1353,14 +1468,20 @@ async fn dispatch_tool(pool: &SqlitePool, params: Value, actor: &str) -> Result<
             if trimmed.is_empty() {
                 return Err((-32602, "body must not be empty".into()));
             }
+            let coworker_id = str_arg("coworkerId");
             let comment_id = new_id();
-            repo::insert_card_comment(pool, &comment_id, &id, actor, trimmed, None, &now)
-                .await.map_err(map_db)?;
+            repo::insert_card_comment(
+                pool, &comment_id, &id, actor,
+                coworker_id.as_deref(),
+                trimmed, None, &now,
+            )
+            .await.map_err(map_db)?;
             auto_link_card_to_recent_session(pool, &id, actor, &now).await;
             Ok(ok_text(json!({
                 "id": comment_id,
                 "cardId": id,
                 "actor": actor,
+                "coworkerId": coworker_id,
                 "body": trimmed,
                 "createdAt": now,
             })))
@@ -1379,20 +1500,154 @@ async fn dispatch_tool(pool: &SqlitePool, params: Value, actor: &str) -> Result<
             Ok(ok_text(result))
         }
 
-        "cards_mention_session" => {
-            let id = req_str("id")?;
-            // Frozen cards still allow mentions (read-the-thread is fine),
-            // but the comment-append guard inside mention.rs would fail. So
-            // we surface the same uniform error here up front.
+        "cards_commit" => {
+            let id = req_str("cardId")?;
+            let message = req_str("message")?;
             if repo::is_card_frozen(pool, &id).await.map_err(map_db)? {
                 return Err((-32000, "Card is frozen".into()));
             }
-            let body = req_str("body")?;
-            let result = crate::modes::workspace::mention::mention_card_session(pool, &id, &body, actor)
+            let result = crate::modes::workspace::pr::commit_card(pool, app, &id, &message, actor)
+                .await
+                .map_err(|e| (-32603, e.message()))?;
+            Ok(ok_text(serde_json::to_value(result).unwrap_or(Value::Null)))
+        }
+
+        "cards_raise_pr" => {
+            let id = req_str("cardId")?;
+            let title = str_arg("title");
+            let body = str_arg("body");
+            if repo::is_card_frozen(pool, &id).await.map_err(map_db)? {
+                return Err((-32000, "Card is frozen".into()));
+            }
+            let result = crate::modes::workspace::pr::raise_or_update_pr(
+                pool, app, &id, title.as_deref(), body.as_deref(), actor,
+            )
+            .await
+            .map_err(|e| (-32603, e.message()))?;
+            Ok(ok_text(serde_json::to_value(result).unwrap_or(Value::Null)))
+        }
+
+        "cards_link_pr" => {
+            let id = req_str("cardId")?;
+            let pr_url = req_str("prUrl")?;
+            if repo::is_card_frozen(pool, &id).await.map_err(map_db)? {
+                return Err((-32000, "Card is frozen".into()));
+            }
+            crate::modes::workspace::pr::link_pr_url(pool, app, &id, &pr_url, actor)
+                .await
+                .map_err(|e| (-32603, e.message()))?;
+            Ok(ok_text(json!({ "cardId": id, "prUrl": pr_url })))
+        }
+
+        "coworkers_list" => {
+            let v = crate::shared::repos::coworkers::list_coworkers(pool)
+                .await.map_err(map_db)?;
+            Ok(ok_text(serde_json::to_value(v).unwrap_or(Value::Null)))
+        }
+
+        "cards_claim" => {
+            // Terminal-side claim. We don't get the agent's session id
+            // over the wire, so we use the same auto-link heuristic to
+            // resolve "the most recent session for this card's project"
+            // and stamp it as the claimer. Errors when:
+            //   • Card not found / no project_path bound
+            //   • Card already claimed by a *different* session
+            //   • No matching agent session exists yet (agent must
+            //     have been launched in Agent mode at least once)
+            let id = req_str("id")?;
+            let row = repo::get_card_claim_and_project(pool, &id)
+                .await.map_err(map_db)?
+                .ok_or((-32602, "Card not found".into()))?;
+            let (existing_session, _existing_coworker, project_path_opt) = row;
+            let project_path = project_path_opt
+                .filter(|p| !p.trim().is_empty())
+                .ok_or((-32602, "Workspace has no project_path bound".into()))?;
+            let calling_session = session_repo::find_recent_session_for_project(pool, &project_path)
+                .await.map_err(map_db)?
+                .ok_or((-32603, "No agent session found for this project — start one in Agent mode first".into()))?;
+            if let Some(existing) = existing_session.as_deref() {
+                if existing != calling_session.id {
+                    return Err((-32000, format!(
+                        "Card is already claimed by session '{}'. Release it first.",
+                        calling_session.title
+                    )));
+                }
+            } else {
+                // Terminal claims have no persona — pass None for coworker_id.
+                repo::claim_card(pool, &id, &calling_session.id, None, actor, &now)
+                    .await.map_err(map_db)?;
+            }
+            Ok(ok_text(json!({
+                "id": id,
+                "claimedSessionId": calling_session.id,
+                "sessionTitle": calling_session.title,
+            })))
+        }
+
+        "cards_release" => {
+            let id = req_str("id")?;
+            let row = repo::get_card_claim_and_project(pool, &id)
+                .await.map_err(map_db)?
+                .ok_or((-32602, "Card not found".into()))?;
+            let (existing_session, _existing_coworker, project_path_opt) = row;
+            let project_path = project_path_opt.unwrap_or_default();
+            let calling_session = session_repo::find_recent_session_for_project(pool, &project_path)
+                .await.map_err(map_db)?;
+            // Only release if the caller is the holder — otherwise it's a no-op
+            // so a misfire from another session can't inadvertently unlock the card.
+            if let (Some(holder), Some(caller)) = (existing_session.as_deref(), calling_session.as_ref()) {
+                if holder == caller.id {
+                    repo::release_card(pool, &id, actor, &now)
+                        .await.map_err(map_db)?;
+                }
+            }
+            Ok(ok_text(json!({ "id": id, "ok": true })))
+        }
+
+        "cards_start_work" => {
+            let id = req_str("id")?;
+            if repo::is_card_frozen(pool, &id).await.map_err(map_db)? {
+                return Err((-32000, "Card is frozen".into()));
+            }
+            let r = crate::modes::workspace::agent_spawn::start_work(pool, &id, actor)
                 .await
                 .map_err(|e| (-32603, e))?;
-            auto_link_card_to_recent_session(pool, &id, actor, &now).await;
-            Ok(ok_text(result))
+            Ok(ok_text(json!({
+                "ok": true,
+                "worktreePath": r.worktree_path,
+                "worktreeBranch": r.worktree_branch,
+            })))
+        }
+
+        "cards_call_coworker" => {
+            // Terminal-callable wrapper around drawer_chat_turn — lets the
+            // calling agent (e.g. Claude in the user's terminal) invoke a
+            // specific persona on a card. The persona's reply is persisted
+            // as a comment AND returned in the result so the caller can
+            // summarise back to the user.
+            let id = req_str("id")?;
+            if repo::is_card_frozen(pool, &id).await.map_err(map_db)? {
+                return Err((-32000, "Card is frozen".into()));
+            }
+            let coworker_id = req_str("coworkerId")?;
+            let message = req_str("message")?;
+            // Pass the Tauri AppHandle through (when available) so any
+            // open drawer for this card refreshes live via the
+            // `workspace:card-updated` event. Falls back to next-poll
+            // refresh when MCP started before Tauri was ready.
+            let result = crate::modes::workspace::agent_spawn::drawer_chat_turn(
+                pool, app, &id, &coworker_id, &message, actor,
+            )
+            .await
+            .map_err(|e| (-32603, e))?;
+            Ok(ok_text(json!({
+                "ok": true,
+                "sessionId": result.session_id,
+                "userCommentId": result.user_comment.id,
+                "replyCommentId": result.reply_comment.as_ref().map(|c| c.id.clone()),
+                "response": result.reply_comment.as_ref().map(|c| c.body.clone()),
+                "agentError": result.agent_error,
+            })))
         }
 
         _ => Err((-32601, format!("Tool not found: {}", name))),

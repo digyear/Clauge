@@ -13,6 +13,11 @@ export interface AgentSession {
   gitEmail: string | null;
   createdAt: string;
   lastUsedAt: string;
+  /** 'manual' = user-spawned terminal session (Agent panel).
+   *  'card'   = drawer-spawned hidden session for a workspace card. */
+  origin: string;
+  /** Backref to the card that owns this hidden session. null otherwise. */
+  cardId: string | null;
 }
 
 export interface AgentContext {

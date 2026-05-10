@@ -17,6 +17,7 @@
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
+use crate::modes::workspace::cli_errors::{classify_output, CliError};
 use crate::shared::repos::workspaces as repo;
 
 /// Run the full push pipeline for `card_id`. Returns the patched card
@@ -128,18 +129,14 @@ pub async fn push_card_to_repo(
     .map_err(|e| format!("{tool} failed to spawn: {e}"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let lower_err = stderr.to_lowercase();
-        if lower_err.contains("auth") || lower_err.contains("logged in") || lower_err.contains("token") {
-            return Err(format!(
-                "{tool} is not authenticated. Run `{tool} auth login` and retry."
-            ));
-        }
-        return Err(if stderr.is_empty() {
-            format!("{tool} exited with non-zero status")
-        } else {
-            stderr
-        });
+        // Use the shared classifier so multi-account / no-access /
+        // network failures get clean toast copy. Falls back to raw
+        // stderr only when the classifier can't pin the error down.
+        let err = classify_output(tool, &output, Some(&owner_repo))
+            .unwrap_or(CliError::Other {
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        return Err(err.message());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);

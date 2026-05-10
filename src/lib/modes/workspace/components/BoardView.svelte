@@ -15,6 +15,7 @@
     workspaceBoardGet,
     workspaceBoardRename,
     workspaceCardCreate,
+    workspaceBoardDismissedExternals,
     workspaceCardUpdate,
     workspaceCardMove,
     workspaceCardClearReview,
@@ -27,6 +28,8 @@
   import BoardConfigDialog from './BoardConfigDialog.svelte';
   import { tagColor } from '../tagColor';
   import { cardSourceBadge } from '../cardSource';
+  import { coworkers } from '../stores';
+  import CoworkerAvatar from './CoworkerAvatar.svelte';
   import { tabs as sharedTabs, updateTab } from '$lib/shared/stores/tabs';
   import { get } from 'svelte/store';
   import { currentUserActor, describeActor, formatAttribution } from '../attribution';
@@ -129,6 +132,16 @@
 
   async function bootstrap(id: string) {
     board = null;
+    // Reset sync-banner state on every board switch. Without this, the
+    // previous board's URL + sync timestamp + dismissed flag leak into
+    // the new board (BoardView is reused across boards / workspaces —
+    // Svelte updates the `boardId` prop rather than remounting). Most
+    // visibly: open Workspace A → board with synced GitHub repo, switch
+    // to Workspace B's board, see Workspace A's repo URL still showing.
+    scanState = null;
+    scanBusy = false;
+    scanDismissed = false;
+    lastSyncedAt = null;
     try {
       board = await workspaceBoardGet(id);
       nameDraft = board.name;
@@ -185,7 +198,17 @@
         position: idx,
         actor: currentUserActor(),
       });
-      // No reload — the optimistic update already matches server state.
+      // Server clears review_pending on user moves; mirror that
+      // optimistically so the "Pending review" badge clears
+      // immediately when the user drags an agent-flagged card out
+      // of the Review column. Without this, the local store still
+      // shows the stale flag until a full reload.
+      const map = $cardsByBoard;
+      const list = map.get(boardId) ?? [];
+      const next = list.map(c =>
+        c.id === moved ? { ...c, columnId, reviewPending: 0 } : c,
+      );
+      cardsByBoard.set(new Map(map).set(boardId, next));
     } catch (err) {
       showToast(`Move failed: ${err}`, 'error');
       await loadBoardContents(boardId);
@@ -223,10 +246,16 @@
   }
 
   async function requestChanges(card: WorkspaceBoardCard) {
-    // Request changes = clear review_pending + move back to "Doing".
-    // Find the Doing column (by lowercase substring match — same rule
-    // the Rust side uses for review detection).
-    const doing = columns.find(c => c.name.toLowerCase().includes('doing'))
+    // Request changes = clear review_pending + move back to the
+    // active-work column ("In Review" by default; older boards may
+    // still have "Doing"). Same matcher Rust uses for is_doing_class.
+    const isDoingCol = (n: string) => {
+      const s = n.toLowerCase();
+      return s.includes('doing') || s.includes('in review') || s.includes('in-review')
+          || s.includes('in progress') || s.includes('in-progress')
+          || s.includes('wip') || s.includes('active');
+    };
+    const doing = columns.find(c => isDoingCol(c.name))
       ?? columns.find(c => c.name.toLowerCase().includes('todo'))
       ?? columns[0];
     if (!doing) return;
@@ -295,8 +324,20 @@
   }
 
   async function onCardSaved() {
-    editingCard = null;
+    // Refresh the board so column moves / new comments / pushes show
+    // up on the kanban tiles. Crucially: DO NOT close the drawer.
+    // `onsave` fires on every chat turn (auto-save, comment, agent
+    // reply); closing the drawer mid-conversation was the bug behind
+    // the "drawer slams shut after Alex replies" complaint.
     await loadBoardContents(boardId);
+    // Keep editingCard pointing at the freshest version of this card
+    // so the drawer's prop stays valid (was the source of the
+    // null-card crash earlier).
+    if (editingCard) {
+      const list = $cardsByBoard.get(boardId) ?? [];
+      const fresh = list.find(c => c.id === editingCard!.id);
+      if (fresh) editingCard = fresh;
+    }
   }
 
   /** Trigger a scan and, on success, bulk-create cards for every
@@ -320,10 +361,15 @@
       // Pick a target column. "Todo" preferred, else first available.
       const target = columns.find(c => c.name.toLowerCase().includes('todo')) ?? columns[0];
       if (!target) return;
+      // Two skip-sets: cards already on the board (de-dup) AND
+      // tombstoned externals the user previously deleted (so a Done
+      // issue they removed doesn't keep coming back to Todo).
       const existingExternalIds = new Set(cards.map(c => c.externalId).filter(Boolean));
+      const dismissed = new Set(await workspaceBoardDismissedExternals(boardId).catch(() => []));
       let pos = (cardsByColumn.get(target.id) ?? []).length;
       for (const issue of result.issues) {
         if (existingExternalIds.has(issue.externalId)) continue;
+        if (dismissed.has(issue.externalId)) continue;
         try {
           await workspaceCardCreate({
             columnId: target.id,
@@ -404,9 +450,13 @@
               {@const tags = (() => { try { return JSON.parse(card.tags) as string[]; } catch { return []; } })()}
               {@const src = cardSourceBadge(card)}
               {@const unread = isCardUnread(card, $cardLastSeenAt)}
+              {@const creatorCw = card.createdByCoworkerId
+                ? $coworkers.find(c => c.id === card.createdByCoworkerId) ?? null
+                : null}
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
-              {@const inflightProvider = $inflightMentions.get(card.id) ?? null}
+              {@const inflight = $inflightMentions.get(card.id) ?? null}
+              {@const inflightProvider = inflight?.provider ?? null}
               {@const inflightIco = inflightProvider ? agentIcon(inflightProvider) : null}
               <div
                 class="bv-card"
@@ -437,7 +487,17 @@
                   </div>
                 {/if}
                 <div class="bv-card-foot">
-                  {#if editor.kind === 'agent'}
+                  {#if creatorCw}
+                    <!-- Creator chip wins when a persona made the card —
+                         signals "this work is owned by @alex." Avatar +
+                         name is more informative than the generic agent
+                         star, and lets the user scan the board by who's
+                         doing what. -->
+                    <span class="bv-card-creator" title="Created by @{creatorCw.name}">
+                      <CoworkerAvatar seed={creatorCw.avatarSeed} style={creatorCw.avatarStyle} size={12} />
+                      <span>@{creatorCw.name}</span>
+                    </span>
+                  {:else if editor.kind === 'agent'}
                     <span class="bv-card-actor bv-card-actor-agent" title="Last edit by {editor.label}">
                       <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.6 4.8L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.2L12 3z"/></svg>
                       {editor.label}
@@ -446,6 +506,12 @@
                     <span class="bv-card-actor">{editor.label}</span>
                   {/if}
                   <span class="bv-card-time">· {formatAttribution(card.updatedBy, card.updatedAt).split('· ')[1] ?? ''}</span>
+                  {#if card.commentCount > 0}
+                    <span class="bv-card-comments" title="{card.commentCount} {card.commentCount === 1 ? 'comment' : 'comments'}">
+                      <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                      {card.commentCount}
+                    </span>
+                  {/if}
                   {#if inflightIco}
                     <span
                       class="bv-card-inflight-chip"
@@ -763,6 +829,26 @@
     font-weight: 500;
   }
   .bv-card-time { color: var(--t4); }
+  /* Comment count — quiet chip with the speech-bubble glyph. Shown
+     only when count > 0 so cards stay clean. */
+  .bv-card-comments {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: var(--t3);
+    font-family: var(--ui);
+    font-weight: 500;
+  }
+  .bv-card-comments:hover { color: var(--t1); }
+  /* Persona chip on the card foot — avatar + name, accent-tinted so
+     it reads "this is X's work" without dominating the card. */
+  .bv-card-creator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--acc);
+    font-weight: 600;
+  }
   /* Source chip — pushed to the right edge of the foot. The two
      repo flavours get a faint brand-tinted background so users can
      glance and tell GitHub from GitLab; local stays muted. */

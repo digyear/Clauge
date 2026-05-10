@@ -7,6 +7,7 @@ import type {
   WorkspaceBoardCard,
   WorkspaceBoardColumn,
   WorkspaceCardComment,
+  WorkspaceCoworker,
   WorkspaceNote,
 } from './types';
 
@@ -85,6 +86,8 @@ export const workspaceCardCreate = (params: {
   externalId?: string | null;
   externalUrl?: string | null;
   linkedSessionId?: string | null;
+  parentCardId?: string | null;
+  coworkerId?: string | null;
   actor: string;
 }) => invoke<WorkspaceBoardCard>('workspace_card_create', params);
 export const workspaceCardUpdate = (params: {
@@ -94,6 +97,7 @@ export const workspaceCardUpdate = (params: {
   priority?: string | null;
   tags: string[];
   reviewChecklist?: string | null;
+  coworkerId?: string | null;
   actor: string;
 }) => invoke<void>('workspace_card_update', params);
 export const workspaceCardMove = (params: {
@@ -105,6 +109,8 @@ export const workspaceCardMove = (params: {
 export const workspaceCardClearReview = (id: string, actor: string) =>
   invoke<void>('workspace_card_clear_review', { id, actor });
 export const workspaceCardDelete = (id: string) => invoke<void>('workspace_card_delete', { id });
+export const workspaceBoardDismissedExternals = (boardId: string) =>
+  invoke<string[]>('workspace_board_dismissed_externals', { boardId });
 export const workspaceCardAddComment = (id: string, body: string, actor: string) =>
   invoke<WorkspaceCardComment>('workspace_card_add_comment', { id, body, actor });
 export const workspaceCardCommentList = (cardId: string) =>
@@ -121,23 +127,107 @@ export interface CardPushResult {
 export const workspaceCardPushToRepo = (id: string, actor: string) =>
   invoke<CardPushResult>('workspace_card_push_to_repo', { id, actor });
 
-export const workspaceCardSetLinkedSession = (
+export interface RaisePrResult {
+  prUrl: string;
+  /** True when the PR existed before this call — push updated it
+   *  rather than opening a new one. UI uses this to flip the toast
+   *  copy between "PR raised" and "Pushed update to PR". */
+  alreadyExisted: boolean;
+  branch: string;
+}
+export const workspaceCardRaisePr = (
+  cardId: string,
+  actor: string,
+  title?: string,
+  body?: string,
+) =>
+  invoke<RaisePrResult>('workspace_card_raise_pr', { cardId, actor, title, body });
+
+// ── Card claim + drawer chat (migration 14) ──────────────────────
+
+import type { AgentSession } from '$lib/modes/agent/types';
+
+export interface CardClaimState {
+  claimedSessionId: string | null;
+  claimedCoworkerId: string | null;
+  /** Full session row when claimed; null otherwise. */
+  session: AgentSession | null;
+  /** Full coworker row when a persona-claim is active; null otherwise. */
+  coworker: WorkspaceCoworker | null;
+  /** True when the claim is held by a *card-origin* hidden session
+   *  for THIS card — drawer can chat. False when held by a manual
+   *  terminal session — drawer is in conflict mode. */
+  drawerOwns: boolean;
+}
+
+export const workspaceCardGetClaim = (id: string) =>
+  invoke<CardClaimState>('workspace_card_get_claim', { id });
+
+export interface DrawerChatResult {
+  userComment: WorkspaceCardComment;
+  replyComment: WorkspaceCardComment | null;
+  sessionId: string;
+  /** Soft error from the agent run — surface as an inline note in the
+   *  thread, not a hard failure. The user comment was still saved. */
+  agentError: string | null;
+}
+
+export const workspaceCardDrawerChat = (
   id: string,
-  sessionId: string | null,
+  coworkerId: string,
+  body: string,
   actor: string,
 ) =>
-  invoke<void>('workspace_card_set_linked_session', { id, sessionId, actor });
+  invoke<DrawerChatResult>('workspace_card_drawer_chat', { id, coworkerId, body, actor });
 
-export interface CardMentionResult {
-  ok: true;
-  sessionId: string;
-  provider: string;
-  response: string;
-  userCommentId?: string;
-  replyCommentId?: string;
+// ── Coworkers (personas) ─────────────────────────────────────────
+
+export const workspaceCoworkerList = () =>
+  invoke<WorkspaceCoworker[]>('workspace_coworker_list');
+export const workspaceCoworkerGet = (id: string) =>
+  invoke<WorkspaceCoworker>('workspace_coworker_get', { id });
+
+export interface CoworkerInput {
+  name: string;
+  role?: string;
+  systemPrompt?: string;
+  provider?: string;
+  avatarSeed?: string;
+  avatarStyle?: string;
+  actor: string;
 }
-export const workspaceCardMentionSession = (id: string, body: string, actor: string) =>
-  invoke<CardMentionResult>('workspace_card_mention_session', { id, body, actor });
+export const workspaceCoworkerCreate = (input: CoworkerInput) =>
+  invoke<WorkspaceCoworker>('workspace_coworker_create', { input });
+
+export interface CoworkerUpdate {
+  id: string;
+  name: string;
+  role?: string;
+  systemPrompt?: string;
+  provider?: string;
+  avatarSeed?: string;
+  avatarStyle?: string;
+}
+export const workspaceCoworkerUpdate = (input: CoworkerUpdate) =>
+  invoke<WorkspaceCoworker>('workspace_coworker_update', { input });
+
+export const workspaceCoworkerDelete = (id: string) =>
+  invoke<void>('workspace_coworker_delete', { id });
+
+export const workspaceCardRelease = (
+  id: string,
+  actor: string,
+  deleteWorktree: boolean = false,
+) =>
+  invoke<void>('workspace_card_release', { id, actor, deleteWorktree });
+
+export interface StartWorkResult {
+  worktreePath: string;
+  worktreeBranch: string;
+}
+
+export const workspaceCardStartWork = (id: string, actor: string) =>
+  invoke<StartWorkResult>('workspace_card_start_work', { id, actor });
 
 // ── Inbox ────────────────────────────────────────────────────────────
 

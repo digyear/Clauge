@@ -264,6 +264,10 @@ pub async fn agent_fetch_usage_limits(session_key: String) -> Result<serde_json:
         .await
         .map_err(|e| format!("orgs request failed: {}", e))?;
 
+    if !orgs_resp.status().is_success() {
+        return Err(usage_auth_error("organization", orgs_resp.status()));
+    }
+
     let orgs: Vec<serde_json::Value> = orgs_resp
         .json()
         .await
@@ -288,12 +292,24 @@ pub async fn agent_fetch_usage_limits(session_key: String) -> Result<serde_json:
         .await
         .map_err(|e| format!("usage request failed: {}", e))?;
 
+    if !usage_resp.status().is_success() {
+        return Err(usage_auth_error("usage", usage_resp.status()));
+    }
+
     let usage: serde_json::Value = usage_resp
         .json()
         .await
         .map_err(|e| format!("usage parse failed: {}", e))?;
 
     Ok(usage)
+}
+
+fn usage_auth_error(stage: &str, status: reqwest::StatusCode) -> String {
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return "Claude session key is expired or invalid. Reconfigure usage tracking in Settings > Agent.".to_string();
+    }
+
+    format!("Claude {} request failed with HTTP {}", stage, status)
 }
 
 #[tauri::command]

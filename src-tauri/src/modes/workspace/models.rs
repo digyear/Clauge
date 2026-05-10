@@ -38,6 +38,15 @@ pub enum ProjectScanResult {
     ToolNotInstalled { tool: String, install_url: String },
     #[serde(rename_all = "camelCase")]
     NotAuthenticated { tool: String, login_command: String },
+    /// CLI is authenticated but the active account can't access this
+    /// repo. Common case: user has multiple `gh` accounts and the
+    /// wrong one is active. Banner copy points at `gh auth switch`
+    /// (or `gh auth login` for first-time multi-account setup).
+    #[serde(rename_all = "camelCase")]
+    NoAccess { tool: String, repo: String, login_command: String },
+    /// Network / DNS / connectivity failure — transient, retry.
+    #[serde(rename_all = "camelCase")]
+    NetworkError { message: String },
     #[serde(rename_all = "camelCase")]
     ApiError { message: String },
 }
@@ -113,11 +122,43 @@ pub struct WorkspaceCardComment {
     pub id: String,
     pub card_id: String,
     pub actor: String,
+    /// Coworker (persona) this reply belongs to. NULL for plain user
+    /// comments and for any pre-coworker agent comments.
+    pub coworker_id: Option<String>,
     pub body: String,
-    /// Reserved for threaded replies; always None in v1. Storage is
-    /// `parent_id TEXT` with a self-referential FK in migration 13.
+    /// Reserved for threaded replies; always None in v1.
     pub parent_id: Option<String>,
     pub created_at: String,
+}
+
+/// Persona built on top of an underlying agent CLI. Global to the
+/// user — not workspace-scoped — so personas follow you across
+/// projects. Drives the @<name> chat experience: pick Alex
+/// (Brainstormer) or Matt (Developer) and the agent gets their
+/// system_prompt appended at spawn time.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCoworker {
+    pub id: String,
+    pub name: String,
+    /// One-line role/skill — drives the chip caption ("Brainstormer",
+    /// "Developer", "Reviewer", …).
+    pub role: String,
+    /// Free-form prompt added to the agent's system prompt on every
+    /// run for this coworker. Keeps the persona consistent.
+    pub system_prompt: String,
+    /// CLI provider id ('claude', 'codex', 'gemini', 'opencode').
+    /// v1 wires only 'claude'; the column is here so other arms slot
+    /// in later without a migration.
+    pub provider: String,
+    /// dicebear seed (defaults to the name; user can re-roll). Same
+    /// seed → same avatar deterministically.
+    pub avatar_seed: String,
+    /// dicebear collection name ('personas', 'bottts', 'avataaars',
+    /// …). Default 'personas'.
+    pub avatar_style: String,
+    pub created_at: String,
+    pub created_by: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -132,6 +173,11 @@ pub struct WorkspaceBoardCard {
     pub position: i32,
     pub external_id: Option<String>,
     pub external_url: Option<String>,
+    /// PR / MR URL once `cards_raise_pr` has been called for this card.
+    /// `None` until the first PR is raised. Subsequent raises detect
+    /// this and push commits to the same branch instead of opening
+    /// a new PR.
+    pub pr_url: Option<String>,
     pub linked_session_id: Option<String>,
     /// `1` when an agent moved this card into a Review column. Surfaced
     /// as a "Pending review" badge in the UI; user clears by approving
@@ -145,4 +191,31 @@ pub struct WorkspaceBoardCard {
     /// Same semantics as WorkspaceNote.frozen — agent mutations
     /// blocked, UI edits allowed. Migration 12 added.
     pub frozen: i32,
+    /// The single session currently allowed to drive the agent on
+    /// this card (drawer chat or terminal). `None` = unclaimed; any
+    /// surface can start a chat. Non-null = locked; other surfaces
+    /// see a banner directing them to the active session.
+    pub claimed_session_id: Option<String>,
+    /// Persona that owns the active conversation. Always set together
+    /// with `claimed_session_id` from drawer-driven chat; may be NULL
+    /// even when `claimed_session_id` is set if a manual terminal
+    /// session claimed the card (terminal sessions don't have a
+    /// persona today — that's a future enhancement).
+    pub claimed_coworker_id: Option<String>,
+    /// Lineage — the card this one was spawned from, when an agent
+    /// (or user) created a sub-card from a discussion. NULL for top-
+    /// level cards.
+    pub parent_card_id: Option<String>,
+    /// Persona that created this card, when known. The agent slug is
+    /// always in `created_by`; this column resolves the *display name*
+    /// safely against renames (we look up the coworker row at render).
+    pub created_by_coworker_id: Option<String>,
+    /// Persona behind the most-recent mutation. Same semantics as
+    /// `created_by_coworker_id`.
+    pub updated_by_coworker_id: Option<String>,
+    /// Total comments on this card. Computed via subquery in
+    /// `list_cards_in_board`; 0 by default for SELECT * paths that
+    /// don't include it (single-card getters).
+    #[sqlx(default)]
+    pub comment_count: i64,
 }

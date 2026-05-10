@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Modal from '$lib/shared/primitives/Modal.svelte';
-  import { agentGetUsageAnalytics } from '../commands';
-  import { setSetting, settings } from '$lib/stores/settings';
+  import { agentFetchUsageLimits, agentGetUsageAnalytics } from '../commands';
+  import { setSetting } from '$lib/stores/settings';
+  import { agentSessionKey, agentUsageAuthStatus, agentUsageLimits } from '../stores';
+  import { showToast } from '$lib/shared/primitives/toast';
   import type { UsageAnalytics } from '../types';
 
   let { show = $bindable(false) } = $props();
@@ -11,6 +13,7 @@
   let loading = $state(false);
   let data = $state<UsageAnalytics | null>(null);
   let sessionKey = $state('');
+  let keySaving = $state(false);
 
   function formatCost(n: number) { return '$' + n.toFixed(2); }
   function formatTokens(n: number) { return n >= 1_000_000 ? (n / 1_000_000).toFixed(1) + 'M' : n >= 1_000 ? (n / 1_000).toFixed(1) + 'K' : String(n); }
@@ -27,8 +30,25 @@
   function selectDays(d: number) { days = d; load(); }
 
   async function saveKey() {
-    if (sessionKey.trim()) {
-      await setSetting('agent_session_key', sessionKey.trim());
+    const key = sessionKey.trim();
+    if (!key) return;
+    keySaving = true;
+    agentUsageAuthStatus.set({ state: 'checking', message: '' });
+    try {
+      const limits = await agentFetchUsageLimits(key);
+      await setSetting('agent_session_key', key);
+      agentSessionKey.set(key);
+      agentUsageLimits.set(limits);
+      agentUsageAuthStatus.set({ state: 'valid', message: 'Session key verified' });
+      showToast('Session key verified and saved', 'success');
+    } catch (e: any) {
+      agentUsageAuthStatus.set({
+        state: 'invalid',
+        message: typeof e === 'string' ? e : e?.message || 'Claude session key is expired or invalid',
+      });
+      showToast('Invalid session key — not saved', 'error');
+    } finally {
+      keySaving = false;
     }
   }
 </script>
@@ -135,7 +155,7 @@
         <div class="ud-section-title">Session Key</div>
         <div class="ud-key-row">
           <input type="password" class="ud-key-input" bind:value={sessionKey} placeholder="sk-ant-sid01-..." />
-          <button class="ud-key-btn" onclick={saveKey}>Save</button>
+          <button class="ud-key-btn" onclick={saveKey} disabled={keySaving}>{keySaving ? 'Verifying...' : 'Save'}</button>
         </div>
         <span class="ud-key-hint">claude.ai &rarr; DevTools &rarr; Cookies &rarr; sessionKey</span>
       </div>

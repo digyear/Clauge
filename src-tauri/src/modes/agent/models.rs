@@ -26,6 +26,13 @@ pub struct AgentSession {
     pub git_email: Option<String>,
     pub created_at: String,
     pub last_used_at: String,
+    /// `'manual'` = user-spawned terminal session (shown in Agent panel).
+    /// `'card'`   = drawer-spawned hidden session for a workspace card
+    /// (filtered out of the Agent panel; surfaced inside its card drawer).
+    pub origin: String,
+    /// Backref to the workspace card that owns this hidden session.
+    /// `None` for manual sessions and for released hidden sessions.
+    pub card_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

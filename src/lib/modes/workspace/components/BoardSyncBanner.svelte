@@ -45,7 +45,7 @@
     class="sb"
     class:sb-success={state?.kind === 'success'}
     class:sb-warn={state && (state.kind === 'noRemote' || state.kind === 'unsupportedRemote' || state.kind === 'notGitRepo')}
-    class:sb-action={state && (state.kind === 'toolNotInstalled' || state.kind === 'notAuthenticated' || state.kind === 'apiError')}
+    class:sb-action={state && (state.kind === 'toolNotInstalled' || state.kind === 'notAuthenticated' || state.kind === 'noAccess' || state.kind === 'networkError' || state.kind === 'apiError')}
   >
     <div class="sb-body">
       {#if busy}
@@ -113,6 +113,34 @@
             <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           </button>
         </span>
+        <button class="sb-btn primary" onclick={() => onsync?.()} disabled={busy}>Retry</button>
+
+      {:else if state.kind === 'noAccess'}
+        <!-- Most common multi-account confusion: gh is signed in to a
+             different account that can't see this repo. Surface the
+             specific repo + a clear "switch accounts" path. -->
+        <span class="sb-icon sb-icon-warn">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+        </span>
+        <span class="sb-text">
+          <strong>{state.tool}</strong> is signed in to an account that can't access <span class="sb-mono">{state.repo}</span>. Switch accounts:
+          <button class="sb-cmd" onclick={() => copyToClipboard(state.tool === 'gh' ? 'gh auth switch' : 'glab auth status')} title="Copy">
+            <span class="sb-mono">{state.tool === 'gh' ? 'gh auth switch' : 'glab auth status'}</span>
+            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          </button>
+          or sign in with the right one:
+          <button class="sb-cmd" onclick={() => copyToClipboard(state.loginCommand)} title="Copy">
+            <span class="sb-mono">{state.loginCommand}</span>
+            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          </button>
+        </span>
+        <button class="sb-btn primary" onclick={() => onsync?.()} disabled={busy}>Retry</button>
+
+      {:else if state.kind === 'networkError'}
+        <span class="sb-icon sb-icon-warn">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M8.53 16.11a6 6 0 016.95 0M12 20h.01"/></svg>
+        </span>
+        <span class="sb-text" title={state.message}>Network error: {state.message}. Retry in a moment.</span>
         <button class="sb-btn primary" onclick={() => onsync?.()} disabled={busy}>Retry</button>
 
       {:else if state.kind === 'apiError'}

@@ -64,7 +64,12 @@
         AgentContext,
         UsageAnalytics,
     } from "$lib/modes/agent/types";
-    import { agentUsageLimits } from "$lib/modes/agent/stores";
+    import {
+        agentUsageLimits,
+        agentUsageAuthStatus,
+        agentSessionKey as agentSessionKeyStore,
+        loadAgentUsageLimits,
+    } from "$lib/modes/agent/stores";
     import {
         ACCENT_PALETTE,
         THEME_PREVIEW_COLORS,
@@ -467,12 +472,13 @@
         await setSetting(key, value);
         // If session key changed, update store and fetch limits immediately
         if (key === "agent_session_key") {
-            import("$lib/modes/agent/stores").then(
-                ({ agentSessionKey, loadAgentUsageLimits }) => {
-                    agentSessionKey.set(value);
-                    if (value) loadAgentUsageLimits();
-                },
-            );
+            agentSessionKeyStore.set(value);
+            if (value) {
+                loadAgentUsageLimits();
+            } else {
+                agentUsageLimits.set(null);
+                agentUsageAuthStatus.set({ state: "unconfigured", message: "" });
+            }
         }
     }
 
@@ -622,6 +628,10 @@
 
     // Agent General
     let agentSessionKey = $derived($settings["agent_session_key"] ?? "");
+    let agentCodexToken = $derived($settings["agent_codex_access_token"] ?? "");
+    let agentFooterProvider = $derived(
+        $settings["agent_footer_usage_provider"] ?? "claude",
+    );
     let agentSoundEnabled = $derived(
         ($settings["agent_sound_enabled"] ?? "true") === "true",
     );
@@ -639,45 +649,8 @@
         "idle",
     );
     let agentKeyTestMessage = $state("");
-
-    // Agent provider
-    type AgentProvider = "claude_code" | "codex" | "gemini_cli";
-    let agentProvider = $state<AgentProvider>("claude_code");
-
-    // `iconSrc` (when present) renders an <img> so we can use brand assets
-    // — currently only Claude Code, which is the same mascot already used by
-    // the Topbar tab, AgentNav, and AgentPanel loading screens. Other
-    // providers fall back to a stroked SVG path.
-    const AGENT_PROVIDERS: Record<
-        string,
-        {
-            name: string;
-            icon: string;
-            iconSrc?: string;
-            description: string;
-            available: boolean;
-        }
-    > = {
-        claude_code: {
-            name: "Claude Code",
-            icon: "",
-            iconSrc: "/code-no-action.svg",
-            description: "Anthropic CLI agent",
-            available: true,
-        },
-        codex: {
-            name: "Codex",
-            icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
-            description: "OpenAI CLI agent",
-            available: false,
-        },
-        gemini_cli: {
-            name: "Gemini CLI",
-            icon: "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z",
-            description: "Google CLI agent",
-            available: false,
-        },
-    };
+    let codexTokenInput = $state("");
+    let showCodexToken = $state(false);
 
     // Agent Usage Stats
     let agentUsageData = $state<UsageAnalytics | null>(null);
@@ -741,6 +714,22 @@
         agentKeyTestStatus = "idle";
         agentKeyTestMessage = "";
         showToast("Session key removed", "success");
+    }
+
+    async function handleSaveCodexToken() {
+        const token = codexTokenInput.trim();
+        if (!token) {
+            showToast("Enter a Codex access token first", "error");
+            return;
+        }
+        await handleSettingChange("agent_codex_access_token", token);
+        showToast("Codex access token saved", "success");
+    }
+
+    async function handleRemoveCodexToken() {
+        await handleSettingChange("agent_codex_access_token", "");
+        codexTokenInput = "";
+        showToast("Codex access token removed", "success");
     }
 
     async function loadAgentUsage() {
@@ -902,6 +891,7 @@
             loadAgentPlugins();
             loadAgentContexts();
             agentKeyInput = $settings["agent_session_key"] ?? "";
+            codexTokenInput = $settings["agent_codex_access_token"] ?? "";
         }
         if (!show) {
             agentSettingsLoaded = false;
@@ -910,6 +900,7 @@
             agentKeyTestStatus = "idle";
             agentKeyTestMessage = "";
             showAgentKey = false;
+            showCodexToken = false;
         }
     });
 
@@ -928,7 +919,9 @@
 <Modal
     bind:show
     title="Settings"
-    width={activeTab === "agent" && agentSubTab === "usage" ? "960px" : "780px"}
+    width={activeTab === "agent" && agentSubTab === "usage"
+        ? "min(1180px, 92vw)"
+        : "min(1040px, 92vw)"}
     onclose={handleClose}
 >
     <div class="stg-layout">
@@ -2124,63 +2117,65 @@
                     {/if}
                 {/if}
             {:else if activeTab === "agent"}
-                <!-- Agent sub-tabs -->
-                <div class="ai-subtabs">
-                    <button
-                        class="ai-subtab"
-                        class:active={agentSubTab === "general"}
-                        onclick={() => (agentSubTab = "general")}
-                    >
-                        General
-                    </button>
-                    <button
-                        class="ai-subtab"
-                        class:active={agentSubTab === "plugins"}
-                        onclick={() => (agentSubTab = "plugins")}
-                    >
-                        Plugins
-                    </button>
-                    <button
-                        class="ai-subtab"
-                        class:active={agentSubTab === "contexts"}
-                        onclick={() => (agentSubTab = "contexts")}
-                    >
-                        Contexts
-                    </button>
-                    <button
-                        class="ai-subtab"
-                        class:active={agentSubTab === "usage"}
-                        class:disabled={!agentSessionKey}
-                        onclick={() => {
-                            if (agentSessionKey) agentSubTab = "usage";
-                        }}
-                    >
-                        Usage Stats
-                        {#if !agentSessionKey}
-                            <svg
-                                class="ai-subtab-lock"
-                                viewBox="0 0 24 24"
-                                width="11"
-                                height="11"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                ><rect
-                                    x="3"
-                                    y="11"
-                                    width="18"
+                <div class="agent-settings-pane">
+                    <!-- Agent sub-tabs -->
+                    <div class="ai-subtabs">
+                        <button
+                            class="ai-subtab"
+                            class:active={agentSubTab === "general"}
+                            onclick={() => (agentSubTab = "general")}
+                        >
+                            General
+                        </button>
+                        <button
+                            class="ai-subtab"
+                            class:active={agentSubTab === "plugins"}
+                            onclick={() => (agentSubTab = "plugins")}
+                        >
+                            Plugins
+                        </button>
+                        <button
+                            class="ai-subtab"
+                            class:active={agentSubTab === "contexts"}
+                            onclick={() => (agentSubTab = "contexts")}
+                        >
+                            Contexts
+                        </button>
+                        <button
+                            class="ai-subtab"
+                            class:active={agentSubTab === "usage"}
+                            class:disabled={!agentSessionKey}
+                            onclick={() => {
+                                if (agentSessionKey) agentSubTab = "usage";
+                            }}
+                        >
+                            Usage Stats
+                            {#if !agentSessionKey}
+                                <svg
+                                    class="ai-subtab-lock"
+                                    viewBox="0 0 24 24"
+                                    width="11"
                                     height="11"
-                                    rx="2"
-                                    ry="2"
-                                /><path d="M7 11V7a5 5 0 0110 0v4" /></svg
-                            >
-                        {/if}
-                    </button>
-                </div>
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    ><rect
+                                        x="3"
+                                        y="11"
+                                        width="18"
+                                        height="11"
+                                        rx="2"
+                                        ry="2"
+                                    /><path d="M7 11V7a5 5 0 0110 0v4" /></svg
+                                >
+                            {/if}
+                        </button>
+                    </div>
 
+                    <div class="agent-settings-scroll">
                 {#if agentSubTab === "general"}
                     <div class="stg-card-stack">
-                        <section class="stg-card">
+                        <section class="stg-card agent-usage-card">
                             <header class="stg-card-hd">
                                 <span class="stg-card-icon" aria-hidden="true">
                                     <svg
@@ -2192,365 +2187,317 @@
                                         stroke-width="2"
                                         stroke-linecap="round"
                                         stroke-linejoin="round"
-                                        ><rect
-                                            x="4"
-                                            y="4"
-                                            width="16"
-                                            height="16"
-                                            rx="2"
-                                        /><rect
-                                            x="9"
-                                            y="9"
-                                            width="6"
-                                            height="6"
-                                        /><line
-                                            x1="9"
-                                            y1="2"
-                                            x2="9"
-                                            y2="4"
-                                        /><line
-                                            x1="15"
-                                            y1="2"
-                                            x2="15"
-                                            y2="4"
-                                        /><line
-                                            x1="9"
-                                            y1="20"
-                                            x2="9"
-                                            y2="22"
-                                        /><line
-                                            x1="15"
-                                            y1="20"
-                                            x2="15"
-                                            y2="22"
-                                        /><line
-                                            x1="20"
-                                            y1="9"
-                                            x2="22"
-                                            y2="9"
-                                        /><line
-                                            x1="20"
-                                            y1="15"
-                                            x2="22"
-                                            y2="15"
-                                        /><line
-                                            x1="2"
-                                            y1="9"
-                                            x2="4"
-                                            y2="9"
-                                        /><line
-                                            x1="2"
-                                            y1="15"
-                                            x2="4"
-                                            y2="15"
-                                        /></svg
+                                        ><path d="M18 20V10M12 20V4M6 20v-6" /></svg
                                     >
                                 </span>
                                 <div class="stg-card-titles">
                                     <h3 class="stg-card-title">
-                                        Agent Provider
+                                        Live usage tracking
                                     </h3>
                                     <p class="stg-card-sub">
-                                        CLI used for Agent-mode sessions. More
-                                        providers coming soon.
+                                        Configure the provider limits shown in
+                                        the Agent footer.
                                     </p>
                                 </div>
-                            </header>
-                            <div class="stg-card-body">
-                                <div class="agent-provider-grid">
-                                    {#each Object.entries(AGENT_PROVIDERS) as [key, provider]}
-                                        <button
-                                            class="agent-provider-card"
-                                            class:active={agentProvider === key}
-                                            class:disabled={!provider.available}
-                                            onclick={() => {
-                                                if (provider.available)
-                                                    agentProvider =
-                                                        key as AgentProvider;
-                                            }}
-                                        >
-                                            <div class="agent-provider-icon">
-                                                {#if provider.iconSrc}
-                                                    <img
-                                                        src={provider.iconSrc}
-                                                        alt=""
-                                                        width="20"
-                                                        height="20"
-                                                    />
-                                                {:else}
-                                                    <svg
-                                                        viewBox="0 0 24 24"
-                                                        width="18"
-                                                        height="18"
-                                                        fill="none"
-                                                        stroke="currentColor"
-                                                        stroke-width="1.5"
-                                                        stroke-linecap="round"
-                                                        stroke-linejoin="round"
-                                                        ><path
-                                                            d={provider.icon}
-                                                        /></svg
-                                                    >
-                                                {/if}
-                                            </div>
-                                            <div class="agent-provider-info">
-                                                <span
-                                                    class="agent-provider-name"
-                                                    >{provider.name}</span
-                                                >
-                                                <span
-                                                    class="agent-provider-desc"
-                                                    >{provider.description}</span
-                                                >
-                                            </div>
-                                            {#if provider.available}
-                                                {#if agentProvider === key}
-                                                    <span
-                                                        class="agent-provider-badge active"
-                                                    >
-                                                        <svg
-                                                            viewBox="0 0 24 24"
-                                                            width="10"
-                                                            height="10"
-                                                            fill="none"
-                                                            stroke="currentColor"
-                                                            stroke-width="2.5"
-                                                            ><polyline
-                                                                points="20 6 9 17 4 12"
-                                                            /></svg
-                                                        >
-                                                        Active
-                                                    </span>
-                                                {/if}
-                                            {:else}
-                                                <span
-                                                    class="agent-provider-badge soon"
-                                                    >Soon</span
-                                                >
-                                            {/if}
-                                        </button>
-                                    {/each}
-                                </div>
-                            </div>
-                        </section>
-
-                        <section class="stg-card">
-                            <header class="stg-card-hd">
-                                <span class="stg-card-icon" aria-hidden="true">
-                                    <svg
-                                        viewBox="0 0 24 24"
-                                        width="14"
-                                        height="14"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        ><circle cx="8" cy="15" r="4" /><line
-                                            x1="10.85"
-                                            y1="12.15"
-                                            x2="19"
-                                            y2="4"
-                                        /><line
-                                            x1="18"
-                                            y1="5"
-                                            x2="20"
-                                            y2="7"
-                                        /><line
-                                            x1="15"
-                                            y1="8"
-                                            x2="17"
-                                            y2="10"
-                                        /></svg
-                                    >
-                                </span>
-                                <div class="stg-card-titles">
-                                    <h3 class="stg-card-title">Session Key</h3>
-                                    <p class="stg-card-sub">
-                                        claude.ai cookie used to surface live
-                                        usage limits in the tray.
-                                    </p>
-                                </div>
-                            </header>
-                            <div class="ai-cfg">
-                                <div class="ai-cfg-section">
-                                    <label class="ai-cfg-label"
-                                        >Claude AI Session Key</label
-                                    >
-                                    <div class="ai-key-input-wrap">
-                                        <input
-                                            class="ai-cfg-input"
-                                            type={showAgentKey
-                                                ? "text"
-                                                : "password"}
-                                            placeholder="sk-ant-sid01-..."
-                                            bind:value={agentKeyInput}
-                                        />
-                                        <button
-                                            class="ai-key-toggle"
-                                            onclick={() =>
-                                                (showAgentKey = !showAgentKey)}
-                                            type="button"
-                                        >
-                                            {#if showAgentKey}
-                                                <svg
-                                                    viewBox="0 0 24 24"
-                                                    width="14"
-                                                    height="14"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    stroke-width="1.8"
-                                                    ><path
-                                                        d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"
-                                                    /><line
-                                                        x1="1"
-                                                        y1="1"
-                                                        x2="23"
-                                                        y2="23"
-                                                    /></svg
-                                                >
-                                            {:else}
-                                                <svg
-                                                    viewBox="0 0 24 24"
-                                                    width="14"
-                                                    height="14"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    stroke-width="1.8"
-                                                    ><path
-                                                        d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                                                    /><circle
-                                                        cx="12"
-                                                        cy="12"
-                                                        r="3"
-                                                    /></svg
-                                                >
-                                            {/if}
-                                        </button>
-                                    </div>
-
-                                    {#if agentKeyTestStatus === "success"}
-                                        <span class="ai-test-result success">
-                                            <svg
-                                                viewBox="0 0 24 24"
-                                                width="12"
-                                                height="12"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                stroke-width="2"
-                                                ><polyline
-                                                    points="20 6 9 17 4 12"
-                                                /></svg
-                                            >
-                                            {agentKeyTestMessage}
-                                        </span>
-                                    {:else if agentKeyTestStatus === "error"}
-                                        <span class="ai-test-result error">
-                                            <svg
-                                                viewBox="0 0 24 24"
-                                                width="12"
-                                                height="12"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                stroke-width="2"
-                                                ><circle
-                                                    cx="12"
-                                                    cy="12"
-                                                    r="10"
-                                                /><line
-                                                    x1="15"
-                                                    y1="9"
-                                                    x2="9"
-                                                    y2="15"
-                                                /><line
-                                                    x1="9"
-                                                    y1="9"
-                                                    x2="15"
-                                                    y2="15"
-                                                /></svg
-                                            >
-                                            {agentKeyTestMessage}
-                                        </span>
-                                    {/if}
-
-                                    <div class="ai-key-actions">
-                                        <button
-                                            class="ai-action-btn primary"
-                                            onclick={() => handleSaveAgentKey()}
-                                            disabled={!agentKeyInput.trim() ||
-                                                agentKeyTestStatus ===
-                                                    "testing"}
-                                        >
-                                            {#if agentKeyTestStatus === "testing"}
-                                                Verifying...
-                                            {:else}
-                                                Save & Verify
-                                            {/if}
-                                        </button>
-                                        {#if agentSessionKey}
-                                            <button
-                                                class="ai-action-btn danger"
-                                                onclick={handleRemoveAgentKey}
-                                                >Remove Key</button
-                                            >
-                                        {/if}
-                                    </div>
-                                </div>
-
-                                <div class="ai-cfg-divider"></div>
-
-                                <div class="ai-cfg-footer">
-                                    <div class="ai-cfg-links">
-                                        <span class="agent-key-hint"
-                                            >claude.ai &rarr; DevTools &rarr;
-                                            Application &rarr; Cookies &rarr;
-                                            sessionKey</span
-                                        >
-                                    </div>
-                                    {#if agentSessionKey}
-                                        <span class="ai-status-badge">
-                                            <span class="ai-status-dot"></span>
-                                            Connected
-                                        </span>
-                                    {/if}
-                                </div>
-                            </div>
-                        </section>
-
-                        <section class="stg-card">
-                            <header class="stg-card-hd">
-                                <span class="stg-card-icon" aria-hidden="true">
-                                    <svg
-                                        viewBox="0 0 24 24"
-                                        width="14"
-                                        height="14"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        ><polyline
-                                            points="23 4 23 10 17 10"
-                                        /><polyline
-                                            points="1 20 1 14 7 14"
-                                        /><path
-                                            d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"
-                                        /></svg
-                                    >
-                                </span>
-                                <div class="stg-card-titles">
-                                    <h3 class="stg-card-title">Polling</h3>
-                                    <p class="stg-card-sub">
-                                        How often Clauge refreshes Claude AI
-                                        usage limits from the API.
-                                    </p>
-                                </div>
+                                {#if agentFooterProvider === "claude" && agentSessionKey && $agentUsageAuthStatus.state === "valid"}
+                                    <span class="ai-status-badge">
+                                        <span class="ai-status-dot"></span>
+                                        Claude connected
+                                    </span>
+                                {:else if agentFooterProvider === "claude" && agentSessionKey && $agentUsageAuthStatus.state === "checking"}
+                                    <span class="ai-status-badge checking">
+                                        <span class="ai-status-dot"></span>
+                                        Checking Claude
+                                    </span>
+                                {:else if agentFooterProvider === "claude" && agentSessionKey && $agentUsageAuthStatus.state === "invalid"}
+                                    <span class="ai-status-badge error" title={$agentUsageAuthStatus.message}>
+                                        <span class="ai-status-dot"></span>
+                                        Claude needs reconfigure
+                                    </span>
+                                {:else if agentFooterProvider === "codex" && agentCodexToken}
+                                    <span class="ai-status-badge">
+                                        <span class="ai-status-dot"></span>
+                                        Codex configured
+                                    </span>
+                                {:else}
+                                    <span class="ai-status-badge muted">
+                                        Footer not configured
+                                    </span>
+                                {/if}
                             </header>
                             <div class="stg-card-body">
                                 <div class="stg-card-row">
-                                    <label class="stg-card-row-label"
-                                        >Usage refresh interval</label
+                                    <div class="stg-card-row-action-text">
+                                        <span class="stg-card-row-label"
+                                            >Show in Agent footer</span
+                                        >
+                                        <span class="stg-card-row-help">
+                                            Choose the provider whose live limit
+                                            appears next to the Agent terminal.
+                                        </span>
+                                    </div>
+                                    <select
+                                        class="stg-select"
+                                        value={agentFooterProvider}
+                                        onchange={(e) =>
+                                            handleSettingChange(
+                                                "agent_footer_usage_provider",
+                                                e.currentTarget.value,
+                                            )}
                                     >
+                                        <option
+                                            value="claude"
+                                            disabled={!agentSessionKey}
+                                            >Claude Code{agentSessionKey
+                                                ? ""
+                                                : " (not configured)"}</option
+                                        >
+                                        <option
+                                            value="codex"
+                                            disabled={!agentCodexToken}
+                                            >Codex{agentCodexToken
+                                                ? ""
+                                                : " (not configured)"}</option
+                                        >
+                                    </select>
+                                </div>
+
+                                <div class="stg-card-row stg-card-row-action">
+                                    <div class="stg-card-row-action-text">
+                                        <span class="stg-card-row-label"
+                                            >Claude session key</span
+                                        >
+                                        <span class="stg-card-row-help">
+                                            Used only to read Claude usage
+                                            limits. Find it in claude.ai
+                                            DevTools > Application > Cookies >
+                                            sessionKey.
+                                        </span>
+                                        {#if agentKeyTestStatus === "success"}
+                                            <span class="ai-test-result success">
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    width="12"
+                                                    height="12"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    ><polyline
+                                                        points="20 6 9 17 4 12"
+                                                    /></svg
+                                                >
+                                                {agentKeyTestMessage}
+                                            </span>
+                                        {:else if agentKeyTestStatus === "error"}
+                                            <span class="ai-test-result error">
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    width="12"
+                                                    height="12"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    ><circle
+                                                        cx="12"
+                                                        cy="12"
+                                                        r="10"
+                                                    /><line
+                                                        x1="15"
+                                                        y1="9"
+                                                        x2="9"
+                                                        y2="15"
+                                                    /><line
+                                                        x1="9"
+                                                        y1="9"
+                                                        x2="15"
+                                                        y2="15"
+                                                    /></svg
+                                                >
+                                                {agentKeyTestMessage}
+                                            </span>
+                                        {:else if agentSessionKey && $agentUsageAuthStatus.state === "invalid"}
+                                            <span class="ai-test-result error">
+                                                {$agentUsageAuthStatus.message}
+                                            </span>
+                                        {/if}
+                                    </div>
+                                    <div class="agent-session-key-control">
+                                        <div class="ai-key-input-wrap">
+                                            <input
+                                                class="ai-cfg-input"
+                                                type={showAgentKey
+                                                    ? "text"
+                                                    : "password"}
+                                                placeholder="sk-ant-sid01-..."
+                                                bind:value={agentKeyInput}
+                                            />
+                                            <button
+                                                class="ai-key-toggle"
+                                                onclick={() =>
+                                                    (showAgentKey =
+                                                        !showAgentKey)}
+                                                type="button"
+                                                title={showAgentKey
+                                                    ? "Hide key"
+                                                    : "Show key"}
+                                            >
+                                                {#if showAgentKey}
+                                                    <svg
+                                                        viewBox="0 0 24 24"
+                                                        width="14"
+                                                        height="14"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="1.8"
+                                                        ><path
+                                                            d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"
+                                                        /><line
+                                                            x1="1"
+                                                            y1="1"
+                                                            x2="23"
+                                                            y2="23"
+                                                        /></svg
+                                                    >
+                                                {:else}
+                                                    <svg
+                                                        viewBox="0 0 24 24"
+                                                        width="14"
+                                                        height="14"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="1.8"
+                                                        ><path
+                                                            d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                                                        /><circle
+                                                            cx="12"
+                                                            cy="12"
+                                                            r="3"
+                                                        /></svg
+                                                    >
+                                                {/if}
+                                            </button>
+                                        </div>
+                                        <div class="agent-session-key-actions">
+                                            <button
+                                                class="ai-action-btn primary"
+                                                onclick={() =>
+                                                    handleSaveAgentKey()}
+                                                disabled={!agentKeyInput.trim() ||
+                                                    agentKeyTestStatus ===
+                                                        "testing"}
+                                            >
+                                                {#if agentKeyTestStatus === "testing"}
+                                                    Verifying...
+                                                {:else}
+                                                    Verify
+                                                {/if}
+                                            </button>
+                                            {#if agentSessionKey}
+                                                <button
+                                                    class="ai-action-btn danger"
+                                                    onclick={handleRemoveAgentKey}
+                                                    >Remove</button
+                                                >
+                                            {/if}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="stg-card-row stg-card-row-action">
+                                    <div class="stg-card-row-action-text">
+                                        <span class="stg-card-row-label"
+                                            >Codex access token</span
+                                        >
+                                        <span class="stg-card-row-help">
+                                            Used to read Codex live rate-limit
+                                            usage from ChatGPT. This endpoint is
+                                            experimental.
+                                        </span>
+                                    </div>
+                                    <div class="agent-session-key-control">
+                                        <div class="ai-key-input-wrap">
+                                            <input
+                                                class="ai-cfg-input"
+                                                type={showCodexToken
+                                                    ? "text"
+                                                    : "password"}
+                                                placeholder="Bearer token..."
+                                                bind:value={codexTokenInput}
+                                            />
+                                            <button
+                                                class="ai-key-toggle"
+                                                onclick={() =>
+                                                    (showCodexToken =
+                                                        !showCodexToken)}
+                                                type="button"
+                                                title={showCodexToken
+                                                    ? "Hide token"
+                                                    : "Show token"}
+                                            >
+                                                {#if showCodexToken}
+                                                    <svg
+                                                        viewBox="0 0 24 24"
+                                                        width="14"
+                                                        height="14"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="1.8"
+                                                        ><path
+                                                            d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"
+                                                        /><line
+                                                            x1="1"
+                                                            y1="1"
+                                                            x2="23"
+                                                            y2="23"
+                                                        /></svg
+                                                    >
+                                                {:else}
+                                                    <svg
+                                                        viewBox="0 0 24 24"
+                                                        width="14"
+                                                        height="14"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="1.8"
+                                                        ><path
+                                                            d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                                                        /><circle
+                                                            cx="12"
+                                                            cy="12"
+                                                            r="3"
+                                                        /></svg
+                                                    >
+                                                {/if}
+                                            </button>
+                                        </div>
+                                        <div class="agent-session-key-actions">
+                                            <button
+                                                class="ai-action-btn primary"
+                                                onclick={handleSaveCodexToken}
+                                                disabled={!codexTokenInput.trim()}
+                                                >Save</button
+                                            >
+                                            {#if agentCodexToken}
+                                                <button
+                                                    class="ai-action-btn danger"
+                                                    onclick={handleRemoveCodexToken}
+                                                    >Remove</button
+                                                >
+                                            {/if}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="stg-card-row">
+                                    <div class="stg-card-row-action-text">
+                                        <span class="stg-card-row-label"
+                                            >Refresh interval</span
+                                        >
+                                        <span class="stg-card-row-help">
+                                            How often Clauge refreshes live
+                                            limits while Agent mode is open.
+                                        </span>
+                                    </div>
                                     <select
                                         class="stg-select"
                                         value={agentRefreshMins}
@@ -3332,7 +3279,9 @@
                             >
                         </div>
                     {/if}
-                {/if}
+                    {/if}
+                    </div>
+                </div>
             {:else if activeTab === "shortcuts"}
                 <div class="stg-section">
                     <span class="stg-section-label">Keyboard Shortcuts</span>

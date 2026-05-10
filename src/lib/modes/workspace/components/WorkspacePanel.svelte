@@ -9,10 +9,11 @@
   // the entry switch + onboarding state.
 
   import { tabs as sharedTabs, activeTabId } from '$lib/shared/stores/tabs';
-  import { activeWorkspace, workspaces, inboxOpen } from '../stores';
+  import { activeWorkspace, workspaces, inboxOpen, coworkersOpen } from '../stores';
   import NoteView from './NoteView.svelte';
   import BoardView from './BoardView.svelte';
   import InboxView from './InboxView.svelte';
+  import CoworkersView from './CoworkersView.svelte';
   import { WORKSPACE_EVENT } from '$lib/shared/constants/events';
 
   const activeWorkspaceTab = $derived($sharedTabs.find(t => t.id === $activeTabId && t.mode === 'workspace'));
@@ -41,7 +42,9 @@
   }
 </script>
 
-{#if $inboxOpen}
+{#if $coworkersOpen}
+  <CoworkersView />
+{:else if $inboxOpen}
   <InboxView />
 {:else if activeKind === 'note' && activeId}
   <NoteView noteId={activeId} />

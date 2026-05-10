@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { updateAvailable, showWhatsNewModal } from '$lib/utils/updater';
   import { mode } from '$lib/stores/app';
-  import { agentGitBranchName, agentGitFiles, agentGitAhead, agentGitBehind, activeAgentSession, agentUsageLimits, agentShellOpen, agentSessionKey } from '$lib/modes/agent/stores';
+  import { agentGitBranchName, agentGitFiles, agentGitAhead, agentGitBehind, activeAgentSession, agentUsageLimits, agentUsageAuthStatus, agentShellOpen, agentSessionKey } from '$lib/modes/agent/stores';
   import { activeModal } from '$lib/stores/app';
   import AgentGitPanel from '$lib/modes/agent/components/AgentGitPanel.svelte';
   import { USAGE_DANGER, USAGE_WARN } from '$lib/shared/constants/colors';
@@ -93,11 +93,16 @@
           </div>
         {/each}
       </div>
-    {:else if !$agentSessionKey}
+    {:else if !$agentSessionKey || $agentUsageAuthStatus.state === 'invalid'}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="si setup-usage" onclick={() => activeModal.set('settings:agent')}>
-        <svg style="width:10px;height:10px;stroke:var(--t4);fill:none;stroke-width:1.7;stroke-linecap:round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-        <span>Set up usage tracking</span>
+      <div class="si setup-usage" class:invalid={$agentUsageAuthStatus.state === 'invalid'} onclick={() => activeModal.set('settings:agent')} title={$agentUsageAuthStatus.message || 'Configure Claude usage tracking'}>
+        <svg style="width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <span>{$agentUsageAuthStatus.state === 'invalid' ? 'Usage key expired · reconfigure' : 'Set up usage tracking'}</span>
+      </div>
+    {:else if $agentUsageAuthStatus.state === 'checking'}
+      <div class="si setup-usage">
+        <span class="usage-checking-dot"></span>
+        <span>Checking usage key...</span>
       </div>
     {/if}
   </div>
@@ -290,6 +295,20 @@
   }
   .setup-usage:hover {
     color: var(--acc);
+  }
+  .setup-usage.invalid {
+    color: var(--err, #ff5f57);
+  }
+  .usage-checking-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--t4);
+    animation: usageCheckingPulse 1s ease-in-out infinite;
+  }
+  @keyframes usageCheckingPulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
   }
   .shell-toggle {
     cursor: pointer;

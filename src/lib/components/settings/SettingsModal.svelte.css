@@ -1,7 +1,9 @@
   .stg-layout {
     display: flex;
     margin: -18px;
+    height: calc(85vh - 86px);
     min-height: 440px;
+    overflow: hidden;
   }
 
   /* -- Tab sidebar -- */
@@ -13,7 +15,11 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
+  .stg-tabs::-webkit-scrollbar { width: 4px; }
+  .stg-tabs::-webkit-scrollbar-thumb { background: var(--b1); border-radius: 2px; }
 
   .stg-tab {
     display: flex;
@@ -71,6 +77,7 @@
     padding: 20px 24px;
     overflow-y: auto;
     min-width: 0;
+    min-height: 0;
   }
 
   /* -- Section -- */
@@ -582,11 +589,11 @@
   .ai-subtabs {
     display: flex;
     gap: 2px;
-    margin-bottom: 20px;
     background: var(--n2);
     border-radius: 8px;
     padding: 3px;
     border: 1px solid var(--b1);
+    flex-shrink: 0;
   }
   .ai-subtab {
     flex: 1;
@@ -612,6 +619,23 @@
   }
   .ai-subtab.disabled { opacity: 0.35; cursor: not-allowed; }
   .ai-subtab-lock { flex-shrink: 0; margin-left: 2px; }
+
+  .agent-settings-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+  }
+  .agent-settings-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-top: 20px;
+    padding-right: 2px;
+  }
+  .agent-settings-scroll::-webkit-scrollbar { width: 4px; }
+  .agent-settings-scroll::-webkit-scrollbar-thumb { background: var(--b1); border-radius: 2px; }
 
   /* -- AI Config Card -- */
   .ai-cfg {
@@ -767,12 +791,27 @@
     color: var(--ok);
     font-family: var(--ui);
   }
+  .ai-status-badge.checking {
+    color: var(--t3);
+  }
+  .ai-status-badge.error {
+    color: var(--err);
+  }
+  .ai-status-badge.muted {
+    color: var(--t4);
+  }
   .ai-status-dot {
     width: 7px;
     height: 7px;
     border-radius: 50%;
     background: var(--ok);
     animation: ai-pulse 2s ease-in-out infinite;
+  }
+  .ai-status-badge.checking .ai-status-dot {
+    background: var(--t4);
+  }
+  .ai-status-badge.error .ai-status-dot {
+    background: var(--err);
   }
   @keyframes ai-pulse {
     0%, 100% { opacity: 1; }
@@ -952,6 +991,25 @@
   }
 
   /* -- Agent Tab -- */
+  .agent-session-key-control {
+    width: min(100%, 420px);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .agent-session-key-control .ai-key-input-wrap {
+    flex: 1;
+    min-width: 190px;
+  }
+  .agent-session-key-control .ai-cfg-input {
+    width: 100%;
+  }
+  .agent-session-key-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
   .agent-field-desc {
     font-size: 10.5px;
     color: var(--t4);
@@ -1057,93 +1115,21 @@
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 12%, transparent);
   }
 
-  /* -- Agent Provider Grid -- */
-  .agent-provider-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-  }
-  .agent-provider-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 14px 10px 10px;
-    background: var(--n2);
-    border: 1px solid var(--b1);
-    border-radius: var(--radius-lg);
-    cursor: default;
-    transition: border-color 0.15s, background 0.15s;
-    position: relative;
-    text-align: center;
-  }
-  .agent-provider-card:hover:not(.disabled) {
-    border-color: var(--b2);
-    background: rgba(255,255,255,0.05);
-  }
-  .agent-provider-card.active {
-    border-color: transparent;
-    outline: 2px solid var(--acc);
-    outline-offset: 1px;
-  }
-  .agent-provider-card.disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-  .agent-provider-icon {
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
-    background: rgba(255,255,255,0.06);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--t2);
-  }
-  .agent-provider-card.active .agent-provider-icon {
-    background: color-mix(in srgb, var(--acc) 15%, transparent);
-    color: var(--acc);
-  }
-  .agent-provider-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .agent-provider-name {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--t1);
-    font-family: var(--ui);
-  }
-  .agent-provider-desc {
-    font-size: 10px;
-    color: var(--t3);
-    font-family: var(--ui);
-  }
-  .agent-provider-badge {
-    font-size: 9px;
-    font-weight: 600;
-    font-family: var(--ui);
-    padding: 2px 8px;
-    border-radius: 4px;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-  }
-  .agent-provider-badge.active {
-    color: var(--ok);
-    background: color-mix(in srgb, var(--ok) 12%, transparent);
-  }
-  .agent-provider-badge.soon {
-    color: var(--t4);
-    background: rgba(255,255,255,0.04);
-  }
   .agent-key-hint {
     font-size: 10px;
     color: var(--t4);
     font-family: var(--mono);
+  }
+
+  @media (max-width: 900px) {
+    .agent-session-key-control {
+      width: 100%;
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .agent-session-key-actions {
+      justify-content: flex-end;
+    }
   }
 
   /* -- Agent Usage Stats (inline) -- */

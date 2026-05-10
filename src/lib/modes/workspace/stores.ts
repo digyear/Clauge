@@ -10,6 +10,7 @@ import type {
   WorkspaceBoardColumn,
   WorkspaceNote,
 } from './types';
+import type { WorkspaceCoworker } from './types';
 import * as cmd from './commands';
 import { currentUserActor } from './attribution';
 
@@ -22,6 +23,21 @@ export const activeWorkspaceId = writable<string | null>(null);
  *  instead of routing to a workspace tab. Toggled by clicking the
  *  pinned "Inbox" row at the top of WorkspaceNav. */
 export const inboxOpen = writable<boolean>(false);
+
+/** Co-workers panel selection — when true, the main panel renders
+ *  CoworkersView. Toggled by clicking the pinned "Co-workers" row in
+ *  WorkspaceNav (sits below Inbox). Mutually exclusive with inboxOpen
+ *  via the toggling code in WorkspaceNav. */
+export const coworkersOpen = writable<boolean>(false);
+
+/** All coworker rows — loaded on app boot, refreshed on CRUD. */
+export const coworkers = writable<WorkspaceCoworker[]>([]);
+
+export async function loadCoworkers() {
+  try {
+    coworkers.set(await cmd.workspaceCoworkerList());
+  } catch (e) { console.warn('Failed to load coworkers:', e); }
+}
 
 /** MCP server status — kept in a writable so the footer indicators
  *  (WorkspaceNav, AgentNav) can subscribe and re-render whenever the
@@ -37,12 +53,28 @@ export const mcpStatus = writable<{ running: boolean; port: number | null }>({
  *  (different sessions, no shared state) so a Map fits better than a
  *  single nullable. Components mutate via the helpers below; never
  *  reach into the Map directly so add/remove stays balanced. */
-export const inflightMentions = writable<Map<string, string>>(new Map());
+/** Per-card in-flight info. Drives both the kanban-tile pulsing
+ *  chip and (when the drawer is reopened mid-flight) the thinking
+ *  bubble inside the thread. Promoting this to a global store
+ *  means closing + reopening the drawer doesn't lose the indicator. */
+export interface InflightMention {
+  /** Provider slug for the kanban-tile icon ('claude' / etc). */
+  provider: string;
+  /** Coworker driving the chat — used to render the thinking
+   *  bubble's avatar + name in the drawer when reopened. */
+  coworkerId: string;
+  coworkerName: string;
+  /** Wall-clock start time for the thinking-bubble copy escalation
+   *  ("is thinking" → "still working"). */
+  startedAt: string;
+}
 
-export function markMentionStart(cardId: string, provider: string) {
+export const inflightMentions = writable<Map<string, InflightMention>>(new Map());
+
+export function markMentionStart(cardId: string, info: InflightMention) {
   inflightMentions.update((m) => {
     const next = new Map(m);
-    next.set(cardId, provider);
+    next.set(cardId, info);
     return next;
   });
 }

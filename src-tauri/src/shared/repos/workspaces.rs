@@ -358,9 +358,13 @@ pub async fn list_cards_in_board(
 ) -> Result<Vec<WorkspaceBoardCard>, sqlx::Error> {
     // Fetch every card whose column belongs to this board, ordered by
     // (column.position, card.position) so the frontend can group without
-    // a second pass.
+    // a second pass. Comment count via correlated subquery so the kanban
+    // tile can render a "💬 N" chip without a second roundtrip.
     sqlx::query_as::<_, WorkspaceBoardCard>(
-        "SELECT c.* FROM workspace_board_cards c \
+        "SELECT c.*, \
+                (SELECT COUNT(*) FROM workspace_card_comments cc \
+                 WHERE cc.card_id = c.id) AS comment_count \
+         FROM workspace_board_cards c \
          JOIN workspace_board_columns col ON col.id = c.column_id \
          WHERE col.board_id = ? \
          ORDER BY col.position ASC, c.position ASC",
@@ -383,16 +387,22 @@ pub async fn insert_card(
     external_id: Option<&str>,
     external_url: Option<&str>,
     linked_session_id: Option<&str>,
+    parent_card_id: Option<&str>,
+    coworker_id: Option<&str>,
     actor: &str,
     now: &str,
 ) -> Result<(), sqlx::Error> {
+    // coworker_id stamps BOTH created_by_coworker_id and
+    // updated_by_coworker_id — the row is fresh, so creator == last
+    // mutator at insert time.
     sqlx::query(
         "INSERT INTO workspace_board_cards \
          (id, column_id, title, description, priority, tags, position, \
-          external_id, external_url, linked_session_id, \
+          external_id, external_url, linked_session_id, parent_card_id, \
           review_pending, review_checklist, \
-          created_at, created_by, updated_at, updated_by) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)",
+          created_at, created_by, created_by_coworker_id, \
+          updated_at, updated_by, updated_by_coworker_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(column_id)
@@ -404,10 +414,13 @@ pub async fn insert_card(
     .bind(external_id)
     .bind(external_url)
     .bind(linked_session_id)
+    .bind(parent_card_id)
     .bind(now)
     .bind(actor)
+    .bind(coworker_id)
     .bind(now)
     .bind(actor)
+    .bind(coworker_id)
     .execute(pool)
     .await?;
     Ok(())
@@ -422,13 +435,15 @@ pub async fn update_card(
     priority: Option<&str>,
     tags_json: &str,
     review_checklist: Option<&str>,
+    coworker_id: Option<&str>,
     actor: &str,
     now: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE workspace_board_cards \
          SET title = ?, description = ?, priority = ?, tags = ?, \
-             review_checklist = ?, updated_at = ?, updated_by = ? \
+             review_checklist = ?, updated_at = ?, updated_by = ?, \
+             updated_by_coworker_id = ? \
          WHERE id = ?",
     )
     .bind(title)
@@ -438,6 +453,7 @@ pub async fn update_card(
     .bind(review_checklist)
     .bind(now)
     .bind(actor)
+    .bind(coworker_id)
     .bind(id)
     .execute(pool)
     .await?;
@@ -493,11 +509,91 @@ pub async fn clear_review_pending(
     Ok(())
 }
 
+/// Delete a card. Two side effects worth knowing about:
+///   1. Sync-tombstone — if the card carries an `external_id`, we
+///      record (board_id, external_id) in `workspace_dismissed_externals`
+///      so the next gh/glab sync skips it. Local cards skip this.
+///   2. Cascade hidden sessions — any drawer-spawned `('card'-origin)`
+///      session pointing at this card is deleted alongside, so we
+///      don't leave orphan rows in `agent_sessions`.
 pub async fn delete_card(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    // 1. Look up external_id + board_id (via column→board) so we can
+    //    tombstone before the cascade nukes the row.
+    let meta: Option<(Option<String>, String)> = sqlx::query_as(
+        "SELECT c.external_id, col.board_id \
+         FROM workspace_board_cards c \
+         JOIN workspace_board_columns col ON col.id = c.column_id \
+         WHERE c.id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some((Some(ext), board_id)) = meta {
+        let trimmed = ext.trim();
+        if !trimmed.is_empty() {
+            // INSERT OR IGNORE — re-deleting an already-dismissed
+            // external is a no-op, not an error.
+            sqlx::query(
+                "INSERT OR IGNORE INTO workspace_dismissed_externals \
+                 (board_id, external_id) VALUES (?, ?)",
+            )
+            .bind(&board_id)
+            .bind(trimmed)
+            .execute(pool)
+            .await?;
+        }
+    }
+
+    // 2. Drop hidden sessions tied to this card (drawer-spawned
+    //    `'card'`-origin rows). Manual sessions are never tied to a
+    //    single card so they're untouched.
+    sqlx::query(
+        "DELETE FROM agent_sessions WHERE card_id = ? AND origin = 'card'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    // 3. Drop the card. Comments + FTS rows cascade via FK.
     sqlx::query("DELETE FROM workspace_board_cards WHERE id = ?")
         .bind(id)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+/// `(board_id, external_id)` pairs to skip on the next sync. Used by
+/// `workspace_scan_project_issues*` to filter out tombstoned issues.
+pub async fn list_dismissed_externals(
+    pool: &SqlitePool,
+    board_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT external_id FROM workspace_dismissed_externals WHERE board_id = ?",
+    )
+    .bind(board_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+/// Re-allow a previously-dismissed external on a board. Not exposed
+/// to the UI yet — placeholder for a future "Restore from sync" tool.
+#[allow(dead_code)]
+pub async fn undismiss_external(
+    pool: &SqlitePool,
+    board_id: &str,
+    external_id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM workspace_dismissed_externals \
+         WHERE board_id = ? AND external_id = ?",
+    )
+    .bind(board_id)
+    .bind(external_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -773,16 +869,36 @@ pub async fn update_card_linked_session(
     Ok(())
 }
 
+/// Stamp a PR / MR URL onto a card. Set after `cards_raise_pr`
+/// successfully opens (or detects an existing) PR. Subsequent raises
+/// short-circuit when this is non-null and just push more commits.
+pub async fn update_card_pr_url(
+    pool: &SqlitePool,
+    id: &str,
+    pr_url: &str,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspace_board_cards SET pr_url = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+    )
+    .bind(pr_url).bind(now).bind(actor).bind(id)
+    .execute(pool).await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Card comments — migration 13. Replaces the markdown-blockquote-in-
 // description pattern.
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_card_comment(
     pool: &SqlitePool,
     id: &str,
     card_id: &str,
     actor: &str,
+    coworker_id: Option<&str>,
     body: &str,
     parent_id: Option<&str>,
     now: &str,
@@ -792,12 +908,13 @@ pub async fn insert_card_comment(
     // card exists; if the second fails, the comment still got written.
     sqlx::query(
         "INSERT INTO workspace_card_comments \
-         (id, card_id, actor, body, parent_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+         (id, card_id, actor, coworker_id, body, parent_id, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(card_id)
     .bind(actor)
+    .bind(coworker_id)
     .bind(body)
     .bind(parent_id)
     .bind(now)
@@ -838,6 +955,79 @@ pub async fn delete_card_comment(pool: &SqlitePool, id: &str) -> Result<(), sqlx
         .execute(pool)
         .await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Card claims (migration 14). One session at a time can drive an agent
+// on a given card. Other surfaces still see the card and can post plain
+// comments, but `cards_drawer_chat` refuses unless the caller's session
+// matches the claim.
+// ---------------------------------------------------------------------------
+
+/// Claim a card: set both the active session and the coworker (persona)
+/// owning the conversation. Pass `coworker_id = None` for terminal-side
+/// claims that don't have a persona today.
+pub async fn claim_card(
+    pool: &SqlitePool,
+    card_id: &str,
+    session_id: &str,
+    coworker_id: Option<&str>,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspace_board_cards \
+         SET claimed_session_id = ?, claimed_coworker_id = ?, \
+             updated_at = ?, updated_by = ? \
+         WHERE id = ?",
+    )
+    .bind(session_id)
+    .bind(coworker_id)
+    .bind(now)
+    .bind(actor)
+    .bind(card_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn release_card(
+    pool: &SqlitePool,
+    card_id: &str,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE workspace_board_cards \
+         SET claimed_session_id = NULL, claimed_coworker_id = NULL, \
+             updated_at = ?, updated_by = ? \
+         WHERE id = ?",
+    )
+    .bind(now)
+    .bind(actor)
+    .bind(card_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// `(claimed_session_id, claimed_coworker_id, project_path)` for a card.
+/// Used by drawer chat and `cards_claim` to enforce/establish locks.
+pub async fn get_card_claim_and_project(
+    pool: &SqlitePool,
+    card_id: &str,
+) -> Result<Option<(Option<String>, Option<String>, Option<String>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT c.claimed_session_id, c.claimed_coworker_id, w.project_path \
+         FROM workspace_board_cards c \
+         JOIN workspace_board_columns col ON col.id = c.column_id \
+         JOIN workspace_boards b ON b.id = col.board_id \
+         JOIN workspaces w ON w.id = b.workspace_id \
+         WHERE c.id = ?",
+    )
+    .bind(card_id)
+    .fetch_optional(pool)
+    .await
 }
 
 pub async fn list_inbox(

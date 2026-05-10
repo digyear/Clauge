@@ -10,9 +10,11 @@
 // transport lands; for now `ai_tools::register_tools` is a no-op
 // (mirrors agent mode's shape).
 
+pub mod agent_spawn;
 pub mod ai_tools;
+pub mod cli_errors;
 pub mod commands;
 pub mod mcp;
-pub mod mention;
 pub mod models;
+pub mod pr;
 pub mod push;

@@ -19,44 +19,103 @@ fn is_git_repo(path: &str) -> bool {
     std::path::Path::new(path).join(".git").exists()
 }
 
+/// True when a column name represents the "needs human approval"
+/// safety gate — i.e. just "Review" / "For Review" / "Needs Review"
+/// / "Approval" — but NOT "In Review", which is the active-work
+/// column where agents normally chat. Used to decide if an agent
+/// move into a column should auto-flag `review_pending=1`.
+pub fn is_review_only_column(name: &str) -> bool {
+    let n = name.trim().to_lowercase();
+    if n.contains("in review") || n.contains("in-review") {
+        return false;
+    }
+    n == "review"
+        || n.starts_with("review ")
+        || n.ends_with(" review")
+        || n.contains("for review")
+        || n.contains("needs review")
+        || n.contains("approval")
+        || n.contains(" qa")
+        || n == "qa"
+}
+
 /// Discovered subproject — used when the workspace folder isn't a git
-/// repo itself but contains git repos as immediate children. The
-/// caller creates one board per entry. Single-layer scan only — no
-/// recursion.
+/// repo itself but contains git repos somewhere inside. The caller
+/// creates one board per entry. Scan walks down to MAX_SCAN_DEPTH
+/// levels and records the FIRST `.git` it hits on each branch (does
+/// not recurse into found repos, so submodules / nested worktrees
+/// don't show up as separate boards).
 struct SubProject {
+    /// Path-relative name (e.g. "compliance/compliance-auth") used as
+    /// the board name. Forward slashes regardless of host OS so the
+    /// board names look the same across macOS / Linux / Windows.
     name: String,
+    /// Absolute path to the repo root, written into the board's
+    /// `source_config.project_path`.
     path: String,
 }
 
+/// How deep to walk under the workspace root looking for repos.
+/// Depth 1 = immediate children, 2 = grandchildren, 3 = great-grandchildren.
+/// 3 catches the common "monorepo umbrella" pattern (e.g. workspace →
+/// compliance/ → compliance-auth/.git) with a level of headroom and
+/// caps the scan so a poorly-chosen workspace root can't fan out
+/// through a giant directory tree.
+const MAX_SCAN_DEPTH: usize = 3;
+
 fn scan_immediate_subprojects(parent: &str) -> Vec<SubProject> {
     let mut out: Vec<SubProject> = Vec::new();
-    let entries = match std::fs::read_dir(parent) {
+    let root = std::path::Path::new(parent);
+    walk_for_repos(root, root, 0, &mut out);
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+fn walk_for_repos(
+    dir: &std::path::Path,
+    workspace_root: &std::path::Path,
+    depth: usize,
+    out: &mut Vec<SubProject>,
+) {
+    if depth >= MAX_SCAN_DEPTH {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return out,
+        Err(_) => return,
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
             continue;
         }
-        // Skip dotfiles + common noise (.clauge-worktrees, node_modules, target, …).
         let file_name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
         };
+        // Skip dotfolders + common build/dep noise that would never be
+        // a project root and can be huge (node_modules especially).
         if file_name.starts_with('.') || file_name == "node_modules" || file_name == "target" {
             continue;
         }
-        if !path.join(".git").exists() {
+        if path.join(".git").exists() {
+            // Found a repo. Record with a path-relative name (e.g.
+            // "compliance/compliance-auth") so siblings under the same
+            // umbrella stay grouped in the alphabetical board list.
+            // Don't recurse into it — nested .git dirs (submodules,
+            // agent worktrees) shouldn't fan out into more boards.
+            let abs = path.to_string_lossy().to_string();
+            let rel = path
+                .strip_prefix(workspace_root)
+                .ok()
+                .and_then(|p| p.to_str())
+                .map(|s| s.replace(std::path::MAIN_SEPARATOR, "/"))
+                .unwrap_or_else(|| file_name.clone());
+            out.push(SubProject { name: rel, path: abs });
             continue;
         }
-        out.push(SubProject {
-            name: file_name,
-            path: path.to_string_lossy().to_string(),
-        });
+        walk_for_repos(&path, workspace_root, depth + 1, out);
     }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    out
 }
 
 /// Default board column shape applied to every board on creation.
@@ -66,7 +125,7 @@ fn scan_immediate_subprojects(parent: &str) -> Vec<SubProject> {
 const DEFAULT_COLUMNS: &[(&str, &str)] = &[
     ("Backlog", "#5b6776"),
     ("Todo", "#6aa9ff"),
-    ("Doing", "#f4c150"),
+    ("In Review", "#f4c150"),
     ("Review", "#a78bfa"),
     ("Done", "#2ee08a"),
 ];
@@ -468,6 +527,8 @@ pub async fn workspace_card_create(
     external_id: Option<String>,
     external_url: Option<String>,
     linked_session_id: Option<String>,
+    parent_card_id: Option<String>,
+    coworker_id: Option<String>,
     actor: String,
 ) -> Result<WorkspaceBoardCard, String> {
     let id = new_id();
@@ -486,6 +547,8 @@ pub async fn workspace_card_create(
         external_id.as_deref(),
         external_url.as_deref(),
         linked_session_id.as_deref(),
+        parent_card_id.as_deref(),
+        coworker_id.as_deref(),
         &actor,
         &now,
     )
@@ -509,6 +572,7 @@ pub async fn workspace_card_update(
     priority: Option<String>,
     tags: Vec<String>,
     review_checklist: Option<String>,
+    coworker_id: Option<String>,
     actor: String,
 ) -> Result<(), String> {
     let now = now_rfc3339();
@@ -521,6 +585,7 @@ pub async fn workspace_card_update(
         priority.as_deref(),
         &tags_json,
         review_checklist.as_deref(),
+        coworker_id.as_deref(),
         &actor,
         &now,
     )
@@ -561,7 +626,10 @@ pub async fn workspace_card_move(
         .await
         .map_err(|e| e.to_string())?;
         match row {
-            Some((name,)) if name.to_lowercase().contains("review") => 1,
+            // Review-class match — exact "review" / "for review" /
+            // "needs review" etc. but NOT "in review" (which is now
+            // the active-work column where agents normally live).
+            Some((name,)) if is_review_only_column(&name) => 1,
             _ => 0,
         }
     };
@@ -601,33 +669,164 @@ pub async fn workspace_card_delete(
         .map_err(|e| e.to_string())
 }
 
-/// Set or clear the agent session linked to a card. Drives the
-/// "Send to @session" mention flow — only cards with a non-null
-/// `linked_session_id` can be mentioned.
+/// External IDs the user has tombstoned for this board — sync skips
+/// them so re-imported Done issues don't keep coming back to Todo.
 #[tauri::command]
-pub async fn workspace_card_set_linked_session(
+pub async fn workspace_board_dismissed_externals(
     pool: State<'_, SqlitePool>,
-    id: String,
-    session_id: Option<String>,
-    actor: String,
-) -> Result<(), String> {
-    let now = now_rfc3339();
-    repo::update_card_linked_session(pool.inner(), &id, session_id.as_deref(), &actor, &now)
+    board_id: String,
+) -> Result<Vec<String>, String> {
+    repo::list_dismissed_externals(pool.inner(), &board_id)
         .await
         .map_err(|e| e.to_string())
 }
 
-/// Trigger the agent session linked to this card. Body becomes a user
-/// comment on the card; the agent's response is appended as a follow-up
-/// comment from the provider's slug ("claude", "codex", …).
+// ── Card claim + drawer-chat lifecycle (migration 14) ─────────────
+// Three concepts:
+//   • `claim`      = the single session allowed to drive the agent on
+//                    this card. Drawer chat creates a hidden session
+//                    + claim on first interaction; terminal claims
+//                    explicitly via `cards_claim` MCP tool.
+//   • `start_work` = once a claim exists, optionally create a worktree
+//                    + branch on that session. Code edits run there;
+//                    pure-talk stays at `project_path`.
+//   • `release`    = unclaim. Optionally delete the worktree.
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CardClaimState {
+    /// The session id that owns this card right now, if any.
+    pub claimed_session_id: Option<String>,
+    /// The coworker (persona) that owns the active conversation. May
+    /// be None even when claimed_session_id is set — terminal sessions
+    /// (cards_claim from MCP) don't have a persona today.
+    pub claimed_coworker_id: Option<String>,
+    /// Full session row for the claim. None = unclaimed.
+    pub session: Option<crate::modes::agent::models::AgentSession>,
+    /// Full coworker row for the claim. None when manual-claimed or
+    /// unclaimed.
+    pub coworker: Option<crate::modes::workspace::models::WorkspaceCoworker>,
+    /// `true` when the claim is held by a *card-origin* (hidden) session
+    /// owned by this card — i.e. drawer chat is allowed to continue
+    /// here. `false` for manual sessions = claim conflict from the
+    /// drawer's perspective.
+    pub drawer_owns: bool,
+}
+
+/// Read the current claim for a card. Drawer calls this on mount and
+/// after every chat turn so the banner reflects truth.
 #[tauri::command]
-pub async fn workspace_card_mention_session(
+pub async fn workspace_card_get_claim(
     pool: State<'_, SqlitePool>,
     id: String,
+) -> Result<CardClaimState, String> {
+    use crate::shared::repos::{coworkers as coworker_repo, sessions as session_repo};
+    let row = repo::get_card_claim_and_project(pool.inner(), &id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Card not found".to_string())?;
+    let (claimed_session_id, claimed_coworker_id, _project_path) = row;
+    let session = match claimed_session_id.as_deref() {
+        Some(sid) => session_repo::get_session_by_id(pool.inner(), sid).await.ok(),
+        None => None,
+    };
+    let coworker = match claimed_coworker_id.as_deref() {
+        Some(cwid) => coworker_repo::get_coworker(pool.inner(), cwid).await.ok(),
+        None => None,
+    };
+    let drawer_owns = session
+        .as_ref()
+        .map(|s| s.origin == "card" && s.card_id.as_deref() == Some(&id))
+        .unwrap_or(false);
+    Ok(CardClaimState {
+        claimed_session_id,
+        claimed_coworker_id,
+        session,
+        coworker,
+        drawer_owns,
+    })
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DrawerChatResult {
+    /// Created user comment row.
+    pub user_comment: crate::modes::workspace::models::WorkspaceCardComment,
+    /// Created agent reply row (None on agent failure — the user
+    /// comment was still persisted for the trail).
+    pub reply_comment: Option<crate::modes::workspace::models::WorkspaceCardComment>,
+    /// The session that handled (or would have handled) the turn.
+    pub session_id: String,
+    /// Soft error from the agent run — surfaced as a toast next to
+    /// the user comment. Differs from the Tauri-level Err result
+    /// (which means the request itself never reached the agent).
+    pub agent_error: Option<String>,
+}
+
+/// The drawer-chat endpoint. Caller passes the active coworker so the
+/// agent gets the right persona at spawn. Handles:
+///   • First message on an unclaimed card → create-or-reuse hidden
+///     session for (card, coworker), claim, post comment, run agent,
+///     post reply.
+///   • Same coworker re-engaged → reuse the same hidden session
+///     (Claude `--resume` keeps thread continuity).
+///   • Different coworker active → returns an Err telling the user to
+///     End the work-stream / Switch coworker first.
+///   • Manual terminal-claimed card → returns Err.
+#[tauri::command]
+pub async fn workspace_card_drawer_chat(
+    pool: State<'_, SqlitePool>,
+    app: tauri::AppHandle,
+    id: String,
+    coworker_id: String,
     body: String,
     actor: String,
-) -> Result<serde_json::Value, String> {
-    super::mention::mention_card_session(pool.inner(), &id, &body, &actor).await
+) -> Result<DrawerChatResult, String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return Err("Message is empty".into());
+    }
+    super::agent_spawn::drawer_chat_turn(pool.inner(), Some(&app), &id, &coworker_id, trimmed, &actor).await
+}
+
+/// Release a card's claim. When `delete_worktree` is true and the
+/// claimed session has a worktree, the worktree is removed via git.
+/// The hidden session row stays (lets the user re-open later); only
+/// the lock + (optionally) the worktree are released.
+#[tauri::command]
+pub async fn workspace_card_release(
+    pool: State<'_, SqlitePool>,
+    id: String,
+    actor: String,
+    delete_worktree: Option<bool>,
+) -> Result<(), String> {
+    super::agent_spawn::release_card(
+        pool.inner(),
+        &id,
+        &actor,
+        delete_worktree.unwrap_or(false),
+    )
+    .await
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StartWorkResult {
+    pub worktree_path: String,
+    pub worktree_branch: String,
+}
+
+/// Promote a claimed card to "active code work": create a git worktree
+/// + branch on the project, attach to the claimed session. Errors when
+/// the card isn't claimed by a card-origin (hidden) session — manual
+/// sessions own their own worktree lifecycle in Agent mode.
+#[tauri::command]
+pub async fn workspace_card_start_work(
+    pool: State<'_, SqlitePool>,
+    id: String,
+    actor: String,
+) -> Result<StartWorkResult, String> {
+    super::agent_spawn::start_work(pool.inner(), &id, &actor).await
 }
 
 /// Push a local card to its workspace's bound GitHub/GitLab repo as a
@@ -641,6 +840,34 @@ pub async fn workspace_card_push_to_repo(
     actor: String,
 ) -> Result<serde_json::Value, String> {
     super::push::push_card_to_repo(pool.inner(), &id, &actor).await
+}
+
+/// Push the card's branch and (if no PR exists yet) open a PR / MR.
+/// Idempotent — when the card already has a `pr_url`, this just
+/// pushes new commits to the existing PR's branch. Always user-
+/// initiated (UI button) or explicit-agent-driven (MCP tool); the
+/// persona prompt forbids autonomous calls. Returns the resolved PR
+/// URL + a flag telling the caller whether the PR was created or
+/// updated, so the toast can say the right thing.
+#[tauri::command]
+pub async fn workspace_card_raise_pr(
+    pool: State<'_, SqlitePool>,
+    app: tauri::AppHandle,
+    card_id: String,
+    title: Option<String>,
+    body: Option<String>,
+    actor: String,
+) -> Result<super::pr::RaisePrResult, String> {
+    super::pr::raise_or_update_pr(
+        pool.inner(),
+        Some(&app),
+        &card_id,
+        title.as_deref(),
+        body.as_deref(),
+        &actor,
+    )
+    .await
+    .map_err(|e| e.message())
 }
 
 /// Add a comment to a card. Each comment is its own row in
@@ -665,6 +892,7 @@ pub async fn workspace_card_add_comment(
         &comment_id,
         &id,
         &actor,
+        None, // plain user/agent comment — no coworker attribution
         trimmed,
         None,
         &now,
@@ -675,6 +903,7 @@ pub async fn workspace_card_add_comment(
         id: comment_id,
         card_id: id,
         actor,
+        coworker_id: None,
         body: trimmed.to_string(),
         parent_id: None,
         created_at: now,
@@ -748,6 +977,7 @@ pub async fn workspace_mcp_status(
 
 #[tauri::command]
 pub async fn workspace_mcp_start(
+    app: tauri::AppHandle,
     pool: State<'_, SqlitePool>,
     server: State<'_, McpServerState>,
     port: u16,
@@ -758,7 +988,10 @@ pub async fn workspace_mcp_start(
         // Already running — caller should stop first if they want to re-bind.
         return Ok(McpStatus { running: true, port: g.as_ref().map(|h| h.port) });
     }
-    let handle = mcp::start(pool.inner().clone(), port, token).await?;
+    // Hand the app handle to the MCP server so MCP-side mutations
+    // (cards_call_coworker etc.) can emit `workspace:card-updated`
+    // and refresh open drawers live.
+    let handle = mcp::start(pool.inner().clone(), port, token, Some(app)).await?;
     let p = handle.port;
     *g = Some(handle);
     Ok(McpStatus { running: true, port: Some(p) })
@@ -997,18 +1230,16 @@ fn scan_project_issues_sync(project_path: &str) -> Result<ProjectScanResult, Str
         .map_err(|e| format!("{} failed to spawn: {}", tool, e))?;
 
     if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).to_lowercase();
-        // Heuristic: every CLI worth its salt prints "auth" or
-        // "logged in" wording when the issue is credentials.
-        if stderr.contains("auth") || stderr.contains("logged in") || stderr.contains("token") {
-            return Ok(ProjectScanResult::NotAuthenticated {
-                tool: tool.to_string(),
-                login_command: login_cmd.to_string(),
-            });
-        }
-        return Ok(ProjectScanResult::ApiError {
-            message: String::from_utf8_lossy(&out.stderr).trim().to_string(),
-        });
+        // Best-effort owner/repo extraction from the git remote URL,
+        // so a NoAccess error can name the specific repo the user
+        // can't see ("can't access foo/bar" beats "can't access this repo").
+        let repo_hint = parse_owner_repo(&remote_url);
+        return Ok(map_cli_error_to_scan_result(
+            tool,
+            login_cmd,
+            repo_hint.as_deref(),
+            &out,
+        ));
     }
 
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -1022,6 +1253,44 @@ fn scan_project_issues_sync(project_path: &str) -> Result<ProjectScanResult, Str
         remote: remote_url,
         source: source.to_string(),
     })
+}
+
+/// Convert a failed Command output into the right ProjectScanResult
+/// variant via the shared cli_errors classifier. Replaces the old
+/// "if stderr contains 'auth'" heuristic — that missed GitHub's
+/// GraphQL "could not resolve to a Repository" response (the most
+/// common multi-account confusion), so the user got raw stderr in a
+/// generic ApiError banner instead of the actionable "wrong account"
+/// message.
+fn map_cli_error_to_scan_result(
+    tool: &str,
+    login_cmd: &str,
+    repo_hint: Option<&str>,
+    out: &std::process::Output,
+) -> ProjectScanResult {
+    use super::cli_errors::{classify_output, CliError};
+    match classify_output(tool, out, repo_hint) {
+        Some(CliError::NotAuthenticated { .. }) => ProjectScanResult::NotAuthenticated {
+            tool: tool.to_string(),
+            login_command: login_cmd.to_string(),
+        },
+        Some(CliError::NoAccess { repo, .. }) => ProjectScanResult::NoAccess {
+            tool: tool.to_string(),
+            repo,
+            login_command: login_cmd.to_string(),
+        },
+        Some(CliError::NetworkError { msg }) => ProjectScanResult::NetworkError { message: msg },
+        // NotInstalled is handled before the call (which-check), and
+        // NoChanges / BranchNotPushed are git-only — none should fire
+        // from issue-list. Fall through to ApiError with the raw stderr.
+        Some(CliError::NotInstalled { .. })
+        | Some(CliError::NoChanges)
+        | Some(CliError::BranchNotPushed)
+        | Some(CliError::Other { .. })
+        | None => ProjectScanResult::ApiError {
+            message: String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        },
+    }
 }
 
 /// URL-based scan — used when the board has a `project_url` but no
@@ -1100,16 +1369,10 @@ fn scan_project_url_sync(url: &str) -> Result<ProjectScanResult, String> {
     let out = cmd.output().map_err(|e| format!("{} failed to spawn: {}", tool, e))?;
 
     if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).to_lowercase();
-        if stderr.contains("auth") || stderr.contains("logged in") || stderr.contains("token") {
-            return Ok(ProjectScanResult::NotAuthenticated {
-                tool: tool.to_string(),
-                login_command: login_cmd.to_string(),
-            });
-        }
-        return Ok(ProjectScanResult::ApiError {
-            message: String::from_utf8_lossy(&out.stderr).trim().to_string(),
-        });
+        // repo_arg is `["--repo", "owner/repo"]` for gh and `["-R", "owner/repo"]`
+        // for glab — index 1 is the actual owner/repo string in both cases.
+        let repo_hint = repo_arg.get(1).map(|s| s.as_str());
+        return Ok(map_cli_error_to_scan_result(tool, login_cmd, repo_hint, &out));
     }
 
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -1222,4 +1485,161 @@ fn parse_gitlab_issues(json: &str) -> Vec<ProjectIssue> {
             })
         })
         .collect()
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Coworkers CRUD (personas built on top of an underlying agent CLI).
+// Global scope — not per-workspace.
+// ───────────────────────────────────────────────────────────────────
+
+use crate::modes::workspace::models::WorkspaceCoworker;
+use crate::shared::repos::coworkers as coworker_repo;
+
+#[tauri::command]
+pub async fn workspace_coworker_list(
+    pool: State<'_, SqlitePool>,
+) -> Result<Vec<WorkspaceCoworker>, String> {
+    coworker_repo::list_coworkers(pool.inner())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn workspace_coworker_get(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> Result<WorkspaceCoworker, String> {
+    coworker_repo::get_coworker(pool.inner(), &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoworkerInput {
+    pub name: String,
+    pub role: Option<String>,
+    pub system_prompt: Option<String>,
+    pub provider: Option<String>,
+    pub avatar_seed: Option<String>,
+    pub avatar_style: Option<String>,
+    pub actor: String,
+}
+
+#[tauri::command]
+pub async fn workspace_coworker_create(
+    pool: State<'_, SqlitePool>,
+    input: CoworkerInput,
+) -> Result<WorkspaceCoworker, String> {
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err("Coworker name is required".into());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = now_rfc3339();
+    let avatar_seed = input
+        .avatar_seed
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(name)
+        .to_string();
+    coworker_repo::insert_coworker(
+        pool.inner(),
+        &id,
+        name,
+        input.role.as_deref().unwrap_or("").trim(),
+        input.system_prompt.as_deref().unwrap_or("").trim(),
+        input.provider.as_deref().unwrap_or("claude"),
+        &avatar_seed,
+        input.avatar_style.as_deref().unwrap_or("personas"),
+        &now,
+        &input.actor,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    coworker_repo::get_coworker(pool.inner(), &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoworkerUpdate {
+    pub id: String,
+    pub name: String,
+    pub role: Option<String>,
+    pub system_prompt: Option<String>,
+    pub provider: Option<String>,
+    pub avatar_seed: Option<String>,
+    pub avatar_style: Option<String>,
+}
+
+#[tauri::command]
+pub async fn workspace_coworker_update(
+    pool: State<'_, SqlitePool>,
+    input: CoworkerUpdate,
+) -> Result<WorkspaceCoworker, String> {
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err("Coworker name is required".into());
+    }
+    let avatar_seed = input
+        .avatar_seed
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(name)
+        .to_string();
+    coworker_repo::update_coworker(
+        pool.inner(),
+        &input.id,
+        name,
+        input.role.as_deref().unwrap_or("").trim(),
+        input.system_prompt.as_deref().unwrap_or("").trim(),
+        input.provider.as_deref().unwrap_or("claude"),
+        &avatar_seed,
+        input.avatar_style.as_deref().unwrap_or("personas"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    coworker_repo::get_coworker(pool.inner(), &input.id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn workspace_coworker_delete(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> Result<(), String> {
+    // Block deletion when the coworker is still engaged on cards that
+    // aren't in a Done-class column. The error message lists the
+    // blocking cards by title so the user knows what to clean up.
+    let active = coworker_repo::list_active_cards_for_coworker(pool.inner(), &id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !active.is_empty() {
+        let total = active.len();
+        // Show first 3 titles inline; if more, suffix "+ N more".
+        let preview: Vec<String> = active
+            .iter()
+            .take(3)
+            .map(|(_, title, col)| format!("• \"{title}\" ({col})"))
+            .collect();
+        let suffix = if total > 3 {
+            format!("\n• …and {} more", total - 3)
+        } else {
+            String::new()
+        };
+        return Err(format!(
+            "This coworker is still engaged on {total} active card{}:\n\n{}{suffix}\n\n\
+             Move those cards to Done (or remove the coworker from them) before deleting.",
+            if total == 1 { "" } else { "s" },
+            preview.join("\n"),
+        ));
+    }
+    coworker_repo::delete_coworker(pool.inner(), &id)
+        .await
+        .map_err(|e| e.to_string())
 }

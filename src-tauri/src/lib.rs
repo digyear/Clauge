@@ -1,3 +1,8 @@
+// The workspace MCP tool list is built with a single `json!([...])`
+// invocation that has grown past the default macro recursion budget.
+// Bump just enough to fit current + near-future tools.
+#![recursion_limit = "256"]
+
 mod appearance;
 mod commands;
 mod db;
@@ -425,12 +430,21 @@ pub fn run() {
             modes::workspace::commands::workspace_card_move,
             modes::workspace::commands::workspace_card_clear_review,
             modes::workspace::commands::workspace_card_delete,
+            modes::workspace::commands::workspace_board_dismissed_externals,
             modes::workspace::commands::workspace_card_add_comment,
             modes::workspace::commands::workspace_card_comment_list,
             modes::workspace::commands::workspace_card_comment_delete,
             modes::workspace::commands::workspace_card_push_to_repo,
-            modes::workspace::commands::workspace_card_set_linked_session,
-            modes::workspace::commands::workspace_card_mention_session,
+            modes::workspace::commands::workspace_card_raise_pr,
+            modes::workspace::commands::workspace_card_get_claim,
+            modes::workspace::commands::workspace_card_drawer_chat,
+            modes::workspace::commands::workspace_card_release,
+            modes::workspace::commands::workspace_card_start_work,
+            modes::workspace::commands::workspace_coworker_list,
+            modes::workspace::commands::workspace_coworker_get,
+            modes::workspace::commands::workspace_coworker_create,
+            modes::workspace::commands::workspace_coworker_update,
+            modes::workspace::commands::workspace_coworker_delete,
             modes::workspace::commands::workspace_inbox_list,
             modes::workspace::commands::workspace_mcp_status,
             modes::workspace::commands::workspace_mcp_start,

@@ -66,6 +66,10 @@ export interface WorkspaceBoardCard {
   position: number;
   externalId: string | null;
   externalUrl: string | null;
+  /** PR / MR URL once `cards_raise_pr` (UI button or MCP) has run for
+   *  this card. null until the first PR is raised. Subsequent raises
+   *  detect this and just push commits to the same branch. */
+  prUrl: string | null;
   linkedSessionId: string | null;
   /** `1` when an agent moved this card into a Review-class column. */
   reviewPending: number;
@@ -76,17 +80,62 @@ export interface WorkspaceBoardCard {
   updatedBy: string;
   /** `1` = blocked from agent edits. */
   frozen: number;
+  /** Session id that currently owns this card's work-stream (drawer
+   *  chat or terminal). null = unclaimed; any surface can start a chat
+   *  and claim. */
+  claimedSessionId: string | null;
+  /** Coworker (persona) currently owning the active conversation. May
+   *  be null even when claimedSessionId is set if a manual terminal
+   *  session claimed the card. */
+  claimedCoworkerId: string | null;
+  /** Lineage — the card this one was spawned from (an agent created
+   *  it during a discussion on the parent). null for top-level cards. */
+  parentCardId: string | null;
+  /** Persona that created the card, when known. UI looks up the
+   *  current name via the coworker store so renames are safe. */
+  createdByCoworkerId: string | null;
+  /** Persona behind the most-recent mutation. */
+  updatedByCoworkerId: string | null;
+  /** Total comments on this card (computed by the board listing
+   *  query). 0 when the card has no comments yet. */
+  commentCount: number;
 }
 
-/** Card comment row — added in migration 13. Replaces the markdown-
- *  blockquote-in-description pattern used through v12. */
+/** Card comment row. Each comment carries an `actor` (raw author tag —
+ *  'user', 'user:<login>', or the persona's display name for agent
+ *  replies) and an optional `coworkerId` linking it to the persona that
+ *  authored it (NULL for plain user comments). */
 export interface WorkspaceCardComment {
   id: string;
   cardId: string;
   actor: string;
+  coworkerId: string | null;
   body: string;
   parentId: string | null;
   createdAt: string;
+  /** Optional — drawer-only marker for a transient row that's not a
+   *  real comment yet. `'thinking'` = "@alex is composing"; `'error'`
+   *  = the agent run failed (body holds the error message). Server
+   *  never sets these; cleaned up before refresh. */
+  pending?: 'thinking' | 'error';
+}
+
+/** Coworker (persona) — global to the user, not workspace-scoped.
+ *  Each is a persona built on top of an underlying agent CLI. The
+ *  user's friendly handle (@<name>) maps to a `system_prompt` that's
+ *  appended to every agent run for this coworker. */
+export interface WorkspaceCoworker {
+  id: string;
+  name: string;
+  role: string;
+  systemPrompt: string;
+  provider: string;
+  /** dicebear seed — defaults to the name, user can re-roll. */
+  avatarSeed: string;
+  /** dicebear collection name ('personas', 'bottts', …). */
+  avatarStyle: string;
+  createdAt: string;
+  createdBy: string;
 }
 
 /** Attribution actor format. Use the helper in `attribution.ts` to derive
@@ -133,4 +182,10 @@ export type ProjectScanResult =
   | { kind: 'unsupportedRemote'; url: string }
   | { kind: 'toolNotInstalled'; tool: string; installUrl: string }
   | { kind: 'notAuthenticated'; tool: string; loginCommand: string }
+  /** CLI is signed in but the active account can't see this repo —
+   *  most often a multi-account `gh` setup with the wrong account
+   *  active. Banner suggests `gh auth switch` (or login). */
+  | { kind: 'noAccess'; tool: string; repo: string; loginCommand: string }
+  /** DNS / connectivity failure — banner suggests retry. */
+  | { kind: 'networkError'; message: string }
   | { kind: 'apiError'; message: string };

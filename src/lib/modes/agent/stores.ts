@@ -39,6 +39,11 @@ export const agentDockBounceEnabled = writable<boolean>(true);
 // Usage limits (fetched from Claude AI API)
 export const agentUsageLimits = writable<any>(null);
 export const agentSessionKey = writable<string>('');
+export type AgentUsageAuthState = 'unconfigured' | 'checking' | 'valid' | 'invalid';
+export const agentUsageAuthStatus = writable<{
+  state: AgentUsageAuthState;
+  message: string;
+}>({ state: 'unconfigured', message: '' });
 
 // Claude subscription plan
 export const agentClaudePlan = writable<string>('');
@@ -52,10 +57,16 @@ export async function loadAgentClaudePlan() {
 
 export async function loadAgentUsageLimits() {
   const key = get(agentSessionKey);
-  if (!key) return;
+  if (!key) {
+    agentUsageLimits.set(null);
+    agentUsageAuthStatus.set({ state: 'unconfigured', message: '' });
+    return;
+  }
+  agentUsageAuthStatus.set({ state: 'checking', message: '' });
   try {
     const limits = await agentFetchUsageLimits(key);
     agentUsageLimits.set(limits);
+    agentUsageAuthStatus.set({ state: 'valid', message: 'Session key verified' });
     // Update tray title with usage stats
     // Claude API returns { five_hour: { utilization }, seven_day: { utilization } }
     // Also handle alternate shape: { standard: { percentUsed }, extended: { percentUsed } }
@@ -73,7 +84,13 @@ export async function loadAgentUsageLimits() {
         await agentUpdateTrayTitle(parts.join(' '));
       }
     } catch { /* tray update best-effort */ }
-  } catch { /* ignore */ }
+  } catch (e: any) {
+    agentUsageLimits.set(null);
+    agentUsageAuthStatus.set({
+      state: 'invalid',
+      message: typeof e === 'string' ? e : e?.message || 'Claude session key is expired or invalid',
+    });
+  }
 }
 
 export async function loadAgentSessions() {
