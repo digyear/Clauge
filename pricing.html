@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Pricing — Clauge</title>
+        <meta
+            name="description"
+            content="Clauge pricing — free for personal use, Pro for premium features, Enterprise for organizations. Source-available under PolyForm Noncommercial."
+        />
+        <meta name="theme-color" content="#07070b" />
+        <meta name="robots" content="index, follow" />
+
+        <link rel="icon" type="image/svg+xml" href="clauge-mark.svg" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+            referrerpolicy="no-referrer"
+        />
+        <link rel="stylesheet" href="style.css" />
+
+        <style>
+            .pr-hero {
+                padding: 80px 0 32px;
+                text-align: center;
+            }
+            .pr-hero h1 {
+                font-family: var(--font-display);
+                font-size: clamp(38px, 5vw, 60px);
+                letter-spacing: -0.025em;
+                line-height: 1.06;
+                margin: 16px 0 14px;
+            }
+            .pr-hero h1 .grad {
+                background: linear-gradient(
+                    120deg,
+                    #ffffff 0%,
+                    var(--purple) 45%,
+                    var(--ssh) 100%
+                );
+                -webkit-background-clip: text;
+                background-clip: text;
+                color: transparent;
+            }
+            .pr-hero p {
+                color: var(--text-muted);
+                max-width: 640px;
+                margin: 0 auto;
+                font-size: 16px;
+                line-height: 1.55;
+            }
+
+            .pr-cards {
+                display: grid;
+                grid-template-columns: 1fr 1fr 1fr;
+                gap: 18px;
+                max-width: 1100px;
+                margin: 56px auto 80px;
+                /* align-items defaults to stretch — all three cards match the row's tallest content */
+            }
+            @media (max-width: 900px) {
+                .pr-cards {
+                    grid-template-columns: 1fr;
+                    gap: 16px;
+                    margin: 32px auto 48px;
+                }
+            }
+
+            .pr-card {
+                display: flex;
+                flex-direction: column;
+                padding: 36px 28px 28px;
+                border: 1px solid var(--border);
+                border-radius: 16px;
+                background: rgba(255, 255, 255, 0.025);
+                transition:
+                    border-color 0.15s,
+                    background 0.15s;
+            }
+            .pr-card.is-highlight {
+                border-color: var(--purple);
+                background:
+                    radial-gradient(
+                        120% 80% at 50% -10%,
+                        rgba(210, 168, 255, 0.2) 0%,
+                        transparent 65%
+                    ),
+                    linear-gradient(
+                        180deg,
+                        rgba(255, 255, 255, 0.04),
+                        rgba(255, 255, 255, 0.02)
+                    );
+                box-shadow:
+                    0 16px 50px -16px rgba(210, 168, 255, 0.3),
+                    0 0 0 1px rgba(210, 168, 255, 0.45) inset;
+            }
+
+            .pr-card .pr-badge {
+                align-self: flex-start;
+                font-family: var(--font-mono);
+                font-size: 10px;
+                text-transform: uppercase;
+                letter-spacing: 0.14em;
+                color: #1dc880;
+                padding: 5px 12px;
+                border-radius: 999px;
+                background: rgba(29, 200, 128, 0.12);
+                border: 1px solid rgba(29, 200, 128, 0.4);
+                margin-bottom: 18px;
+            }
+
+            /* Strikethrough original price shown above the discounted price */
+            .pr-price-original {
+                display: block;
+                font-family: var(--font-display);
+                font-size: 22px;
+                font-weight: 600;
+                color: var(--text-muted);
+                text-decoration: line-through;
+                text-decoration-color: rgba(255, 255, 255, 0.45);
+                text-decoration-thickness: 2px;
+                letter-spacing: -0.02em;
+                line-height: 1;
+                margin-bottom: 4px;
+            }
+
+            /* Tier label (small uppercase above the big price) */
+            .pr-tier-label {
+                font-family: var(--font-mono);
+                font-size: 11px;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.16em;
+                color: var(--text-muted);
+                margin-bottom: 10px;
+            }
+
+            /* Big bold price — the visual anchor of the card */
+            .pr-price-display {
+                font-family: var(--font-display);
+                font-size: clamp(40px, 5.2vw, 60px);
+                font-weight: 700;
+                letter-spacing: -0.035em;
+                line-height: 1;
+                color: var(--text);
+                margin: 0 0 10px;
+            }
+            .pr-card.is-highlight .pr-price-display {
+                background: linear-gradient(
+                    120deg,
+                    #ffffff 0%,
+                    var(--purple) 60%,
+                    var(--ssh) 100%
+                );
+                -webkit-background-clip: text;
+                background-clip: text;
+                color: transparent;
+            }
+
+            /* Unit line under the price (only Pro uses it today: "one-time · lifetime") */
+            .pr-price-unit {
+                font-size: 13px;
+                color: var(--text-muted);
+                margin: 0 0 18px;
+            }
+
+            .pr-tagline {
+                color: var(--text-muted);
+                font-size: 14px;
+                line-height: 1.55;
+                margin: 0 0 28px;
+            }
+
+            /* CTA wrapper — pinned to the bottom of the card */
+            .pr-cta-wrap {
+                margin-top: auto;
+                padding-top: 26px;
+            }
+            .pr-cta {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                justify-content: center;
+                width: 100%;
+                box-sizing: border-box;
+                padding: 13px 22px;
+                border-radius: 10px;
+                border: 1px solid var(--border-2, var(--border));
+                background: transparent;
+                color: var(--text);
+                font-family: var(--font-body, system-ui);
+                font-size: 13.5px;
+                font-weight: 600;
+                cursor: default;
+                transition:
+                    background 0.15s,
+                    border-color 0.15s,
+                    transform 0.15s;
+                text-decoration: none;
+            }
+            .pr-cta:hover {
+                background: rgba(255, 255, 255, 0.05);
+                border-color: var(--text-muted);
+            }
+            .pr-cta.is-primary {
+                background: linear-gradient(120deg, var(--purple), var(--ssh));
+                border-color: transparent;
+                color: #fff;
+            }
+            .pr-cta.is-primary:hover {
+                opacity: 0.92;
+                transform: translateY(-1px);
+            }
+            .pr-cta-sub {
+                display: block;
+                font-size: 11.5px;
+                color: var(--text-muted);
+                text-align: center;
+                margin: 12px 0 0;
+                line-height: 1.5;
+            }
+            .pr-features {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 9px;
+                font-size: 13.5px;
+                color: var(--text-muted);
+            }
+            .pr-features li {
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                line-height: 1.4;
+            }
+            .pr-features li i {
+                color: var(--purple);
+                font-size: 11px;
+                width: 14px;
+                flex-shrink: 0;
+                text-align: center;
+            }
+            .pr-features li.is-muted {
+                color: var(--text-dim, var(--text-muted));
+                opacity: 0.65;
+            }
+            .pr-features li.is-muted i {
+                color: var(--text-muted);
+            }
+            .pr-features li em {
+                color: var(--text-dim, var(--text-muted));
+                font-style: italic;
+                font-size: 12px;
+            }
+
+            .pr-faq {
+                max-width: 800px;
+                margin: 56px auto 80px;
+                padding: 0 16px;
+            }
+            .pr-faq h2 {
+                font-family: var(--font-display);
+                font-size: clamp(24px, 3vw, 34px);
+                letter-spacing: -0.02em;
+                margin: 0 0 28px;
+                text-align: center;
+            }
+            .pr-faq-item {
+                padding: 18px 20px;
+                border: 1px solid var(--border);
+                border-radius: var(--r-md, 10px);
+                margin-bottom: 12px;
+                background: rgba(255, 255, 255, 0.02);
+            }
+            .pr-faq-item summary {
+                font-family: var(--font-display);
+                font-size: 15.5px;
+                font-weight: 600;
+                letter-spacing: -0.005em;
+                color: var(--text);
+                cursor: default;
+                list-style: none;
+                position: relative;
+                padding-right: 28px;
+            }
+            .pr-faq-item summary::after {
+                content: "+";
+                position: absolute;
+                right: 0;
+                top: 0;
+                font-size: 20px;
+                color: var(--text-muted);
+                transition: transform 0.15s;
+            }
+            .pr-faq-item[open] summary::after {
+                content: "−";
+            }
+            .pr-faq-item summary::-webkit-details-marker {
+                display: none;
+            }
+            .pr-faq-item p,
+            .pr-faq-item ul {
+                color: var(--text-muted);
+                font-size: 14px;
+                line-height: 1.65;
+                margin: 12px 0 0;
+            }
+            .pr-faq-item ul {
+                padding-left: 20px;
+            }
+            .pr-faq-item a {
+                color: var(--purple);
+                text-decoration: underline;
+                text-underline-offset: 3px;
+            }
+        </style>
+    </head>
+    <body>
+        <a class="skip-link" href="#main">Skip to content</a>
+        <div class="bg-field" aria-hidden="true"></div>
+
+        <header class="header" id="site-header">
+            <div class="container header-inner">
+                <a class="brand" href="./" aria-label="Clauge home">
+                    <img src="clauge-mark.svg" alt="" />
+                    <span>Clauge</span>
+                </a>
+                <nav class="nav" aria-label="Primary">
+                    <a href="index.html#what-it-does">What it does</a>
+                    <a href="index.html#ai">The AI</a>
+                    <a href="pricing.html" class="is-active">Pricing</a>
+                    <a href="changelog.html">Changelog</a>
+                    <a href="enterprise.html">Enterprise</a>
+                    <a
+                        href="https://github.com/ansxuman/Clauge"
+                        target="_blank"
+                        rel="noopener"
+                        class="cta"
+                    >
+                        <i class="fa-brands fa-github" aria-hidden="true"></i>
+                        <span>GitHub</span>
+                    </a>
+                </nav>
+            </div>
+        </header>
+
+        <main id="main">
+            <section class="pr-hero">
+                <div class="container">
+                    <span class="eyebrow"
+                        ><i class="fa-solid fa-tag" aria-hidden="true"></i>
+                        Pricing</span
+                    >
+                    <h1>Simple, <span class="grad">honest</span> pricing.</h1>
+                    <p>
+                        Free for personal use. Pro unlocks premium features.
+                        Enterprise is for teams who need a commercial license +
+                        priority support.
+                    </p>
+                </div>
+            </section>
+
+            <section class="container">
+                <div class="pr-cards">
+                    <!-- FREE -->
+                    <article class="pr-card">
+                        <span class="pr-tier-label">Personal</span>
+                        <div class="pr-price-display">Free</div>
+                        <p class="pr-tagline">
+                            For personal use, hobbyists, students, and
+                            noncommercial projects.
+                        </p>
+                        <ul class="pr-features">
+                            <li>
+                                <i class="fa-solid fa-check"></i> Agent mode
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Workspace + AI
+                                Co-Workers
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> REST client
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> SQL client
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> NoSQL client
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> SSH client
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> File Explorer
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> AI Assistance
+                                (BYO API key)
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Cloud sync —
+                                REST, SQL, NoSQL, SSH, Explorer profiles
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Standard
+                                themes
+                            </li>
+                        </ul>
+                        <div class="pr-cta-wrap">
+                            <a
+                                class="pr-cta"
+                                href="https://github.com/ansxuman/Clauge/releases"
+                                target="_blank"
+                                rel="noopener"
+                            >
+                                <i
+                                    class="fa-solid fa-download"
+                                    aria-hidden="true"
+                                ></i>
+                                Download for free
+                            </a>
+                            <span class="pr-cta-sub"
+                                >macOS · Windows · Linux</span
+                            >
+                        </div>
+                    </article>
+
+                    <!-- PRO -->
+                    <article class="pr-card is-highlight">
+                        <span class="pr-badge">Launch offer · 80% off</span>
+                        <span class="pr-tier-label">Premium</span>
+                        <span class="pr-price-original">$100</span>
+                        <div class="pr-price-display">$20</div>
+                        <p class="pr-price-unit">
+                            one-time · lifetime · launch pricing
+                        </p>
+                        <p class="pr-tagline">
+                            Premium tier for individual developers.
+                        </p>
+                        <ul class="pr-features">
+                            <li>
+                                <i class="fa-solid fa-check"></i> Everything in
+                                Free
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Premium themes
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Access to
+                                future premium features
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Priority on
+                                feature requests
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Help cover
+                                infra and development costs
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Help keep core
+                                features free for everyone
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Email support
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> 14-day refund
+                            </li>
+                        </ul>
+                        <div class="pr-cta-wrap">
+                            <a
+                                class="pr-cta is-primary"
+                                href="clauge://upgrade"
+                            >
+                                <i
+                                    class="fa-solid fa-arrow-up-right-from-square"
+                                    aria-hidden="true"
+                                ></i>
+                                Upgrade in app
+                            </a>
+                            <span class="pr-cta-sub"
+                                >Already have Clauge installed? The button above
+                                opens the upgrade flow.<br />New here?
+                                <a
+                                    href="https://github.com/ansxuman/Clauge/releases"
+                                    target="_blank"
+                                    rel="noopener"
+                                    style="color: var(--purple)"
+                                    >Download first ↓</a
+                                ></span
+                            >
+                        </div>
+                    </article>
+
+                    <!-- ENTERPRISE -->
+                    <article class="pr-card">
+                        <span class="pr-tier-label">Enterprise</span>
+                        <div class="pr-price-display">Contact us</div>
+                        <p class="pr-tagline">
+                            For organizations using Clauge commercially or with
+                            compliance constraints.
+                        </p>
+                        <ul class="pr-features">
+                            <li>
+                                <i class="fa-solid fa-check"></i> Commercial
+                                license
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Bulk Pro
+                                entitlements
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Priority
+                                support
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Security
+                                review
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Private sync
+                                backend
+                            </li>
+                            <li>
+                                <i class="fa-solid fa-check"></i> Volume / SLA
+                                terms
+                            </li>
+                        </ul>
+                        <div class="pr-cta-wrap">
+                            <a class="pr-cta" href="enterprise.html">
+                                <i
+                                    class="fa-solid fa-envelope"
+                                    aria-hidden="true"
+                                ></i>
+                                Contact us
+                            </a>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="pr-faq">
+                <h2>Frequently asked questions</h2>
+
+                <details class="pr-faq-item">
+                    <summary>Is Clauge really free?</summary>
+                    <p>
+                        The core features are free for
+                        <strong
+                            >personal, hobby, academic, and other noncommercial
+                            use</strong
+                        >
+                        — every mode listed under the Free plan above, with no
+                        paywalls. Premium add-ons (themes, managed AI, faster
+                        sync) require the Pro tier. Any use by or within a
+                        for-profit organization — even just the core features —
+                        requires a separate license;
+                        <a href="enterprise.html">contact us</a> to discuss
+                        terms.
+                    </p>
+                </details>
+
+                <details class="pr-faq-item">
+                    <summary>
+                        What's the difference between Pro and Enterprise?
+                    </summary>
+                    <ul>
+                        <li>
+                            <strong>Pro</strong> is per-user — premium add-ons
+                            for individuals on top of the free core.
+                        </li>
+                        <li>
+                            <strong>Enterprise</strong> is per-organization — a
+                            commercial license for using Clauge at a for-profit
+                            company, plus bulk Pro entitlements, priority
+                            support, security review, and an optional private
+                            sync backend on your own Cloudflare account.
+                        </li>
+                    </ul>
+                    <p>
+                        If you're a single dev, Pro is what you want. If you're
+                        deploying Clauge across a team, talk to us via the
+                        <a href="enterprise.html">Enterprise form</a>.
+                    </p>
+                </details>
+
+                <details class="pr-faq-item">
+                    <summary>Refunds?</summary>
+                    <p>14-day no-questions-asked refund window.</p>
+                </details>
+            </section>
+        </main>
+
+        <footer>
+            <div class="container">
+                <div class="row">
+                    <div class="col" style="max-width: 320px">
+                        <a class="brand" href="./" style="margin-bottom: 8px">
+                            <img src="clauge-mark.svg" alt="" />
+                            <span>Clauge</span>
+                        </a>
+                        <p style="color: var(--text-dim)">
+                            The AI-powered super-app for developers.
+                        </p>
+                    </div>
+                    <div class="col">
+                        <h5>Product</h5>
+                        <a href="index.html">Home</a>
+                        <a href="index.html#what-it-does">What it does</a>
+                        <a href="pricing.html">Pricing</a>
+                        <a href="changelog.html">Changelog</a>
+                    </div>
+                    <div class="col">
+                        <h5>Open</h5>
+                        <a
+                            href="https://github.com/ansxuman/Clauge"
+                            target="_blank"
+                            rel="noopener"
+                            >GitHub</a
+                        >
+                        <a
+                            href="https://github.com/ansxuman/Clauge/blob/main/LICENSE"
+                            target="_blank"
+                            rel="noopener"
+                            >License (PolyForm-NC)</a
+                        >
+                    </div>
+                    <div class="col">
+                        <h5>Legal</h5>
+                        <a href="terms.html">Terms of Service</a>
+                        <a href="privacy.html">Privacy Policy</a>
+                        <a href="enterprise.html">Enterprise</a>
+                    </div>
+                </div>
+            </div>
+        </footer>
+
+        <script src="app.js" defer></script>
+    </body>
+</html>

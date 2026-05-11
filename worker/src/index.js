@@ -1,53 +1,92 @@
+// Clauge auth + sync Worker — entrypoint and router.
+
+import { preflight, err } from './cors.js';
+import {
+  handleGitHubExchange, handleGoogleExchange, handleGoogleRefresh,
+  handleMe, handleUpdateProfile, handleDeleteAccount, handleLink, handleUnlink,
+  handleLegacyAuthToken, authenticate,
+} from './auth.js';
+import {
+  handleSyncState, handleSyncPull, handleSyncPush, handleSyncWipe,
+} from './sync.js';
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const path = url.pathname;
+    const method = request.method;
 
-    // CORS headers
-    const corsHeaders = {
-      'Access-Control-Allow-Origin': 'https://clauge.in',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    };
+    // CORS preflight — short-circuit before any routing.
+    if (method === 'OPTIONS') return preflight(env);
 
-    // Handle preflight
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
-    }
-
-    // Only handle POST /auth/token
-    if (url.pathname === '/auth/token' && request.method === 'POST') {
-      try {
-        const { code } = await request.json();
-        if (!code) {
-          return Response.json({ error: 'Missing code' }, { status: 400, headers: corsHeaders });
-        }
-
-        // Exchange code for access token
-        const tokenResp = await fetch('https://github.com/login/oauth/access_token', {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            client_id: env.GITHUB_CLIENT_ID,
-            client_secret: env.GITHUB_CLIENT_SECRET,
-            code: code,
-          }),
-        });
-
-        const data = await tokenResp.json();
-
-        if (data.error) {
-          return Response.json({ error: data.error_description || data.error }, { status: 400, headers: corsHeaders });
-        }
-
-        return Response.json({ access_token: data.access_token }, { headers: corsHeaders });
-      } catch (e) {
-        return Response.json({ error: 'Internal error' }, { status: 500, headers: corsHeaders });
+    try {
+      // ─── Legacy GitHub OAuth (one-release back-compat) ─────
+      if (path === '/auth/token' && method === 'POST') {
+        return await handleLegacyAuthToken(request, env);
       }
-    }
 
-    return new Response('Not found', { status: 404 });
+      // ─── /api/auth/* — no bearer required (token exchanges) ─
+      if (path === '/api/auth/github/exchange' && method === 'POST') {
+        return await handleGitHubExchange(request, env);
+      }
+      if (path === '/api/auth/google/exchange' && method === 'POST') {
+        return await handleGoogleExchange(request, env);
+      }
+      if (path === '/api/auth/google/refresh' && method === 'POST') {
+        return await handleGoogleRefresh(request, env);
+      }
+
+      // ─── /api/auth/me — bearer required ────────────────────
+      if (path === '/api/auth/me' && method === 'GET') {
+        return await handleMe(request, env);
+      }
+      if (path === '/api/auth/me' && method === 'PATCH') {
+        return await handleUpdateProfile(request, env);
+      }
+      if (path === '/api/auth/me' && method === 'DELETE') {
+        return await handleDeleteAccount(request, env);
+      }
+
+      // ─── Linking ───────────────────────────────────────────
+      if (path === '/api/auth/link' && method === 'POST') {
+        return await handleLink(request, env);
+      }
+      if (path === '/api/auth/unlink' && method === 'POST') {
+        return await handleUnlink(request, env);
+      }
+
+      // ─── /api/sync/* — bearer required ─────────────────────
+      const syncCtx = await authenticate(request, env);
+
+      if (path === '/api/sync/state' && method === 'GET') {
+        if (!syncCtx) return err(env, 401, 'Not authenticated');
+        return await handleSyncState(request, env, syncCtx);
+      }
+
+      // /api/sync/pull/:kind
+      const pullMatch = path.match(/^\/api\/sync\/pull\/([a-z]+)$/);
+      if (pullMatch && method === 'GET') {
+        if (!syncCtx) return err(env, 401, 'Not authenticated');
+        return await handleSyncPull(request, env, syncCtx, pullMatch[1]);
+      }
+
+      // /api/sync/push/:kind
+      const pushMatch = path.match(/^\/api\/sync\/push\/([a-z]+)$/);
+      if (pushMatch && method === 'PUT') {
+        if (!syncCtx) return err(env, 401, 'Not authenticated');
+        return await handleSyncPush(request, env, syncCtx, pushMatch[1]);
+      }
+
+      if (path === '/api/sync/wipe' && method === 'DELETE') {
+        if (!syncCtx) return err(env, 401, 'Not authenticated');
+        return await handleSyncWipe(request, env, syncCtx);
+      }
+
+      // Unknown route on a path the worker was matched for.
+      return err(env, 404, 'Not found');
+    } catch (e) {
+      console.error('Worker exception:', e && e.stack ? e.stack : e);
+      return err(env, 500, 'Internal error');
+    }
   },
 };

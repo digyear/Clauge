@@ -1,12 +1,31 @@
 name = "clauge-gh-auth"
 main = "src/index.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
 
+# Worker handles:
+#   /auth/token*       — legacy GitHub OAuth exchange (deprecated, kept for 1 release)
+#   /api/*             — all new endpoints (auth + sync)
+# Pages handles every other path on clauge.in (marketing site + callback HTML pages).
 routes = [
-  { pattern = "clauge.in/auth/token*", zone_name = "clauge.in" }
+  { pattern = "clauge.in/auth/token*", zone_name = "clauge.in" },
+  { pattern = "clauge.in/api/*",       zone_name = "clauge.in" }
 ]
 
 [vars]
 GITHUB_CLIENT_ID = "Ov23liXcWby6XVM80TfG"
+GOOGLE_CLIENT_ID = "361959797138-ahsfia59q9cf6h6njln6qt26jk763jp7.apps.googleusercontent.com"
+ALLOWED_ORIGIN   = "https://clauge.in"
 
-# GITHUB_CLIENT_SECRET is set via `wrangler secret put GITHUB_CLIENT_SECRET`
+# Secrets — set via `wrangler secret put <NAME>`
+#   GITHUB_CLIENT_SECRET
+#   GOOGLE_CLIENT_SECRET
+
+[[d1_databases]]
+binding       = "CLAUGE_DB"
+database_name = "clauge-db"
+database_id   = "6e5fa767-317c-48b9-94ab-6ac0066a00e9"
+
+[[kv_namespaces]]
+binding = "CLAUGE_KV"
+id      = "7367f7559b4e49adbdf02cfb18c07294"
