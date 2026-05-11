@@ -279,3 +279,51 @@
     }
   }
 })();
+
+/* ── Site footer — single source of truth, injected into <footer id="site-footer"> on every page ── */
+(() => {
+  const mount = document.getElementById('site-footer');
+  if (!mount) return;
+
+  const year = new Date().getFullYear();
+
+  mount.innerHTML = `
+    <div class="container">
+      <div class="row">
+        <div class="col" style="max-width: 320px;">
+          <a class="brand" href="./" style="margin-bottom: 8px;">
+            <img src="clauge-mark.svg" alt="" />
+            <span>Clauge</span>
+          </a>
+          <p style="color: var(--text-dim);">The AI-powered super-app for developers.</p>
+        </div>
+        <div class="col">
+          <h5>Product</h5>
+          <a href="index.html#what-it-does">What it does</a>
+          <a href="index.html#ai">The AI</a>
+          <a href="index.html#themes">Themes</a>
+          <a href="pricing.html">Pricing</a>
+          <a href="changelog.html">Changelog</a>
+        </div>
+        <div class="col">
+          <h5>Open</h5>
+          <a href="https://github.com/ansxuman/Clauge" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/ansxuman/Clauge/issues" target="_blank" rel="noopener">Report an issue</a>
+          <a href="https://github.com/ansxuman/Clauge/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/ansxuman/Clauge/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+        </div>
+        <div class="col">
+          <h5>Legal</h5>
+          <a href="terms.html">Terms of Service</a>
+          <a href="privacy.html">Privacy Policy</a>
+          <a href="enterprise.html">Enterprise</a>
+          <a href="mailto:support@clauge.in">Commercial licensing</a>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span>© ${year} Clauge</span>
+        <span>Made for developers · macOS · Windows · Linux</span>
+      </div>
+    </div>
+  `;
+})();
