@@ -2,7 +2,7 @@
 
 import { json, err } from './cors.js';
 import {
-  isValidKind, getSyncState, getSyncBlob, upsertSyncBlob, wipeSyncBlobs,
+  isValidKind, getSyncState, getSyncBlob, conditionalUpsertSyncBlob, wipeSyncBlobs,
 } from './db.js';
 
 const MAX_PAYLOAD_BYTES = 900_000; // ~900 KB after gzip; D1 row limit is 1 MB.
@@ -37,7 +37,18 @@ export async function handleSyncPull(request, env, ctx, kind) {
   });
 }
 
-/** PUT /api/sync/push/:kind  body: { contentHash, payload }  → { updatedAt } */
+/**
+ * PUT /api/sync/push/:kind
+ *
+ * body: { contentHash, payload, prevHash? }
+ *   - prevHash omitted     → first push for this kind (row must not exist)
+ *   - prevHash '*'         → force overwrite (post-conflict "Keep my changes")
+ *   - prevHash <hash>      → only succeed if remote still has that hash
+ *
+ * 200 → { kind, contentHash, updatedAt }
+ * 412 → { error:'precondition_failed', currentHash, currentUpdatedAt }
+ *         Caller decides to pull or to retry with prevHash:'*'.
+ */
 export async function handleSyncPush(request, env, ctx, kind) {
   if (!isValidKind(kind)) return err(env, 400, 'Invalid kind');
 
@@ -47,6 +58,15 @@ export async function handleSyncPush(request, env, ctx, kind) {
   }
   if (typeof body.contentHash !== 'string' || body.contentHash.length > 128) {
     return err(env, 400, 'Bad contentHash');
+  }
+
+  const prevHash = body.prevHash ?? null;
+  if (
+    prevHash !== null &&
+    prevHash !== '*' &&
+    (typeof prevHash !== 'string' || prevHash.length > 128)
+  ) {
+    return err(env, 400, 'Bad prevHash');
   }
 
   let bytes;
@@ -59,11 +79,24 @@ export async function handleSyncPush(request, env, ctx, kind) {
     return err(env, 413, `Payload too large (${bytes.byteLength} bytes; max ${MAX_PAYLOAD_BYTES})`);
   }
 
-  await upsertSyncBlob(env, ctx.userId, kind, body.contentHash, bytes);
+  const result = await conditionalUpsertSyncBlob(
+    env, ctx.userId, kind, prevHash, body.contentHash, bytes,
+  );
 
-  // Read back updated_at — using CURRENT_TIMESTAMP server-side.
-  const row = await getSyncBlob(env, ctx.userId, kind);
-  return json(env, { kind, contentHash: row.content_hash, updatedAt: row.updated_at });
+  if (!result.updated) {
+    return json(env, {
+      error:            'precondition_failed',
+      message:          'Remote has changed since this device last synced.',
+      currentHash:      result.row?.content_hash || null,
+      currentUpdatedAt: result.row?.updated_at   || null,
+    }, 412);
+  }
+
+  return json(env, {
+    kind,
+    contentHash: result.row.content_hash,
+    updatedAt:   result.row.updated_at,
+  });
 }
 
 /** DELETE /api/sync/wipe  Header: X-Confirm: yes  → 200 */

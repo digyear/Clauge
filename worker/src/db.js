@@ -247,7 +247,40 @@ export async function getSyncBlob(env, userId, kind) {
     .first();
 }
 
-export async function upsertSyncBlob(env, userId, kind, contentHash, payloadBytes) {
+/**
+ * Conditional upsert (optimistic concurrency).
+ *
+ * `prevHash` semantics:
+ *   - null / undefined  → require the row to NOT exist yet (first push).
+ *                         A row that already exists with a different hash → 412.
+ *   - '*'               → unconditional overwrite (used after the user picks
+ *                         "Keep my changes" in the conflict resolver).
+ *   - <hex string>      → only succeed if the existing row's content_hash
+ *                         matches exactly. Mismatch → 412.
+ *
+ * Returns `{ updated, row }`. When `updated` is false, `row` carries the
+ * remote's current state so the caller can surface it in the 412 body.
+ */
+export async function conditionalUpsertSyncBlob(env, userId, kind, prevHash, contentHash, payloadBytes) {
+  const existing = await env.CLAUGE_DB
+    .prepare('SELECT content_hash, updated_at FROM sync_blobs WHERE user_id = ? AND kind = ?')
+    .bind(userId, kind)
+    .first();
+
+  // Mismatch detection — split by which "branch" of the precondition fails.
+  if (existing && prevHash !== '*' && prevHash != null && prevHash !== existing.content_hash) {
+    return { updated: false, row: existing };
+  }
+  if (!existing && prevHash != null && prevHash !== '*') {
+    return { updated: false, row: null };
+  }
+
+  // Same-hash short-circuit — D1 write skipped, but we still report success
+  // so the client's bookkeeping updates (no-op from the server's POV).
+  if (existing && existing.content_hash === contentHash) {
+    return { updated: true, row: existing };
+  }
+
   await env.CLAUGE_DB
     .prepare(`INSERT INTO sync_blobs (user_id, kind, payload, content_hash, updated_at)
               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -257,6 +290,12 @@ export async function upsertSyncBlob(env, userId, kind, contentHash, payloadByte
                 updated_at   = excluded.updated_at`)
     .bind(userId, kind, payloadBytes, contentHash)
     .run();
+
+  const fresh = await env.CLAUGE_DB
+    .prepare('SELECT content_hash, updated_at FROM sync_blobs WHERE user_id = ? AND kind = ?')
+    .bind(userId, kind)
+    .first();
+  return { updated: true, row: fresh };
 }
 
 export async function wipeSyncBlobs(env, userId) {
