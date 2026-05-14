@@ -147,6 +147,7 @@
     let saveDialogTabId = $state(-1);
     let _syncIntervalRemovedInPart2: null = null;
     let usageLimitsInterval: ReturnType<typeof setInterval> | null = null;
+    let updateCheckInterval: ReturnType<typeof setInterval> | null = null;
     let deepLinkUnlisten: (() => void) | null = null;
     // Tracks the last dispatched OAuth token to prevent double-firing
     // (getCurrent() and onOpenUrl can both return the same startup URL).
@@ -606,6 +607,7 @@
         deepLinkUnlisten?.();
         // Periodic sync removed in Part 2 — Rust scheduler handles auto-push now.
         if (usageLimitsInterval) clearInterval(usageLimitsInterval);
+        if (updateCheckInterval) clearInterval(updateCheckInterval);
     });
 
     function applyAppearanceOnStartup() {
@@ -868,7 +870,8 @@
             );
         });
 
-        // Check for updates silently on startup and show What's New if version changed
+        // Check for updates silently on startup and show What's New if version changed.
+        // Then re-check every 6 hours so long-running sessions don't miss releases.
         try {
             const { checkAndDownloadUpdate, checkWhatsNew } =
                 await import("$lib/utils/updater");
@@ -879,6 +882,10 @@
                 })
                 .catch(() => {});
             checkAndDownloadUpdate();
+            updateCheckInterval = setInterval(
+                () => { checkAndDownloadUpdate().catch(() => {}); },
+                6 * 60 * 60_000,
+            );
         } catch {
             // Updater not available in dev mode
         }
