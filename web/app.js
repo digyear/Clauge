@@ -686,3 +686,39 @@
     </div>
   `;
 })();
+
+/* ── Site header — single source of truth, injected into <header id="site-header"> on every page ── */
+(() => {
+  const mount = document.getElementById('site-header');
+  if (!mount) return;
+  // current-page detection so the active link matches without per-page edits
+  const path = (location.pathname || '/').replace(/\/$/, '');
+  const file = path.split('/').pop() || '';
+  const isHome = file === '' || file === 'index.html';
+  const active = (a) => a === file || (a === 'index.html' && isHome) ? ' is-active' : '';
+  const homeHref = isHome ? '#modes' : 'index.html#modes';
+
+  mount.innerHTML = `
+    <div class="container header-inner">
+      <a class="brand" href="./" aria-label="Clauge home">
+        <img src="${isHome ? '' : ''}clauge-mark.svg" alt="" />
+        <span>Clauge</span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="${homeHref}">Modes</a>
+        <a class="${active('pricing.html').trim()}" href="pricing.html">Pricing</a>
+        <a class="${active('changelog.html').trim()}" href="changelog.html">Changelog</a>
+        <a class="${active('enterprise.html').trim()}" href="enterprise.html">Enterprise</a>
+        <a href="https://github.com/ansxuman/Clauge" target="_blank" rel="noopener" class="cta">
+          <i class="fa-brands fa-github" aria-hidden="true"></i>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  `;
+
+  // header scroll state: re-bind onto the new node so .scrolled class still applies
+  const onScroll = () => mount.classList.toggle('scrolled', window.scrollY > 8);
+  onScroll();
+  window.addEventListener('scroll', onScroll, { passive: true });
+})();
