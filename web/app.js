@@ -773,17 +773,17 @@
   };
 
   const REPO = 'ansxuman/Clauge';
+  const showAlpha = window.CLAUGE_FLAGS && window.CLAUGE_FLAGS.showAlpha === true;
 
-  /* Fetch the most recent release and rewrite hrefs to direct asset URLs. */
+  /* Fetch latest releases; pick most recent matching showAlpha flag. */
   fetch(`https://api.github.com/repos/${REPO}/releases?per_page=10`, {
     headers: { 'Accept': 'application/vnd.github+json' }
   })
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(list => {
       if (!Array.isArray(list) || !list.length) return;
-      /* Always serve the latest release for downloads. The showAlpha flag only
-         controls UI labeling (the 'Alpha' pill) and the changelog filter. */
-      const release = list[0];
+      const isAlphaLike = (r) => /\balpha\b/.test((r.tag_name || '').toLowerCase());
+      const release = showAlpha ? list[0] : (list.find(r => !isAlphaLike(r)) || list[0]);
       const assets = release.assets || [];
 
       /* Build slot → asset URL map */
