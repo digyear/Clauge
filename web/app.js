@@ -730,23 +730,6 @@
   document.querySelectorAll('[data-alpha-only]').forEach(el => { el.style.display = 'none'; });
 })();
 
-/* ── Multi-OS download grid: detect platform and promote the matching .dl-os to first ── */
-(() => {
-  const grid = document.querySelector('[data-dl-grid]');
-  if (!grid) return;
-  const ua = (navigator.userAgent || '').toLowerCase();
-  let primary = 'mac';
-  if (ua.includes('windows')) primary = 'windows';
-  else if (ua.includes('linux') && !ua.includes('android')) primary = 'linux';
-  else if (ua.includes('mac')) primary = 'mac';
-
-  const target = grid.querySelector(`.dl-os[data-os="${primary}"]`);
-  if (target) {
-    target.classList.add('is-primary');
-    grid.prepend(target);
-  }
-})();
-
 /* ── Direct-download wiring: map every [data-os-arch] to the matching asset URL
       from the latest GitHub release. Falls back to releases/latest if no match. ── */
 (() => {
@@ -829,4 +812,68 @@
       });
     })
     .catch(() => { /* network fail / rate-limit: leave hrefs as releases/latest */ });
+})();
+
+/* ── OS-aware compact download card: customize headline / icon / arch / alt link ── */
+(() => {
+  const card = document.getElementById('dl-primary');
+  if (!card) return;
+  const ua = (navigator.userAgent || '').toLowerCase();
+  const isMac = ua.includes('mac');
+  const isWin = ua.includes('windows');
+  const isLinux = ua.includes('linux') && !ua.includes('android');
+
+  const headline = document.querySelector('[data-dl-headline]');
+  const icon = document.querySelector('[data-dl-icon]');
+  const arch = document.querySelector('[data-dl-arch]');
+  const alt = document.getElementById('dl-alt');
+  const altLabel = document.querySelector('[data-dl-alt-label]');
+
+  /* Apple Silicon vs Intel for Mac */
+  let macArch = 'arm';
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+    if (ext) {
+      const r = (gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '').toLowerCase();
+      if (r.includes('intel') && !r.includes('apple')) macArch = 'intel';
+    }
+  } catch {}
+
+  if (isWin) {
+    if (headline) headline.textContent = 'Get Clauge for Windows.';
+    if (icon) icon.className = 'fa-brands fa-windows';
+    if (arch) arch.textContent = 'x64';
+    /* No alt link on Windows — there's a single build. */
+    if (alt) alt.style.display = 'none';
+  } else if (isLinux) {
+    if (headline) headline.textContent = 'Get Clauge for Linux.';
+    if (icon) icon.className = 'fa-brands fa-linux';
+    if (arch) arch.textContent = 'x64 · .deb';
+    /* Linux primary = x64 .deb; alt = "other Linux builds (.rpm, ARM)" */
+    card.setAttribute('data-os-arch', 'linux-x64-deb');
+    if (alt) {
+      alt.setAttribute('data-os-arch', 'linux-arm-deb');
+      if (altLabel) altLabel.innerHTML = 'On ARM or RPM-based distro? <u>Other Linux builds</u>';
+    }
+  } else {
+    /* Mac (default) */
+    if (headline) headline.textContent = 'Get Clauge for Mac.';
+    if (icon) icon.className = 'fa-brands fa-apple';
+    if (macArch === 'intel') {
+      if (arch) arch.textContent = 'Intel';
+      card.setAttribute('data-os-arch', 'mac-intel');
+      if (alt) {
+        alt.setAttribute('data-os-arch', 'mac-arm');
+        if (altLabel) altLabel.innerHTML = 'On Apple Silicon? <u>Get the Apple Silicon build</u>';
+      }
+    } else {
+      if (arch) arch.textContent = 'Apple Silicon';
+      card.setAttribute('data-os-arch', 'mac-arm');
+      if (alt) {
+        alt.setAttribute('data-os-arch', 'mac-intel');
+        if (altLabel) altLabel.innerHTML = 'On Intel? <u>Get the Intel build</u>';
+      }
+    }
+  }
 })();
