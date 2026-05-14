@@ -814,66 +814,135 @@
     .catch(() => { /* network fail / rate-limit: leave hrefs as releases/latest */ });
 })();
 
-/* ── OS-aware compact download card: customize headline / icon / arch / alt link ── */
+/* ── OS-aware downloads: customize hero CTA + bottom card based on detected OS ── */
 (() => {
   const card = document.getElementById('dl-primary');
-  if (!card) return;
+  const cta  = document.getElementById('cta-download');
+  if (!card && !cta) return;
+  /* URL override for previewing on another OS without changing UA:
+       ?os=windows   → Windows view
+       ?os=linux     → Linux view
+       ?os=mac       → Mac (Apple Silicon)
+       ?os=mac-intel → Mac (Intel) */
+  const override = new URLSearchParams(location.search).get('os');
   const ua = (navigator.userAgent || '').toLowerCase();
-  const isMac = ua.includes('mac');
-  const isWin = ua.includes('windows');
-  const isLinux = ua.includes('linux') && !ua.includes('android');
+  const isMac   = override ? /^mac/.test(override)   : ua.includes('mac');
+  const isWin   = override ? override === 'windows'  : ua.includes('windows');
+  const isLinux = override ? override === 'linux'    : (ua.includes('linux') && !ua.includes('android'));
 
-  const headline = document.querySelector('[data-dl-headline]');
-  const icon = document.querySelector('[data-dl-icon]');
-  const arch = document.querySelector('[data-dl-arch]');
-  const alt = document.getElementById('dl-alt');
-  const altLabel = document.querySelector('[data-dl-alt-label]');
-
-  /* Apple Silicon vs Intel for Mac */
+  /* Apple Silicon vs Intel for Mac (override wins, else WebGL renderer heuristic) */
   let macArch = 'arm';
-  try {
-    const gl = document.createElement('canvas').getContext('webgl');
-    const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
-    if (ext) {
-      const r = (gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '').toLowerCase();
-      if (r.includes('intel') && !r.includes('apple')) macArch = 'intel';
-    }
-  } catch {}
+  if (override === 'mac-intel') macArch = 'intel';
+  else if (!override) {
+    try {
+      const gl = document.createElement('canvas').getContext('webgl');
+      const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+      if (ext) {
+        const r = (gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '').toLowerCase();
+        if (r.includes('intel') && !r.includes('apple')) macArch = 'intel';
+      }
+    } catch {}
+  }
 
+  /* Compute the per-OS plan, then apply to both hero CTA and bottom download card. */
+  let plan;
   if (isWin) {
-    if (headline) headline.textContent = 'Get Clauge for Windows.';
-    if (icon) icon.className = 'fa-brands fa-windows';
-    if (arch) arch.textContent = 'x64';
-    /* No alt link on Windows — there's a single build. */
-    if (alt) alt.style.display = 'none';
+    plan = {
+      headline:   'Get Clauge for Windows.',
+      iconClass:  'fa-brands fa-windows',
+      btn1: { osArch: 'win-x64', label: 'Download for Windows', archChip: 'x64' },
+      btn2: null,
+      alt:  null,
+    };
   } else if (isLinux) {
-    if (headline) headline.textContent = 'Get Clauge for Linux.';
-    if (icon) icon.className = 'fa-brands fa-linux';
-    if (arch) arch.textContent = 'x64 · .deb';
-    /* Linux primary = x64 .deb; alt = "other Linux builds (.rpm, ARM)" */
-    card.setAttribute('data-os-arch', 'linux-x64-deb');
-    if (alt) {
-      alt.setAttribute('data-os-arch', 'linux-arm-deb');
-      if (altLabel) altLabel.innerHTML = 'On ARM or RPM-based distro? <u>Other Linux builds</u>';
-    }
+    plan = {
+      headline:   'Get Clauge for Linux.',
+      iconClass:  'fa-brands fa-linux',
+      btn1: { osArch: 'linux-x64-deb', label: 'Download for Linux', archChip: 'x64 · .deb', iconClass: 'fa-brands fa-linux' },
+      btn2: { osArch: 'linux-x64-rpm', label: 'Download for Linux', archChip: 'x64 · .rpm', iconClass: 'fa-brands fa-linux' },
+      alt:  { osArch: 'linux-arm-deb', html: 'On ARM? <u>Get the ARM builds (.deb · .rpm)</u>' },
+    };
+  } else if (macArch === 'intel') {
+    plan = {
+      headline:   'Get Clauge for Mac.',
+      iconClass:  'fa-brands fa-apple',
+      btn1: { osArch: 'mac-intel', label: 'Download for Mac', archChip: 'Intel' },
+      btn2: null,
+      alt:  { osArch: 'mac-arm', html: 'On Apple Silicon? <u>Get the Apple Silicon build</u>' },
+    };
   } else {
-    /* Mac (default) */
-    if (headline) headline.textContent = 'Get Clauge for Mac.';
-    if (icon) icon.className = 'fa-brands fa-apple';
-    if (macArch === 'intel') {
-      if (arch) arch.textContent = 'Intel';
-      card.setAttribute('data-os-arch', 'mac-intel');
-      if (alt) {
-        alt.setAttribute('data-os-arch', 'mac-arm');
-        if (altLabel) altLabel.innerHTML = 'On Apple Silicon? <u>Get the Apple Silicon build</u>';
-      }
-    } else {
-      if (arch) arch.textContent = 'Apple Silicon';
-      card.setAttribute('data-os-arch', 'mac-arm');
-      if (alt) {
-        alt.setAttribute('data-os-arch', 'mac-intel');
-        if (altLabel) altLabel.innerHTML = 'On Intel? <u>Get the Intel build</u>';
+    plan = {
+      headline:   'Get Clauge for Mac.',
+      iconClass:  'fa-brands fa-apple',
+      btn1: { osArch: 'mac-arm', label: 'Download for Mac', archChip: 'Apple Silicon' },
+      btn2: null,
+      alt:  { osArch: 'mac-intel', html: 'On Intel? <u>Get the Intel build</u>' },
+    };
+  }
+
+  /* Apply plan to a surface — either the hero CTA pair or the bottom card pair. */
+  const applyPlan = (refs) => {
+    if (refs.headline) refs.headline.textContent = plan.headline;
+    if (refs.btn1) {
+      refs.btn1.setAttribute('data-os-arch', plan.btn1.osArch);
+      refs.btn1.style.display = '';
+      if (refs.icon1)  refs.icon1.className = plan.btn1.iconClass || plan.iconClass;
+      if (refs.label1) refs.label1.textContent = plan.btn1.label;
+      if (refs.arch1)  refs.arch1.textContent = plan.btn1.archChip;
+    }
+    if (refs.btn2) {
+      if (plan.btn2) {
+        refs.btn2.setAttribute('data-os-arch', plan.btn2.osArch);
+        refs.btn2.style.display = '';
+        if (refs.icon2)  refs.icon2.className = plan.btn2.iconClass || plan.iconClass;
+        if (refs.label2) refs.label2.textContent = plan.btn2.label;
+        if (refs.arch2)  refs.arch2.textContent = plan.btn2.archChip;
+      } else {
+        refs.btn2.style.display = 'none';
       }
     }
+    if (refs.alt) {
+      if (plan.alt) {
+        refs.alt.setAttribute('data-os-arch', plan.alt.osArch);
+        refs.alt.style.display = '';
+        if (refs.altLabel) refs.altLabel.innerHTML = plan.alt.html;
+      } else {
+        refs.alt.style.display = 'none';
+      }
+    }
+  };
+
+  /* hero CTA surface */
+  if (cta) {
+    applyPlan({
+      headline: null, /* hero has no headline element */
+      btn1:    cta,
+      icon1:   document.querySelector('[data-cta-icon]'),
+      label1:  document.querySelector('[data-cta-label]'),
+      arch1:   document.querySelector('[data-cta-arch]'),
+      btn2:    document.getElementById('cta-download-2'),
+      icon2:   document.querySelector('[data-cta-icon-2]'),
+      label2:  document.querySelector('[data-cta-label-2]'),
+      arch2:   document.querySelector('[data-cta-arch-2]'),
+      alt:     document.getElementById('intel-link'),
+      altLabel: document.querySelector('[data-cta-alt-label]'),
+    });
+  }
+
+  /* bottom download card surface */
+  if (card) {
+    applyPlan({
+      headline: document.querySelector('[data-dl-headline]'),
+      btn1:    card,
+      icon1:   document.querySelector('[data-dl-icon]'),
+      label1:  null, /* bottom card's button label is just "Download" — left static */
+      arch1:   document.querySelector('[data-dl-arch]'),
+      btn2:    document.getElementById('dl-primary-2'),
+      icon2:   document.querySelector('[data-dl-icon-2]'),
+      label2:  null,
+      arch2:   document.querySelector('[data-dl-arch-2]'),
+      alt:     document.getElementById('dl-alt'),
+      altLabel: document.querySelector('[data-dl-alt-label]'),
+    });
   }
 })();

@@ -168,14 +168,22 @@
                                     target="_blank"
                                     rel="noopener"
                                 >
-                                    <i
-                                        class="fa-brands fa-apple"
-                                        aria-hidden="true"
-                                    ></i>
-                                    Download for Mac
-                                    <span class="chip" id="cta-arch"
-                                        >Apple Silicon</span
-                                    >
+                                    <i data-cta-icon class="fa-brands fa-apple" aria-hidden="true"></i>
+                                    <span data-cta-label>Download for Mac</span>
+                                    <span class="chip" data-cta-arch>Apple Silicon</span>
+                                </a>
+                                <a
+                                    class="btn btn-primary"
+                                    id="cta-download-2"
+                                    data-os-arch="linux-x64-rpm"
+                                    href="https://github.com/ansxuman/Clauge/releases/latest"
+                                    target="_blank"
+                                    rel="noopener"
+                                    style="display: none"
+                                >
+                                    <i data-cta-icon-2 class="fa-brands fa-linux" aria-hidden="true"></i>
+                                    <span data-cta-label-2>Download for Linux</span>
+                                    <span class="chip" data-cta-arch-2>x64 · .rpm</span>
                                 </a>
                                 <a
                                     class="btn btn-ghost"
@@ -183,10 +191,7 @@
                                     target="_blank"
                                     rel="noopener"
                                 >
-                                    <i
-                                        class="fa-brands fa-github"
-                                        aria-hidden="true"
-                                    ></i>
+                                    <i class="fa-brands fa-github" aria-hidden="true"></i>
                                     Star on GitHub
                                 </a>
                             </div>
@@ -198,7 +203,7 @@
                                 target="_blank"
                                 rel="noopener"
                             >
-                                On an Intel Mac? <u>Get the Intel build</u>
+                                <span data-cta-alt-label>On an Intel Mac? <u>Get the Intel build</u></span>
                             </a>
                         </div>
                     </div>
@@ -541,18 +546,33 @@
                             </p>
                         </div>
                         <div class="download-actions">
-                            <a
-                                class="btn btn-primary"
-                                id="dl-primary"
-                                data-os-arch="auto"
-                                href="https://github.com/ansxuman/Clauge/releases/latest"
-                                target="_blank"
-                                rel="noopener"
-                            >
-                                <i data-dl-icon class="fa-brands fa-apple" aria-hidden="true"></i>
-                                Download
-                                <span class="chip" data-dl-arch>Apple Silicon</span>
-                            </a>
+                            <div class="download-btns">
+                                <a
+                                    class="btn btn-primary"
+                                    id="dl-primary"
+                                    data-os-arch="auto"
+                                    href="https://github.com/ansxuman/Clauge/releases/latest"
+                                    target="_blank"
+                                    rel="noopener"
+                                >
+                                    <i data-dl-icon class="fa-brands fa-apple" aria-hidden="true"></i>
+                                    Download
+                                    <span class="chip" data-dl-arch>Apple Silicon</span>
+                                </a>
+                                <a
+                                    class="btn btn-primary"
+                                    id="dl-primary-2"
+                                    data-os-arch="linux-x64-rpm"
+                                    href="https://github.com/ansxuman/Clauge/releases/latest"
+                                    target="_blank"
+                                    rel="noopener"
+                                    style="display: none"
+                                >
+                                    <i data-dl-icon-2 class="fa-brands fa-linux" aria-hidden="true"></i>
+                                    Download
+                                    <span class="chip" data-dl-arch-2>x64 · .rpm</span>
+                                </a>
+                            </div>
                             <a
                                 class="intel-link"
                                 id="dl-alt"
