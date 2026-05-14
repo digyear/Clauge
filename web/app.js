@@ -783,39 +783,70 @@
     ? `https://api.github.com/repos/${REPO}/releases?per_page=1`
     : `https://api.github.com/repos/${REPO}/releases/latest`;
 
+  /* localStorage cache so we don't hit the 60-req/hr unauth API limit on
+     every page load. Cached release survives 30 min; lets reloads skip the
+     network entirely. */
+  const CACHE_KEY = `clauge-rel-${showAlpha ? 'any' : 'stable'}`;
+  const CACHE_TTL_MS = 30 * 60 * 1000;
+  const cached = (() => {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      const { ts, release } = JSON.parse(raw);
+      if (Date.now() - ts < CACHE_TTL_MS) return release;
+    } catch {}
+    return null;
+  })();
+
+  const hideAllSlots = () => slots.forEach(a => { a.style.display = 'none'; });
+
+  const applyRelease = (release) => {
+    const assets = release.assets || [];
+
+    /* Build slot → asset URL map */
+    const urls = {};
+    for (const [slot, match] of Object.entries(MATCHERS)) {
+      const hit = assets.find(a => match(a.name));
+      if (hit) urls[slot] = hit.browser_download_url;
+    }
+
+    /* Resolve the 'auto' slot to whatever the detected OS slot is */
+    const autoSlot = detectOsArch();
+    urls['auto'] = urls[autoSlot] || urls['mac-arm'];
+
+    slots.forEach(a => {
+      const slot = a.dataset.osArch;
+      const url = urls[slot];
+      if (url) {
+        a.href = url;
+        a.removeAttribute('target');  /* same-tab download for direct binaries */
+        a.setAttribute('download', '');
+      } else {
+        /* No matching asset in the chosen release for this slot. Don't fall
+           back to a GitHub page or to an alpha binary — hide the link. */
+        a.style.display = 'none';
+      }
+    });
+  };
+
+  /* Use cache if fresh; otherwise hit the API. On API failure with no
+     cache, hide all download buttons (better than punting to GitHub). */
+  if (cached) {
+    applyRelease(cached);
+    return;
+  }
+
   fetch(url, { headers: { 'Accept': 'application/vnd.github+json' } })
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(payload => {
       const release = Array.isArray(payload) ? payload[0] : payload;
-      if (!release) return;
-      const assets = release.assets || [];
-
-      /* Build slot → asset URL map */
-      const urls = {};
-      for (const [slot, match] of Object.entries(MATCHERS)) {
-        const hit = assets.find(a => match(a.name));
-        if (hit) urls[slot] = hit.browser_download_url;
-      }
-
-      /* Resolve the 'auto' slot to whatever the detected OS slot is */
-      const autoSlot = detectOsArch();
-      urls['auto'] = urls[autoSlot] || urls['mac-arm'] || `https://github.com/${REPO}/releases/latest`;
-
-      slots.forEach(a => {
-        const slot = a.dataset.osArch;
-        const url = urls[slot];
-        if (url) {
-          a.href = url;
-          a.removeAttribute('target');  /* same-tab download for direct binaries */
-          a.setAttribute('download', '');
-        } else {
-          /* No matching asset in the chosen release for this slot. Don't fall
-             back to a GitHub page or to an alpha binary — hide the link. */
-          a.style.display = 'none';
-        }
-      });
+      if (!release) { hideAllSlots(); return; }
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), release }));
+      } catch {}
+      applyRelease(release);
     })
-    .catch(() => { /* network fail / rate-limit: leave hrefs as releases/latest */ });
+    .catch(() => { hideAllSlots(); });
 })();
 
 /* ── OS-aware downloads: customize hero CTA + bottom card based on detected OS ── */
