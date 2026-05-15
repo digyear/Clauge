@@ -319,9 +319,9 @@
         script: [
           { delay: 300, type: 'user-type', text: 'Find Pro users inactive for 30 days.' },
           { delay: 700, type: 'ai', html: 'Filtering <code>users</code>...' },
-          { delay: 500, type: 'json-row', html: '{ <b>email</b>: "r.bauer@northwind.co", <b>plan</b>: "pro", <b>last_seen</b>: "2026-03-09" }' },
-          { delay: 220, type: 'json-row', html: '{ <b>email</b>: "s.okonkwo@helix.io", <b>plan</b>: "pro", <b>last_seen</b>: "2026-03-12" }' },
-          { delay: 220, type: 'json-row', html: '{ <b>email</b>: "m.tanaka@yamashita.jp", <b>plan</b>: "pro", <b>last_seen</b>: "2026-03-18" }' },
+          { delay: 500, type: 'json-row', html: '{ <b>email</b>: "r.bauer · northwind", <b>plan</b>: "pro", <b>last_seen</b>: "2026-03-09" }' },
+          { delay: 220, type: 'json-row', html: '{ <b>email</b>: "s.okonkwo · helix", <b>plan</b>: "pro", <b>last_seen</b>: "2026-03-12" }' },
+          { delay: 220, type: 'json-row', html: '{ <b>email</b>: "m.tanaka · yamashita", <b>plan</b>: "pro", <b>last_seen</b>: "2026-03-18" }' },
           { delay: 500, type: 'ai', html: '<b>219</b> Pro users haven\'t logged in for 30+ days.' },
         ],
       },
