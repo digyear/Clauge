@@ -99,3 +99,162 @@ describe("handleBillingWebhook router", () => {
     expect(count.n).toBe(1);
   });
 });
+
+describe("subscription.created handler", () => {
+  it("flips plan to pro, sets period bounds, grants credits", async () => {
+    const userId = await seedUser({ slug: "u_created" });
+    const body = JSON.stringify({
+      id: "evt_sub_created_1",
+      type: "subscription.created",
+      created_at: new Date().toISOString(),
+      data: {
+        id: "sub_abc",
+        status: "active",
+        current_period_start: "2026-05-16T00:00:00Z",
+        current_period_end: "2026-06-16T00:00:00Z",
+        cancel_at_period_end: false,
+        customer: { external_id: String(userId) },
+        product: { prices: [{ id: env.POLAR_PRICE_MONTHLY }] },
+      },
+    });
+    const sig = await signedSig(body);
+    await postWebhook(body, sig);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT plan, subscription_status, polar_subscription_id, credits_remaining, credit_allowance_per_cycle, current_period_end FROM users WHERE user_id = ?"
+    )
+      .bind(userId)
+      .first();
+    expect(row.plan).toBe("pro");
+    expect(row.subscription_status).toBe("active");
+    expect(row.polar_subscription_id).toBe("sub_abc");
+    expect(row.credit_allowance_per_cycle).toBeGreaterThan(0);
+    expect(row.credits_remaining).toBe(row.credit_allowance_per_cycle);
+    expect(row.current_period_end).toBe("2026-06-16T00:00:00Z");
+  });
+});
+
+describe("subscription.canceled handler", () => {
+  it("sets cancel_at_period_end=1 but keeps user active", async () => {
+    const userId = await seedUser({ slug: "u_cancel" });
+    // Pre-seed an active sub
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', subscription_status='active', polar_subscription_id='sub_c', credit_allowance_per_cycle=1000, credits_remaining=400 WHERE user_id=?"
+    )
+      .bind(userId)
+      .run();
+    const body = JSON.stringify({
+      id: "evt_sub_cancel_1",
+      type: "subscription.canceled",
+      created_at: new Date().toISOString(),
+      data: {
+        id: "sub_c",
+        status: "active",
+        cancel_at_period_end: true,
+        current_period_end: "2026-06-16T00:00:00Z",
+        customer: { external_id: String(userId) },
+      },
+    });
+    const sig = await signedSig(body);
+    await postWebhook(body, sig);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT plan, subscription_status, cancel_at_period_end, credits_remaining FROM users WHERE user_id=?"
+    )
+      .bind(userId)
+      .first();
+    expect(row.plan).toBe("pro");
+    expect(row.cancel_at_period_end).toBe(1);
+    expect(row.credits_remaining).toBe(400); // unchanged
+  });
+});
+
+describe("subscription.revoked handler", () => {
+  it("flips plan to free, wipes credits", async () => {
+    const userId = await seedUser({ slug: "u_revoke" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', subscription_status='active', credits_remaining=200 WHERE user_id=?"
+    )
+      .bind(userId)
+      .run();
+    const body = JSON.stringify({
+      id: "evt_sub_revoke_1",
+      type: "subscription.revoked",
+      created_at: new Date().toISOString(),
+      data: { id: "sub_r", status: "canceled", customer: { external_id: String(userId) } },
+    });
+    const sig = await signedSig(body);
+    await postWebhook(body, sig);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT plan, subscription_status, credits_remaining FROM users WHERE user_id=?"
+    )
+      .bind(userId)
+      .first();
+    expect(row.plan).toBe("free");
+    expect(row.subscription_status).toBe("canceled");
+    expect(row.credits_remaining).toBe(0);
+  });
+});
+
+describe("subscription.updated past_due handler", () => {
+  it("sets past_due_started_at on first transition, leaves credits", async () => {
+    const userId = await seedUser({ slug: "u_pastdue" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', subscription_status='active', credits_remaining=500 WHERE user_id=?"
+    )
+      .bind(userId)
+      .run();
+    const body = JSON.stringify({
+      id: "evt_sub_pastdue_1",
+      type: "subscription.updated",
+      created_at: new Date().toISOString(),
+      data: {
+        id: "sub_p",
+        status: "past_due",
+        cancel_at_period_end: false,
+        current_period_end: "2026-06-16T00:00:00Z",
+        customer: { external_id: String(userId) },
+      },
+    });
+    const sig = await signedSig(body);
+    await postWebhook(body, sig);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT subscription_status, past_due_started_at, plan, credits_remaining FROM users WHERE user_id=?"
+    )
+      .bind(userId)
+      .first();
+    expect(row.subscription_status).toBe("past_due");
+    expect(row.past_due_started_at).not.toBeNull();
+    expect(row.plan).toBe("pro"); // grace period, features still on
+    expect(row.credits_remaining).toBe(500);
+  });
+});
+
+describe("subscription.updated unpaid handler", () => {
+  it("treats unpaid as immediate revocation", async () => {
+    const userId = await seedUser({ slug: "u_unpaid" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', subscription_status='past_due', credits_remaining=300 WHERE user_id=?"
+    )
+      .bind(userId)
+      .run();
+    const body = JSON.stringify({
+      id: "evt_sub_unpaid_1",
+      type: "subscription.updated",
+      created_at: new Date().toISOString(),
+      data: {
+        id: "sub_u",
+        status: "unpaid",
+        customer: { external_id: String(userId) },
+      },
+    });
+    const sig = await signedSig(body);
+    await postWebhook(body, sig);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT plan, subscription_status, credits_remaining FROM users WHERE user_id=?"
+    )
+      .bind(userId)
+      .first();
+    expect(row.plan).toBe("free");
+    expect(row.subscription_status).toBe("unpaid");
+    expect(row.credits_remaining).toBe(0);
+  });
+});

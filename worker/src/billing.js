@@ -91,10 +91,121 @@ async function dispatch(event, userId, env) {
   }
 }
 
-// Stubs — implemented in Tasks 7 & 8.
-async function handleSubscriptionCreated(event, userId, env) {}
-async function handleSubscriptionUpdated(event, userId, env) {}
-async function handleSubscriptionCanceled(event, userId, env) {}
-async function handleSubscriptionRevoked(event, userId, env) {}
+// Per-cycle credit allowance lookup. Today stored per-user (set on
+// subscription.created). Spec §13: tunable via D1, not hardcoded.
+// For initial provisioning, we read from KV `pro:default_allowance`
+// (operator sets), defaulting to 1000 if unset.
+
+async function defaultCreditAllowance(env) {
+  const raw = await env.CLAUGE_KV.get("pro:default_allowance");
+  const n = raw ? Number(raw) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : 1000;
+}
+
+async function handleSubscriptionCreated(event, userId, env) {
+  const d = event.data;
+  const allowance = await defaultCreditAllowance(env);
+  await env.CLAUGE_DB.prepare(
+    `UPDATE users SET
+       plan = 'pro',
+       subscription_status = ?,
+       cancel_at_period_end = ?,
+       current_period_start = ?,
+       current_period_end = ?,
+       polar_subscription_id = ?,
+       credit_allowance_per_cycle = ?,
+       credits_remaining = ?,
+       past_due_started_at = NULL,
+       updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = ?`
+  )
+    .bind(
+      d.status === "trialing" ? "active" : d.status,
+      d.cancel_at_period_end ? 1 : 0,
+      d.current_period_start,
+      d.current_period_end,
+      d.id,
+      allowance,
+      allowance,
+      userId
+    )
+    .run();
+}
+
+async function handleSubscriptionUpdated(event, userId, env) {
+  const d = event.data;
+  if (d.status === "past_due") {
+    await env.CLAUGE_DB.prepare(
+      `UPDATE users SET
+         subscription_status = 'past_due',
+         past_due_started_at = COALESCE(past_due_started_at, CURRENT_TIMESTAMP),
+         cancel_at_period_end = ?,
+         current_period_end = COALESCE(?, current_period_end),
+         updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = ?`
+    )
+      .bind(d.cancel_at_period_end ? 1 : 0, d.current_period_end ?? null, userId)
+      .run();
+    return;
+  }
+
+  if (d.status === "unpaid") {
+    return revokeUser(userId, "unpaid", env);
+  }
+
+  await env.CLAUGE_DB.prepare(
+    `UPDATE users SET
+       subscription_status = ?,
+       cancel_at_period_end = ?,
+       current_period_start = COALESCE(?, current_period_start),
+       current_period_end = COALESCE(?, current_period_end),
+       past_due_started_at = CASE WHEN ? = 'active' THEN NULL ELSE past_due_started_at END,
+       updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = ?`
+  )
+    .bind(
+      d.status,
+      d.cancel_at_period_end ? 1 : 0,
+      d.current_period_start ?? null,
+      d.current_period_end ?? null,
+      d.status,
+      userId
+    )
+    .run();
+}
+
+async function handleSubscriptionCanceled(event, userId, env) {
+  const d = event.data;
+  await env.CLAUGE_DB.prepare(
+    `UPDATE users SET
+       cancel_at_period_end = 1,
+       current_period_end = COALESCE(?, current_period_end),
+       updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = ?`
+  )
+    .bind(d.current_period_end ?? null, userId)
+    .run();
+}
+
+async function handleSubscriptionRevoked(event, userId, env) {
+  await revokeUser(userId, "canceled", env);
+}
+
+async function revokeUser(userId, terminalStatus, env) {
+  await env.CLAUGE_DB.prepare(
+    `UPDATE users SET
+       plan = 'free',
+       subscription_status = ?,
+       cancel_at_period_end = 0,
+       credits_remaining = 0,
+       past_due_started_at = NULL,
+       updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = ?`
+  )
+    .bind(terminalStatus, userId)
+    .run();
+}
+
+// Keep these as stubs for Task 8
 async function handleOrderPaid(event, userId, env) {}
 async function handleOrderRefunded(event, userId, env) {}
