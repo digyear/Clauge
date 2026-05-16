@@ -206,7 +206,9 @@ pub async fn execute_nosql_tool(
             let database = input["database"].as_str().unwrap_or("");
             let collection = input["collection"].as_str().unwrap_or("");
             let filter_str = input["filter"].as_str().unwrap_or("{}");
-            let limit = input["limit"].as_i64().unwrap_or(50).min(100) as i64;
+            let default_limit = crate::shared::repos::settings::get_i64_or(pool, "nosql_default_find_limit", 50).await;
+            let max_limit = crate::shared::repos::settings::get_i64_or(pool, "nosql_max_find_limit", 100).await;
+            let limit = input["limit"].as_i64().unwrap_or(default_limit).min(max_limit) as i64;
 
             if connection_id.is_empty() || database.is_empty() || collection.is_empty() {
                 return "Error: connection_id, database, and collection are required".to_string();
@@ -320,7 +322,9 @@ pub async fn execute_nosql_tool(
             let database = input["database"].as_str().unwrap_or("");
             let collection = input["collection"].as_str().unwrap_or("");
             let pipeline_str = input["pipeline"].as_str().unwrap_or("[]");
-            let limit = input["limit"].as_i64().unwrap_or(50).min(100) as usize;
+            let default_limit = crate::shared::repos::settings::get_i64_or(pool, "nosql_default_find_limit", 50).await;
+            let max_limit = crate::shared::repos::settings::get_i64_or(pool, "nosql_max_find_limit", 100).await;
+            let limit = input["limit"].as_i64().unwrap_or(default_limit).min(max_limit) as usize;
 
             if connection_id.is_empty() || database.is_empty() || collection.is_empty() {
                 return "Error: connection_id, database, and collection are required".to_string();

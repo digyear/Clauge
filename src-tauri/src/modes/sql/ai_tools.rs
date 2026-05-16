@@ -106,38 +106,38 @@ fn extract_query_tables(query: &str) -> Vec<String> {
 async fn fetch_table_list(
     pool_entry: &crate::modes::sql::client::DatabasePool,
     database: &str,
+    app_pool: &SqlitePool,
 ) -> Vec<String> {
     use crate::modes::sql::client::DatabasePool;
+    let limit = crate::shared::repos::settings::get_u64_or(app_pool, "sql_table_list_limit", 200).await;
     match pool_entry {
         DatabasePool::Postgres(p) => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name LIMIT 200"
-            ).fetch_all(p).await.unwrap_or_default()
+            let q = format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name LIMIT {}", limit);
+            sqlx::query_scalar::<_, String>(&q).fetch_all(p).await.unwrap_or_default()
         }
         DatabasePool::MySql(p) => {
             if database.is_empty() {
-                sqlx::query_scalar::<_, String>(
-                    "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name LIMIT 200"
-                ).fetch_all(p).await.unwrap_or_default()
+                let q = format!("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name LIMIT {}", limit);
+                sqlx::query_scalar::<_, String>(&q).fetch_all(p).await.unwrap_or_default()
             } else {
-                sqlx::query_scalar::<_, String>(
-                    "SELECT table_name FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name LIMIT 200"
-                ).bind(database).fetch_all(p).await.unwrap_or_default()
+                let q = format!("SELECT table_name FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name LIMIT {}", limit);
+                sqlx::query_scalar::<_, String>(&q).bind(database).fetch_all(p).await.unwrap_or_default()
             }
         }
         DatabasePool::Sqlite(p) => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name LIMIT 200"
-            ).fetch_all(p).await.unwrap_or_default()
+            let q = format!("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name LIMIT {}", limit);
+            sqlx::query_scalar::<_, String>(&q).fetch_all(p).await.unwrap_or_default()
         }
         DatabasePool::Clickhouse(c) => {
-            match c.query("SELECT name FROM system.tables WHERE database = currentDatabase() ORDER BY name LIMIT 200").await {
+            let q = format!("SELECT name FROM system.tables WHERE database = currentDatabase() ORDER BY name LIMIT {}", limit);
+            match c.query(&q).await {
                 Ok(r) => r.rows.into_iter().filter_map(|row| row.first().and_then(|v| v.as_str().map(|s| s.to_string()))).collect(),
                 Err(_) => Vec::new(),
             }
         }
         DatabasePool::D1(c) => {
-            match c.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name LIMIT 200").await {
+            let q = format!("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name LIMIT {}", limit);
+            match c.query(&q).await {
                 Ok(r) => r.rows.into_iter().filter_map(|row| row.first().and_then(|v| v.as_str().map(|s| s.to_string()))).collect(),
                 Err(_) => Vec::new(),
             }
@@ -227,11 +227,12 @@ async fn build_schema_hint(
     pool_entry: &crate::modes::sql::client::DatabasePool,
     database: &str,
     query: &str,
+    app_pool: &SqlitePool,
 ) -> String {
     let mut out = String::new();
     let offender = extract_offending_name(raw_err);
     let query_tables = extract_query_tables(query);
-    let all_tables = fetch_table_list(pool_entry, database).await;
+    let all_tables = fetch_table_list(pool_entry, database, app_pool).await;
 
     if kind == SqlErrKind::SchemaTable {
         if !all_tables.is_empty() {
@@ -1137,7 +1138,7 @@ pub async fn execute_sql_tool(
                     let base = diagnose_query_error(&e);
                     if matches!(kind, SqlErrKind::SchemaColumn | SqlErrKind::SchemaTable) {
                         let db = input["database"].as_str().unwrap_or("");
-                        let hint = build_schema_hint(&e, kind, pool_entry, db, query).await;
+                        let hint = build_schema_hint(&e, kind, pool_entry, db, query, pool).await;
                         format!("{}{}", base, hint)
                     } else {
                         base

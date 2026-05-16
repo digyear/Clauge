@@ -314,6 +314,20 @@ async fn build_pool_inner(
     let url = build_connection_url(config)?;
     log::info!("[Clauge SQL] create_pool driver={} host={} port={} db={} ssl={} user={}",
         config.driver, config.host, config.port, config.database, config.ssl, config.username);
+
+    // User-configurable pool timeouts (Settings → SQL). Fall back to
+    // 10s acquire / 30min idle when the app_pool isn't available (e.g.
+    // some unit-test paths) or the setting is missing/malformed.
+    let (acquire_timeout, idle_timeout) = match app_pool {
+        Some(p) => {
+            use crate::shared::repos::settings;
+            let acquire_ms = settings::get_u64_or(p, "sql_acquire_timeout_ms", 10_000).await;
+            let idle_min = settings::get_u64_or(p, "sql_idle_timeout_min", 30).await;
+            (Duration::from_millis(acquire_ms), Duration::from_secs(idle_min * 60))
+        }
+        None => (Duration::from_secs(10), Duration::from_secs(30 * 60)),
+    };
+
     match dialect {
         SqlDialect::Postgres => {
             use sqlx::postgres::{PgConnectOptions, PgSslMode};
@@ -334,8 +348,8 @@ async fn build_pool_inner(
             let pool = sqlx::postgres::PgPoolOptions::new()
                 .max_connections(5)
                 .min_connections(1)
-                .acquire_timeout(Duration::from_secs(10))
-                .idle_timeout(Some(Duration::from_secs(30 * 60)))
+                .acquire_timeout(acquire_timeout)
+                .idle_timeout(Some(idle_timeout))
                 .max_lifetime(Some(Duration::from_secs(2 * 60 * 60)))
                 // Don't ping before every acquire — adds a roundtrip per
                 // query (especially painful over SSH tunnels). We catch
@@ -354,8 +368,8 @@ async fn build_pool_inner(
             let pool = sqlx::mysql::MySqlPoolOptions::new()
                 .max_connections(5)
                 .min_connections(1)
-                .acquire_timeout(Duration::from_secs(10))
-                .idle_timeout(Some(Duration::from_secs(30 * 60)))
+                .acquire_timeout(acquire_timeout)
+                .idle_timeout(Some(idle_timeout))
                 .max_lifetime(Some(Duration::from_secs(2 * 60 * 60)))
                 // Don't ping before every acquire — adds a roundtrip per
                 // query (especially painful over SSH tunnels). We catch
@@ -370,8 +384,8 @@ async fn build_pool_inner(
             let pool = sqlx::sqlite::SqlitePoolOptions::new()
                 .max_connections(5)
                 .min_connections(1)
-                .acquire_timeout(Duration::from_secs(10))
-                .idle_timeout(Some(Duration::from_secs(30 * 60)))
+                .acquire_timeout(acquire_timeout)
+                .idle_timeout(Some(idle_timeout))
                 .max_lifetime(Some(Duration::from_secs(2 * 60 * 60)))
                 // Don't ping before every acquire — adds a roundtrip per
                 // query (especially painful over SSH tunnels). We catch

@@ -130,7 +130,7 @@ impl ClickhouseClient {
         let base_url = format!("{}://{}:{}", scheme, host, port);
 
         let http = if let Some(pool) = app_pool {
-            crate::shared::http::build_app_http_client(pool).await?
+            crate::shared::http::build_sql_http_client(pool).await?
         } else {
             reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))

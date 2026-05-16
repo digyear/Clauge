@@ -136,8 +136,22 @@ pub async fn build_rest_http_client(pool: &SqlitePool) -> Result<reqwest::Client
         .map_err(|e| format!("HTTP client build failed: {}", e))
 }
 
-/// Read `max_response_size` (MB) and convert to bytes. Used by the executor
-/// to enforce the cap after the body is read.
+/// HTTP client for SQL HTTP drivers (D1, ClickHouse). Honors the
+/// user-configurable `sql_http_query_timeout_sec` setting; falls back to
+/// 60s when unset. Also picks up the app proxy.
+pub async fn build_sql_http_client(pool: &SqlitePool) -> Result<reqwest::Client, String> {
+    let timeout_sec = crate::shared::repos::settings::get_u64_or(pool, "sql_http_query_timeout_sec", 60).await;
+    let builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_sec))
+        .redirect(reqwest::redirect::Policy::limited(DEFAULT_REDIRECT_LIMIT));
+
+    let builder = apply_proxy(pool, builder).await?;
+
+    builder
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {}", e))
+}
+
 pub async fn max_response_bytes(pool: &SqlitePool) -> u64 {
     let mb = get_u64(pool, "max_response_size", 10).await;
     mb.saturating_mul(1024 * 1024)

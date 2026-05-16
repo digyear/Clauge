@@ -332,8 +332,10 @@ pub async fn nosql_connect(
             let mut opts = ClientOptions::parse(&uri)
                 .await
                 .map_err(|e| format!("MongoDB connection parse error: {}", e))?;
-            opts.server_selection_timeout = Some(std::time::Duration::from_secs(10));
-            opts.connect_timeout = Some(std::time::Duration::from_secs(10));
+            let ss_ms = crate::shared::repos::settings::get_u64_or(app_pool.inner(), "nosql_server_selection_timeout_ms", 10_000).await;
+            let conn_ms = crate::shared::repos::settings::get_u64_or(app_pool.inner(), "nosql_connect_timeout_ms", 10_000).await;
+            opts.server_selection_timeout = Some(std::time::Duration::from_millis(ss_ms));
+            opts.connect_timeout = Some(std::time::Duration::from_millis(conn_ms));
             if config.direct_connection {
                 opts.direct_connection = Some(true);
             }
@@ -420,8 +422,10 @@ pub async fn nosql_test_connection(
             let mut opts = ClientOptions::parse(&uri)
                 .await
                 .map_err(|e| format!("MongoDB parse error: {}", e))?;
-            opts.server_selection_timeout = Some(std::time::Duration::from_secs(10));
-            opts.connect_timeout = Some(std::time::Duration::from_secs(10));
+            let ss_ms = crate::shared::repos::settings::get_u64_or(app_pool.inner(), "nosql_server_selection_timeout_ms", 10_000).await;
+            let conn_ms = crate::shared::repos::settings::get_u64_or(app_pool.inner(), "nosql_connect_timeout_ms", 10_000).await;
+            opts.server_selection_timeout = Some(std::time::Duration::from_millis(ss_ms));
+            opts.connect_timeout = Some(std::time::Duration::from_millis(conn_ms));
             if config.direct_connection {
                 opts.direct_connection = Some(true);
             }

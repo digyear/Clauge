@@ -14,7 +14,11 @@
         retentionSeconds,
         DEFAULT_CHAT_RETENTION,
     } from "$lib/modes/rest/stores";
-    import { countHistory, purgeHistory, restHistorySizeBytes } from "$lib/modes/rest/commands";
+    import {
+        countHistory,
+        purgeHistory,
+        restHistorySizeBytes,
+    } from "$lib/modes/rest/commands";
     import {
         workspaceMcpStatus,
         workspaceMcpStart,
@@ -99,6 +103,8 @@
         | "rest"
         | "agent"
         | "workspace"
+        | "sql"
+        | "nosql"
         | "about";
 
     let activeTab = $state<SettingsTab>("general");
@@ -163,6 +169,42 @@
     );
     let maxResponseSize = $derived(
         Number($settings["max_response_size"] ?? "10"),
+    );
+
+    // --- SQL ---
+    // Defaults match the previously-hardcoded values in
+    // `src-tauri/src/modes/sql/{client,d1_client,clickhouse_client}.rs`
+    // and `modes/sql/ai_tools.rs`. Changes apply to NEW connections /
+    // queries — already-open pools keep their old timeouts until
+    // reconnect.
+    let sqlAcquireTimeoutMs = $derived(
+        Number($settings["sql_acquire_timeout_ms"] ?? "10000"),
+    );
+    let sqlIdleTimeoutMin = $derived(
+        Number($settings["sql_idle_timeout_min"] ?? "30"),
+    );
+    let sqlHttpQueryTimeoutSec = $derived(
+        Number($settings["sql_http_query_timeout_sec"] ?? "60"),
+    );
+    let sqlTableListLimit = $derived(
+        Number($settings["sql_table_list_limit"] ?? "200"),
+    );
+
+    // --- NoSQL ---
+    // Defaults match Mongo client config in
+    // `src-tauri/src/modes/nosql/client.rs` + the AI-tool find caps in
+    // `modes/nosql/ai_tools.rs`.
+    let nosqlServerSelectionTimeoutMs = $derived(
+        Number($settings["nosql_server_selection_timeout_ms"] ?? "10000"),
+    );
+    let nosqlConnectTimeoutMs = $derived(
+        Number($settings["nosql_connect_timeout_ms"] ?? "10000"),
+    );
+    let nosqlDefaultFindLimit = $derived(
+        Number($settings["nosql_default_find_limit"] ?? "50"),
+    );
+    let nosqlMaxFindLimit = $derived(
+        Number($settings["nosql_max_find_limit"] ?? "100"),
     );
 
     // --- Editor ---
@@ -291,12 +333,13 @@
         ($settings["workspace_automove_merged_prs"] ?? "true") === "true",
     );
 
-
     async function refreshMcpStatus() {
         try {
             mcpStatus = await workspaceMcpStatus();
             mcpStatusStore.set(mcpStatus);
-        } catch { /* ignore */ }
+        } catch {
+            /* ignore */
+        }
     }
 
     /** Lazy-init token + load status when the Workspace tab opens.
@@ -327,7 +370,10 @@
                 await workspaceMcpRegister(mcpStatus.port ?? mcpPort, token);
                 // Persist the desire — drives auto-start on next app boot.
                 await setSetting("workspace_mcp_enabled", "true");
-                showToast(`MCP server running on :${mcpStatus.port}`, "success");
+                showToast(
+                    `MCP server running on :${mcpStatus.port}`,
+                    "success",
+                );
             } else {
                 mcpStatus = await workspaceMcpStop();
                 mcpStatusStore.set(mcpStatus);
@@ -367,7 +413,9 @@
         try {
             await navigator.clipboard.writeText(mcpToken);
             showToast("Token copied", "success");
-        } catch { /* ignore */ }
+        } catch {
+            /* ignore */
+        }
     }
 
     // AI Assistance state
@@ -483,6 +531,20 @@
         },
         {
             kind: "tab",
+            key: "sql",
+            label: "SQL",
+            // DB cylinder — matches the SQL tab icon in Topbar.
+            icon: '<ellipse cx="12" cy="5" rx="8" ry="2.5"/><path d="M4 5v14c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"/><path d="M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/>',
+        },
+        {
+            kind: "tab",
+            key: "nosql",
+            label: "NoSQL",
+            // Curly braces — matches NoSQL identity in Topbar.
+            icon: '<path d="M8 3a2 2 0 00-2 2v4a2 2 0 01-2 2H3a1 1 0 000 2h1a2 2 0 012 2v4a2 2 0 002 2"/><path d="M16 3a2 2 0 012 2v4a2 2 0 002 2h1a1 1 0 010 2h-1a2 2 0 00-2 2v4a2 2 0 01-2 2"/>',
+        },
+        {
+            kind: "tab",
             key: "about",
             label: "About",
             icon: '<path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>',
@@ -521,7 +583,10 @@
                 loadAgentUsageLimits();
             } else {
                 agentUsageLimits.set(null);
-                agentUsageAuthStatus.set({ state: "unconfigured", message: "" });
+                agentUsageAuthStatus.set({
+                    state: "unconfigured",
+                    message: "",
+                });
             }
         } else if (key === "agent_codex_access_token") {
             agentCodexTokenStore.set(value);
@@ -529,7 +594,10 @@
                 loadAgentUsageLimits();
             } else {
                 agentUsageLimits.set(null);
-                agentUsageAuthStatus.set({ state: "unconfigured", message: "" });
+                agentUsageAuthStatus.set({
+                    state: "unconfigured",
+                    message: "",
+                });
             }
         } else if (key === "agent_footer_usage_provider") {
             if (
@@ -900,7 +968,8 @@
             installedPlugins = [];
         }
         try {
-            marketplacePlugins = await agentGetMarketplacePlugins(pluginProvider);
+            marketplacePlugins =
+                await agentGetMarketplacePlugins(pluginProvider);
         } catch {
             marketplacePlugins = [];
         }
@@ -1049,191 +1118,327 @@
 </script>
 
 {#if show}
-<div class="stg-pane glass-surface" role="region" aria-label="Settings">
-    <div class="stg-layout">
-        <!-- Tab sidebar -->
-        <div class="stg-tabs">
-            {#each tabs as item}
-                {#if item.kind === "header"}
-                    <span class="stg-tab-section">{item.label}</span>
-                {:else}
-                    <button
-                        class="stg-tab"
-                        class:active={activeTab === item.key}
-                        onclick={() => (activeTab = item.key)}
-                    >
-                        <svg
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
+    <div class="stg-pane glass-surface" role="region" aria-label="Settings">
+        <div class="stg-layout">
+            <!-- Tab sidebar -->
+            <div class="stg-tabs">
+                {#each tabs as item}
+                    {#if item.kind === "header"}
+                        <span class="stg-tab-section">{item.label}</span>
+                    {:else}
+                        <button
+                            class="stg-tab"
+                            class:active={activeTab === item.key}
+                            onclick={() => (activeTab = item.key)}
                         >
-                            {@html item.icon}
-                        </svg>
-                        {item.label}
-                    </button>
-                {/if}
-            {/each}
-        </div>
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                {@html item.icon}
+                            </svg>
+                            {item.label}
+                        </button>
+                    {/if}
+                {/each}
+            </div>
 
-        <!-- Content pane -->
-        <div class="stg-content">
-            {#if activeTab === "account"}
-                <AccountTabContent />
-            {:else if activeTab === "general"}
-                <div class="stg-card-stack">
-                    <!-- Proxy card -->
-                    <section class="stg-card">
-                        <header class="stg-card-hd">
-                            <span class="stg-card-icon" aria-hidden="true">
-                                <svg
-                                    viewBox="0 0 24 24"
-                                    width="14"
-                                    height="14"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                >
-                                    <circle cx="12" cy="12" r="10" /><path
-                                        d="M2 12h20"
-                                    /><path
-                                        d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
-                                    />
-                                </svg>
-                            </span>
-                            <div class="stg-card-titles">
-                                <h3 class="stg-card-title">Proxy</h3>
-                                <p class="stg-card-sub">
-                                    Applies system-wide. Leave blank to connect
-                                    directly.
-                                </p>
-                            </div>
-                        </header>
-                        <div class="stg-card-body">
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label"
-                                    >Proxy URL</label
-                                >
-                                <input
-                                    class="stg-input stg-card-input-lg"
-                                    type="text"
-                                    placeholder="http://proxy:8080"
-                                    value={proxyUrl}
-                                    onchange={(e) =>
-                                        handleSettingChange(
-                                            "proxy_url",
-                                            e.currentTarget.value,
-                                        )}
-                                />
-                            </div>
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label"
-                                    >Proxy Authentication</label
-                                >
-                                <label class="stg-toggle">
-                                    <input
-                                        type="checkbox"
-                                        checked={proxyAuth}
-                                        onchange={(e) =>
-                                            handleSettingChange(
-                                                "proxy_auth",
-                                                String(e.currentTarget.checked),
-                                            )}
-                                    />
-                                    <span class="stg-toggle-slider"></span>
-                                </label>
-                            </div>
-                            {#if proxyAuth}
+            <!-- Content pane -->
+            <div class="stg-content">
+                {#if activeTab === "account"}
+                    <AccountTabContent />
+                {:else if activeTab === "general"}
+                    <div class="stg-card-stack">
+                        <!-- Proxy card -->
+                        <section class="stg-card">
+                            <header class="stg-card-hd">
+                                <span class="stg-card-icon" aria-hidden="true">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        width="14"
+                                        height="14"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <circle cx="12" cy="12" r="10" /><path
+                                            d="M2 12h20"
+                                        /><path
+                                            d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
+                                        />
+                                    </svg>
+                                </span>
+                                <div class="stg-card-titles">
+                                    <h3 class="stg-card-title">Proxy</h3>
+                                    <p class="stg-card-sub">
+                                        Applies system-wide. Leave blank to
+                                        connect directly.
+                                    </p>
+                                </div>
+                            </header>
+                            <div class="stg-card-body">
                                 <div class="stg-card-row">
                                     <label class="stg-card-row-label"
-                                        >Username</label
+                                        >Proxy URL</label
                                     >
                                     <input
-                                        class="stg-input"
+                                        class="stg-input stg-card-input-lg"
                                         type="text"
-                                        value={proxyUsername}
-                                        placeholder="username"
+                                        placeholder="http://proxy:8080"
+                                        value={proxyUrl}
                                         onchange={(e) =>
                                             handleSettingChange(
-                                                "proxy_username",
+                                                "proxy_url",
                                                 e.currentTarget.value,
                                             )}
                                     />
                                 </div>
                                 <div class="stg-card-row">
                                     <label class="stg-card-row-label"
-                                        >Password</label
+                                        >Proxy Authentication</label
                                     >
-                                    <input
-                                        class="stg-input"
-                                        type="password"
-                                        value={proxyPassword}
-                                        placeholder="password"
+                                    <label class="stg-toggle">
+                                        <input
+                                            type="checkbox"
+                                            checked={proxyAuth}
+                                            onchange={(e) =>
+                                                handleSettingChange(
+                                                    "proxy_auth",
+                                                    String(
+                                                        e.currentTarget.checked,
+                                                    ),
+                                                )}
+                                        />
+                                        <span class="stg-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                {#if proxyAuth}
+                                    <div class="stg-card-row">
+                                        <label class="stg-card-row-label"
+                                            >Username</label
+                                        >
+                                        <input
+                                            class="stg-input"
+                                            type="text"
+                                            value={proxyUsername}
+                                            placeholder="username"
+                                            onchange={(e) =>
+                                                handleSettingChange(
+                                                    "proxy_username",
+                                                    e.currentTarget.value,
+                                                )}
+                                        />
+                                    </div>
+                                    <div class="stg-card-row">
+                                        <label class="stg-card-row-label"
+                                            >Password</label
+                                        >
+                                        <input
+                                            class="stg-input"
+                                            type="password"
+                                            value={proxyPassword}
+                                            placeholder="password"
+                                            onchange={(e) =>
+                                                handleSettingChange(
+                                                    "proxy_password",
+                                                    e.currentTarget.value,
+                                                )}
+                                        />
+                                    </div>
+                                {/if}
+                            </div>
+                        </section>
+
+                        <!-- Logs card -->
+                        <section class="stg-card">
+                            <header class="stg-card-hd">
+                                <span class="stg-card-icon" aria-hidden="true">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        width="14"
+                                        height="14"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <path
+                                            d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                                        /><polyline
+                                            points="14 2 14 8 20 8"
+                                        /><line
+                                            x1="9"
+                                            y1="13"
+                                            x2="15"
+                                            y2="13"
+                                        /><line
+                                            x1="9"
+                                            y1="17"
+                                            x2="15"
+                                            y2="17"
+                                        />
+                                    </svg>
+                                </span>
+                                <div class="stg-card-titles">
+                                    <h3 class="stg-card-title">Logs</h3>
+                                    <p class="stg-card-sub">
+                                        Per-hour log files organized by day.
+                                        Logs older than 30 days are removed
+                                        automatically.
+                                    </p>
+                                </div>
+                            </header>
+                            <div class="stg-card-body">
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Log Folder</label
+                                    >
+                                    <div class="log-path-row">
+                                        <span class="log-path">{logDir}</span>
+                                        <button
+                                            class="log-open-btn"
+                                            onclick={handleOpenLogFolder}
+                                            title="Open in file manager"
+                                            aria-label="Open log folder"
+                                        >
+                                            <svg
+                                                width="14"
+                                                height="14"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                aria-hidden="true"
+                                            >
+                                                <path
+                                                    d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                                                />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Chat History card -->
+                        <section class="stg-card">
+                            <header class="stg-card-hd">
+                                <span class="stg-card-icon" aria-hidden="true">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        width="14"
+                                        height="14"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <path
+                                            d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+                                        />
+                                    </svg>
+                                </span>
+                                <div class="stg-card-titles">
+                                    <h3 class="stg-card-title">Chat History</h3>
+                                    <p class="stg-card-sub">
+                                        Applies to the History section
+                                        (request/response log) and the AI
+                                        Assistance chat across all modes.
+                                    </p>
+                                </div>
+                            </header>
+
+                            <!-- Stat strip: prominent counts, scannable. -->
+                            <div class="stg-card-stats">
+                                <div class="stg-card-stat">
+                                    <span class="stg-card-stat-num"
+                                        >{restHistoryCount.toLocaleString()}</span
+                                    >
+                                    <span class="stg-card-stat-lbl"
+                                        >Request{restHistoryCount === 1
+                                            ? ""
+                                            : "s"}</span
+                                    >
+                                </div>
+                                <div
+                                    class="stg-card-stat-divider"
+                                    aria-hidden="true"
+                                ></div>
+                                <div class="stg-card-stat">
+                                    <span class="stg-card-stat-num"
+                                        >{aiChatCount.toLocaleString()}</span
+                                    >
+                                    <span class="stg-card-stat-lbl"
+                                        >AI message{aiChatCount === 1
+                                            ? ""
+                                            : "s"}</span
+                                    >
+                                </div>
+                                <div
+                                    class="stg-card-stat-divider"
+                                    aria-hidden="true"
+                                ></div>
+                                <div class="stg-card-stat">
+                                    <span class="stg-card-stat-num"
+                                        >{formatBytes(totalStorageBytes)}</span
+                                    >
+                                    <span class="stg-card-stat-lbl"
+                                        >Storage</span
+                                    >
+                                </div>
+                            </div>
+
+                            <div class="stg-card-body">
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Auto-clear after</label
+                                    >
+                                    <select
+                                        class="stg-input stg-card-input-lg"
+                                        value={chatRetention}
                                         onchange={(e) =>
-                                            handleSettingChange(
-                                                "proxy_password",
+                                            handleChatRetentionChange(
                                                 e.currentTarget.value,
                                             )}
-                                    />
+                                    >
+                                        <option value="24h">24 Hours</option>
+                                        <option value="7d">7 Days</option>
+                                        <option value="30d"
+                                            >30 Days (default)</option
+                                        >
+                                        <option value="1y">1 Year</option>
+                                        <option value="never">Never</option>
+                                    </select>
                                 </div>
-                            {/if}
-                        </div>
-                    </section>
-
-                    <!-- Logs card -->
-                    <section class="stg-card">
-                        <header class="stg-card-hd">
-                            <span class="stg-card-icon" aria-hidden="true">
-                                <svg
-                                    viewBox="0 0 24 24"
-                                    width="14"
-                                    height="14"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                >
-                                    <path
-                                        d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
-                                    /><polyline points="14 2 14 8 20 8" /><line
-                                        x1="9"
-                                        y1="13"
-                                        x2="15"
-                                        y2="13"
-                                    /><line x1="9" y1="17" x2="15" y2="17" />
-                                </svg>
-                            </span>
-                            <div class="stg-card-titles">
-                                <h3 class="stg-card-title">Logs</h3>
-                                <p class="stg-card-sub">
-                                    Per-hour log files organized by day. Logs
-                                    older than 30 days are removed
-                                    automatically.
-                                </p>
-                            </div>
-                        </header>
-                        <div class="stg-card-body">
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label"
-                                    >Log Folder</label
-                                >
-                                <div class="log-path-row">
-                                    <span class="log-path">{logDir}</span>
+                                <div class="stg-card-row stg-card-row-action">
+                                    <div class="stg-card-row-action-text">
+                                        <span class="stg-card-row-label"
+                                            >Clear all chat history</span
+                                        >
+                                        <span class="stg-card-row-help"
+                                            >Removes every request log and AI
+                                            conversation. This cannot be undone.</span
+                                        >
+                                    </div>
                                     <button
-                                        class="log-open-btn"
-                                        onclick={handleOpenLogFolder}
-                                        title="Open in file manager"
-                                        aria-label="Open log folder"
+                                        class="stg-card-danger-btn"
+                                        onclick={() =>
+                                            (showClearChatHistoryConfirm = true)}
                                     >
                                         <svg
-                                            width="14"
-                                            height="14"
                                             viewBox="0 0 24 24"
+                                            width="12"
+                                            height="12"
                                             fill="none"
                                             stroke="currentColor"
                                             stroke-width="2"
@@ -1241,420 +1446,193 @@
                                             stroke-linejoin="round"
                                             aria-hidden="true"
                                         >
-                                            <path
-                                                d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                                            <polyline
+                                                points="3 6 5 6 21 6"
+                                            /><path
+                                                d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"
+                                            /><path d="M10 11v6" /><path
+                                                d="M14 11v6"
                                             />
                                         </svg>
+                                        <span>Clear History</span>
                                     </button>
                                 </div>
                             </div>
-                        </div>
-                    </section>
-
-                    <!-- Chat History card -->
-                    <section class="stg-card">
-                        <header class="stg-card-hd">
-                            <span class="stg-card-icon" aria-hidden="true">
-                                <svg
-                                    viewBox="0 0 24 24"
-                                    width="14"
-                                    height="14"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                >
-                                    <path
-                                        d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
-                                    />
-                                </svg>
-                            </span>
-                            <div class="stg-card-titles">
-                                <h3 class="stg-card-title">Chat History</h3>
-                                <p class="stg-card-sub">
-                                    Applies to the History section
-                                    (request/response log) and the AI Assistance
-                                    chat across all modes.
-                                </p>
-                            </div>
-                        </header>
-
-                        <!-- Stat strip: prominent counts, scannable. -->
-                        <div class="stg-card-stats">
-                            <div class="stg-card-stat">
-                                <span class="stg-card-stat-num"
-                                    >{restHistoryCount.toLocaleString()}</span
-                                >
-                                <span class="stg-card-stat-lbl"
-                                    >Request{restHistoryCount === 1
-                                        ? ""
-                                        : "s"}</span
-                                >
-                            </div>
-                            <div
-                                class="stg-card-stat-divider"
-                                aria-hidden="true"
-                            ></div>
-                            <div class="stg-card-stat">
-                                <span class="stg-card-stat-num"
-                                    >{aiChatCount.toLocaleString()}</span
-                                >
-                                <span class="stg-card-stat-lbl"
-                                    >AI message{aiChatCount === 1
-                                        ? ""
-                                        : "s"}</span
-                                >
-                            </div>
-                            <div
-                                class="stg-card-stat-divider"
-                                aria-hidden="true"
-                            ></div>
-                            <div class="stg-card-stat">
-                                <span class="stg-card-stat-num"
-                                    >{formatBytes(totalStorageBytes)}</span
-                                >
-                                <span class="stg-card-stat-lbl">Storage</span>
-                            </div>
-                        </div>
-
-                        <div class="stg-card-body">
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label"
-                                    >Auto-clear after</label
-                                >
-                                <select
-                                    class="stg-input stg-card-input-lg"
-                                    value={chatRetention}
-                                    onchange={(e) =>
-                                        handleChatRetentionChange(
-                                            e.currentTarget.value,
-                                        )}
-                                >
-                                    <option value="24h">24 Hours</option>
-                                    <option value="7d">7 Days</option>
-                                    <option value="30d"
-                                        >30 Days (default)</option
-                                    >
-                                    <option value="1y">1 Year</option>
-                                    <option value="never">Never</option>
-                                </select>
-                            </div>
-                            <div class="stg-card-row stg-card-row-action">
-                                <div class="stg-card-row-action-text">
-                                    <span class="stg-card-row-label"
-                                        >Clear all chat history</span
-                                    >
-                                    <span class="stg-card-row-help"
-                                        >Removes every request log and AI
-                                        conversation. This cannot be undone.</span
-                                    >
-                                </div>
-                                <button
-                                    class="stg-card-danger-btn"
-                                    onclick={() =>
-                                        (showClearChatHistoryConfirm = true)}
-                                >
+                        </section>
+                    </div>
+                {:else if activeTab === "workspace"}
+                    <div class="stg-card-stack">
+                        <section class="stg-card">
+                            <header class="stg-card-hd">
+                                <span class="stg-card-icon" aria-hidden="true">
                                     <svg
                                         viewBox="0 0 24 24"
-                                        width="12"
-                                        height="12"
+                                        width="14"
+                                        height="14"
                                         fill="none"
                                         stroke="currentColor"
                                         stroke-width="2"
                                         stroke-linecap="round"
                                         stroke-linejoin="round"
-                                        aria-hidden="true"
+                                        ><polyline
+                                            points="16 18 22 12 16 6"
+                                        /><polyline
+                                            points="8 6 2 12 8 18"
+                                        /></svg
                                     >
-                                        <polyline points="3 6 5 6 21 6" /><path
-                                            d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"
-                                        /><path d="M10 11v6" /><path
-                                            d="M14 11v6"
+                                </span>
+                                <div class="stg-card-titles">
+                                    <h3 class="stg-card-title">MCP Server</h3>
+                                    <p class="stg-card-sub">
+                                        Local MCP server that lets MCP-aware
+                                        coding agents read and edit your Notes
+                                        and Boards via tool calls. Each
+                                        installed agent's config is registered
+                                        automatically when enabled.
+                                    </p>
+                                </div>
+                                <span
+                                    class="stg-card-pill"
+                                    class:on={mcpStatus.running}
+                                >
+                                    <span class="stg-card-pill-dot"></span>
+                                    {mcpStatus.running
+                                        ? `Running · :${mcpStatus.port}`
+                                        : "Stopped"}
+                                </span>
+                            </header>
+
+                            <div class="stg-card-body">
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Enable MCP server</label
+                                    >
+                                    <label class="stg-toggle">
+                                        <input
+                                            type="checkbox"
+                                            checked={mcpStatus.running}
+                                            onchange={(e) =>
+                                                handleMcpToggle(
+                                                    e.currentTarget.checked,
+                                                )}
                                         />
-                                    </svg>
-                                    <span>Clear History</span>
-                                </button>
-                            </div>
-                        </div>
-                    </section>
-
-                </div>
-            {:else if activeTab === "workspace"}
-                <div class="stg-card-stack">
-                    <section class="stg-card">
-                        <header class="stg-card-hd">
-                            <span class="stg-card-icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                            </span>
-                            <div class="stg-card-titles">
-                                <h3 class="stg-card-title">MCP Server</h3>
-                                <p class="stg-card-sub">
-                                    Local MCP server that lets MCP-aware coding agents read and edit your Notes and Boards via tool calls. Each installed agent's config is registered automatically when enabled.
-                                </p>
-                            </div>
-                            <span class="stg-card-pill" class:on={mcpStatus.running}>
-                                <span class="stg-card-pill-dot"></span>
-                                {mcpStatus.running ? `Running · :${mcpStatus.port}` : 'Stopped'}
-                            </span>
-                        </header>
-
-                        <div class="stg-card-body">
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label">Enable MCP server</label>
-                                <label class="stg-toggle">
-                                    <input type="checkbox" checked={mcpStatus.running} onchange={(e) => handleMcpToggle(e.currentTarget.checked)} />
-                                    <span class="stg-toggle-slider"></span>
-                                </label>
-                            </div>
-
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label">Port</label>
-                                <input
-                                    class="stg-input"
-                                    type="number"
-                                    min="1024"
-                                    max="65535"
-                                    value={mcpPort}
-                                    disabled={mcpStatus.running}
-                                    onchange={(e) => mcpPort = Number(e.currentTarget.value) || 7421}
-                                />
-                            </div>
-
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label">Auth token</label>
-                                <div class="stg-card-token-row">
-                                    <input class="stg-input stg-card-input-lg" type={showMcpToken ? 'text' : 'password'} value={mcpToken} readonly />
-                                    <button class="stg-card-mini-btn" onclick={() => showMcpToken = !showMcpToken} title={showMcpToken ? 'Hide' : 'Show'}>
-                                        {showMcpToken ? 'Hide' : 'Show'}
-                                    </button>
-                                    <button class="stg-card-mini-btn" onclick={handleCopyMcpToken} title="Copy">Copy</button>
-                                    <button class="stg-card-mini-btn" onclick={handleRotateMcpToken} disabled={mcpStatus.running} title="Generate new token">Rotate</button>
+                                        <span class="stg-toggle-slider"></span>
+                                    </label>
                                 </div>
-                            </div>
-                        </div>
-                    </section>
 
-                    <section class="stg-card">
-                        <header class="stg-card-hd">
-                            <span class="stg-card-icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18M3 12h12M3 17h18"/></svg>
-                            </span>
-                            <div class="stg-card-titles">
-                                <h3 class="stg-card-title">Board automation</h3>
-                                <p class="stg-card-sub">
-                                    When a card's PR merges on GitHub or GitLab, automatically move it to your board's final column (any column whose name matches done / merged / shipped / complete / closed). Checked on app focus, debounced to 5 minutes. The card thread gets a system comment so the move is auditable.
-                                </p>
-                            </div>
-                        </header>
-                        <div class="stg-card-body">
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label">Auto-move cards on PR merge</label>
-                                <label class="stg-toggle">
-                                    <input
-                                        type="checkbox"
-                                        checked={autoMoveMergedPrs}
-                                        onchange={(e) => handleSettingChange("workspace_automove_merged_prs", String(e.currentTarget.checked))}
-                                    />
-                                    <span class="stg-toggle-slider"></span>
-                                </label>
-                            </div>
-                        </div>
-                    </section>
-                </div>
-            {:else if activeTab === "rest"}
-                <div class="stg-card-stack">
-                    <section class="stg-card">
-                        <header class="stg-card-hd">
-                            <span class="stg-card-icon" aria-hidden="true">
-                                <svg
-                                    viewBox="0 0 24 24"
-                                    width="14"
-                                    height="14"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                >
-                                    <path
-                                        d="M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0z"
-                                    /><path d="M12 8v4l3 2" />
-                                </svg>
-                            </span>
-                            <div class="stg-card-titles">
-                                <h3 class="stg-card-title">Request Settings</h3>
-                                <p class="stg-card-sub">
-                                    Defaults applied to every REST request you
-                                    send.
-                                </p>
-                            </div>
-                        </header>
-                        <div class="stg-card-body">
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label"
-                                    >Request Timeout (ms)</label
-                                >
-                                <input
-                                    class="stg-input"
-                                    type="number"
-                                    value={timeout}
-                                    min="1000"
-                                    step="1000"
-                                    onchange={(e) =>
-                                        handleSettingChange(
-                                            "request_timeout",
-                                            e.currentTarget.value,
-                                        )}
-                                />
-                            </div>
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label"
-                                    >Follow Redirects</label
-                                >
-                                <label class="stg-toggle">
-                                    <input
-                                        type="checkbox"
-                                        checked={followRedirects}
-                                        onchange={(e) =>
-                                            handleSettingChange(
-                                                "follow_redirects",
-                                                String(e.currentTarget.checked),
-                                            )}
-                                    />
-                                    <span class="stg-toggle-slider"></span>
-                                </label>
-                            </div>
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label"
-                                    >SSL Verification</label
-                                >
-                                <label class="stg-toggle">
-                                    <input
-                                        type="checkbox"
-                                        checked={sslVerification}
-                                        onchange={(e) =>
-                                            handleSettingChange(
-                                                "ssl_verification",
-                                                String(e.currentTarget.checked),
-                                            )}
-                                    />
-                                    <span class="stg-toggle-slider"></span>
-                                </label>
-                            </div>
-                            <div class="stg-card-row">
-                                <label class="stg-card-row-label"
-                                    >Max Response Size (MB)</label
-                                >
-                                <input
-                                    class="stg-input"
-                                    type="number"
-                                    value={maxResponseSize}
-                                    min="1"
-                                    max="100"
-                                    onchange={(e) =>
-                                        handleSettingChange(
-                                            "max_response_size",
-                                            e.currentTarget.value,
-                                        )}
-                                />
-                            </div>
-                        </div>
-                    </section>
-                </div>
-            {:else if activeTab === "appearance"}
-                <div class="stg-section">
-                    <span class="stg-section-label">Theme</span>
-                    <div class="theme-grid">
-                        {#each getThemes() as theme}
-                            <button
-                                class="theme-card"
-                                class:active={currentTheme === theme.id}
-                                onclick={() => handleThemeChange(theme.id)}
-                            >
-                                <div class="theme-preview">
-                                    {#each THEME_PREVIEW_COLORS[theme.id] || [] as color, i}
-                                        <div
-                                            class="theme-preview-bar"
-                                            style="background:{color}; opacity:{0.6 +
-                                                i * 0.2}"
-                                        ></div>
-                                    {/each}
-                                </div>
-                                <div class="theme-info">
-                                    <span class="theme-name">{theme.name}</span>
-                                    <span class="theme-desc"
-                                        >{THEME_DESCRIPTIONS[theme.id] ||
-                                            ""}</span
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Port</label
                                     >
+                                    <input
+                                        class="stg-input"
+                                        type="number"
+                                        min="1024"
+                                        max="65535"
+                                        value={mcpPort}
+                                        disabled={mcpStatus.running}
+                                        onchange={(e) =>
+                                            (mcpPort =
+                                                Number(e.currentTarget.value) ||
+                                                7421)}
+                                    />
                                 </div>
-                            </button>
-                        {/each}
-                    </div>
-                </div>
 
-                <div class="stg-section">
-                    <span class="stg-section-label">Accent Color</span>
-                    {#if accentLocked}
-                        <div class="stg-accent-locked-note">
-                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-                            <span><strong>{activeThemeDef?.name}</strong> provides its own accent. Pick a different theme to customize.</span>
-                        </div>
-                    {/if}
-                    <div class="stg-swatches" class:stg-swatches-disabled={accentLocked}>
-                        {#each ACCENT_COLORS as color}
-                            <button
-                                class="stg-swatch"
-                                class:active={accentColor === color.value}
-                                style="background: {color.value}"
-                                title={accentLocked ? `${activeThemeDef?.name} controls the accent` : color.name}
-                                disabled={accentLocked}
-                                onclick={() => handleAccentChange(color.value)}
-                            ></button>
-                        {/each}
-                    </div>
-                </div>
-            {:else if activeTab === "ai"}
-                <!-- AI sub-tabs -->
-                <div class="ai-subtabs">
-                    <button
-                        class="ai-subtab"
-                        class:active={aiSubTab === "config"}
-                        onclick={() => (aiSubTab = "config")}
-                    >
-                        Configuration
-                    </button>
-                    <button
-                        class="ai-subtab"
-                        class:active={aiSubTab === "usage"}
-                        class:disabled={!aiHasKey}
-                        onclick={() => {
-                            if (aiHasKey) aiSubTab = "usage";
-                        }}
-                    >
-                        Usage Stats
-                        {#if !aiHasKey}
-                            <svg
-                                class="ai-subtab-lock"
-                                viewBox="0 0 24 24"
-                                width="11"
-                                height="11"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                ><rect
-                                    x="3"
-                                    y="11"
-                                    width="18"
-                                    height="11"
-                                    rx="2"
-                                    ry="2"
-                                /><path d="M7 11V7a5 5 0 0110 0v4" /></svg
-                            >
-                        {/if}
-                    </button>
-                </div>
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Auth token</label
+                                    >
+                                    <div class="stg-card-token-row">
+                                        <input
+                                            class="stg-input stg-card-input-lg"
+                                            type={showMcpToken
+                                                ? "text"
+                                                : "password"}
+                                            value={mcpToken}
+                                            readonly
+                                        />
+                                        <button
+                                            class="stg-card-mini-btn"
+                                            onclick={() =>
+                                                (showMcpToken = !showMcpToken)}
+                                            title={showMcpToken
+                                                ? "Hide"
+                                                : "Show"}
+                                        >
+                                            {showMcpToken ? "Hide" : "Show"}
+                                        </button>
+                                        <button
+                                            class="stg-card-mini-btn"
+                                            onclick={handleCopyMcpToken}
+                                            title="Copy">Copy</button
+                                        >
+                                        <button
+                                            class="stg-card-mini-btn"
+                                            onclick={handleRotateMcpToken}
+                                            disabled={mcpStatus.running}
+                                            title="Generate new token"
+                                            >Rotate</button
+                                        >
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
 
-                {#if aiSubTab === "config"}
+                        <section class="stg-card">
+                            <header class="stg-card-hd">
+                                <span class="stg-card-icon" aria-hidden="true">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        width="14"
+                                        height="14"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        ><path
+                                            d="M3 7h18M3 12h12M3 17h18"
+                                        /></svg
+                                    >
+                                </span>
+                                <div class="stg-card-titles">
+                                    <h3 class="stg-card-title">
+                                        Board automation
+                                    </h3>
+                                    <p class="stg-card-sub">
+                                        When a card's PR merges on GitHub or
+                                        GitLab, automatically move it to your
+                                        board's final column. Checked on app
+                                        focus, debounced to 5 minutes. The card
+                                        thread gets a system comment so the move
+                                        is auditable.
+                                    </p>
+                                </div>
+                            </header>
+                            <div class="stg-card-body">
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Auto-move cards on PR merge</label
+                                    >
+                                    <label class="stg-toggle">
+                                        <input
+                                            type="checkbox"
+                                            checked={autoMoveMergedPrs}
+                                            onchange={(e) =>
+                                                handleSettingChange(
+                                                    "workspace_automove_merged_prs",
+                                                    String(
+                                                        e.currentTarget.checked,
+                                                    ),
+                                                )}
+                                        />
+                                        <span class="stg-toggle-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                {:else if activeTab === "rest"}
                     <div class="stg-card-stack">
                         <section class="stg-card">
                             <header class="stg-card-hd">
@@ -1670,257 +1648,218 @@
                                         stroke-linejoin="round"
                                     >
                                         <path
-                                            d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"
-                                        />
+                                            d="M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0z"
+                                        /><path d="M12 8v4l3 2" />
                                     </svg>
                                 </span>
                                 <div class="stg-card-titles">
                                     <h3 class="stg-card-title">
-                                        Configuration
+                                        Request Settings
                                     </h3>
                                     <p class="stg-card-sub">
-                                        Provider, model, and API key for the
-                                        in-app AI assistant.
+                                        Defaults applied to every REST request
+                                        you send.
                                     </p>
                                 </div>
                             </header>
-                            <div class="ai-cfg">
-                                <!-- Provider & Model header -->
-                                <div class="ai-cfg-row">
-                                    <div class="ai-cfg-field">
-                                        <label class="ai-cfg-label"
-                                            >Provider</label
-                                        >
-                                        <select
-                                            class="ai-cfg-select"
-                                            value={aiProvider}
-                                            onchange={(e) =>
-                                                handleProviderChange(
-                                                    e.currentTarget.value,
-                                                )}
-                                        >
-                                            {#each AI_PROVIDER_REGISTRY as p (p.providerId)}
-                                                <option value={p.providerId}
-                                                    >{p.providerLabel}</option
-                                                >
-                                            {/each}
-                                        </select>
-                                    </div>
-                                    <div class="ai-cfg-field">
-                                        <label class="ai-cfg-label">Model</label
-                                        >
-                                        <span class="ai-model-tag"
-                                            >{currentProviderConfig.modelLabel}</span
-                                        >
-                                    </div>
+                            <div class="stg-card-body">
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Request Timeout (ms)</label
+                                    >
+                                    <input
+                                        class="stg-input"
+                                        type="number"
+                                        value={timeout}
+                                        min="1000"
+                                        step="1000"
+                                        onchange={(e) =>
+                                            handleSettingChange(
+                                                "request_timeout",
+                                                e.currentTarget.value,
+                                            )}
+                                    />
                                 </div>
-
-                                <!-- Divider -->
-                                <div class="ai-cfg-divider"></div>
-
-                                <!-- API Key -->
-                                <div class="ai-cfg-section">
-                                    <label class="ai-cfg-label">API Key</label>
-                                    <div class="ai-key-input-wrap">
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Follow Redirects</label
+                                    >
+                                    <label class="stg-toggle">
                                         <input
-                                            class="ai-cfg-input"
-                                            type={showAiKey
-                                                ? "text"
-                                                : "password"}
-                                            placeholder={currentProviderConfig.keyPlaceholder}
-                                            bind:value={aiApiKey}
+                                            type="checkbox"
+                                            checked={followRedirects}
+                                            onchange={(e) =>
+                                                handleSettingChange(
+                                                    "follow_redirects",
+                                                    String(
+                                                        e.currentTarget.checked,
+                                                    ),
+                                                )}
                                         />
-                                        <button
-                                            class="ai-key-toggle"
-                                            onclick={() =>
-                                                (showAiKey = !showAiKey)}
-                                            type="button"
-                                        >
-                                            {#if showAiKey}
-                                                <svg
-                                                    viewBox="0 0 24 24"
-                                                    width="14"
-                                                    height="14"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    stroke-width="1.8"
-                                                    ><path
-                                                        d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"
-                                                    /><line
-                                                        x1="1"
-                                                        y1="1"
-                                                        x2="23"
-                                                        y2="23"
-                                                    /></svg
-                                                >
-                                            {:else}
-                                                <svg
-                                                    viewBox="0 0 24 24"
-                                                    width="14"
-                                                    height="14"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    stroke-width="1.8"
-                                                    ><path
-                                                        d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                                                    /><circle
-                                                        cx="12"
-                                                        cy="12"
-                                                        r="3"
-                                                    /></svg
-                                                >
-                                            {/if}
-                                        </button>
-                                    </div>
-
-                                    {#if aiTestStatus === "success"}
-                                        <span class="ai-test-result success">
-                                            <svg
-                                                viewBox="0 0 24 24"
-                                                width="12"
-                                                height="12"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                stroke-width="2"
-                                                ><polyline
-                                                    points="20 6 9 17 4 12"
-                                                /></svg
-                                            >
-                                            {aiTestMessage}
-                                        </span>
-                                    {:else if aiTestStatus === "error"}
-                                        <span class="ai-test-result error">
-                                            <svg
-                                                viewBox="0 0 24 24"
-                                                width="12"
-                                                height="12"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                stroke-width="2"
-                                                ><circle
-                                                    cx="12"
-                                                    cy="12"
-                                                    r="10"
-                                                /><line
-                                                    x1="15"
-                                                    y1="9"
-                                                    x2="9"
-                                                    y2="15"
-                                                /><line
-                                                    x1="9"
-                                                    y1="9"
-                                                    x2="15"
-                                                    y2="15"
-                                                /></svg
-                                            >
-                                            {aiTestMessage}
-                                        </span>
-                                    {/if}
-
-                                    <div class="ai-key-actions">
-                                        <button
-                                            class="ai-action-btn primary"
-                                            onclick={() => handleSaveAiKey()}
-                                            disabled={!aiApiKey.trim() ||
-                                                aiTestStatus === "testing"}
-                                        >
-                                            {#if aiTestStatus === "testing"}
-                                                Verifying...
-                                            {:else}
-                                                Save & Verify
-                                            {/if}
-                                        </button>
-                                        {#if aiHasKey}
-                                            <button
-                                                class="ai-action-btn danger"
-                                                onclick={handleRemoveAiKey}
-                                                >Remove Key</button
-                                            >
-                                        {/if}
-                                    </div>
+                                        <span class="stg-toggle-slider"></span>
+                                    </label>
                                 </div>
-
-                                <!-- Divider -->
-                                <div class="ai-cfg-divider"></div>
-
-                                <!-- Footer: links + status -->
-                                <div class="ai-cfg-footer">
-                                    <div class="ai-cfg-links">
-                                        <a
-                                            class="ai-link"
-                                            href={currentProviderConfig.keyUrl}
-                                            target="_blank"
-                                            rel="noopener"
-                                        >
-                                            <svg
-                                                viewBox="0 0 24 24"
-                                                width="12"
-                                                height="12"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                stroke-width="2"
-                                                ><path d="M15 3h6v6" /><path
-                                                    d="M10 14L21 3"
-                                                /><path
-                                                    d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"
-                                                /></svg
-                                            >
-                                            Get API Key
-                                        </a>
-                                        <span class="ai-link-sep">&middot;</span
-                                        >
-                                        <a
-                                            class="ai-link"
-                                            href="https://github.com/mnfst/awesome-free-llm-apis"
-                                            target="_blank"
-                                            rel="noopener"
-                                        >
-                                            <svg
-                                                viewBox="0 0 24 24"
-                                                width="12"
-                                                height="12"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                stroke-width="2"
-                                                ><path d="M15 3h6v6" /><path
-                                                    d="M10 14L21 3"
-                                                /><path
-                                                    d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"
-                                                /></svg
-                                            >
-                                            Free LLM APIs
-                                        </a>
-                                    </div>
-                                    {#if aiHasKey}
-                                        <span class="ai-status-badge">
-                                            <span class="ai-status-dot"></span>
-                                            Connected
-                                        </span>
-                                    {/if}
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >SSL Verification</label
+                                    >
+                                    <label class="stg-toggle">
+                                        <input
+                                            type="checkbox"
+                                            checked={sslVerification}
+                                            onchange={(e) =>
+                                                handleSettingChange(
+                                                    "ssl_verification",
+                                                    String(
+                                                        e.currentTarget.checked,
+                                                    ),
+                                                )}
+                                        />
+                                        <span class="stg-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Max Response Size (MB)</label
+                                    >
+                                    <input
+                                        class="stg-input"
+                                        type="number"
+                                        value={maxResponseSize}
+                                        min="1"
+                                        max="100"
+                                        onchange={(e) =>
+                                            handleSettingChange(
+                                                "max_response_size",
+                                                e.currentTarget.value,
+                                            )}
+                                    />
                                 </div>
                             </div>
                         </section>
                     </div>
-                {:else if aiSubTab === "usage"}
-                    {#if aiUsageStats.length === 0}
-                        <div class="ai-usage-empty">
-                            <svg
-                                viewBox="0 0 24 24"
-                                width="36"
-                                height="36"
-                                fill="none"
-                                stroke="var(--t4)"
-                                stroke-width="1.2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                ><path d="M18 20V10M12 20V4M6 20v-6" /></svg
-                            >
-                            <p>No API calls recorded yet</p>
-                            <span
-                                >Start chatting with AI to see usage data here</span
-                            >
+                {:else if activeTab === "appearance"}
+                    <div class="stg-section">
+                        <span class="stg-section-label">Theme</span>
+                        <div class="theme-grid">
+                            {#each getThemes() as theme}
+                                <button
+                                    class="theme-card"
+                                    class:active={currentTheme === theme.id}
+                                    onclick={() => handleThemeChange(theme.id)}
+                                >
+                                    <div class="theme-preview">
+                                        {#each THEME_PREVIEW_COLORS[theme.id] || [] as color, i}
+                                            <div
+                                                class="theme-preview-bar"
+                                                style="background:{color}; opacity:{0.6 +
+                                                    i * 0.2}"
+                                            ></div>
+                                        {/each}
+                                    </div>
+                                    <div class="theme-info">
+                                        <span class="theme-name"
+                                            >{theme.name}</span
+                                        >
+                                        <span class="theme-desc"
+                                            >{THEME_DESCRIPTIONS[theme.id] ||
+                                                ""}</span
+                                        >
+                                    </div>
+                                </button>
+                            {/each}
                         </div>
-                    {:else}
+                    </div>
+
+                    <div class="stg-section">
+                        <span class="stg-section-label">Accent Color</span>
+                        {#if accentLocked}
+                            <div class="stg-accent-locked-note">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    width="14"
+                                    height="14"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    aria-hidden="true"
+                                    ><rect
+                                        x="3"
+                                        y="11"
+                                        width="18"
+                                        height="11"
+                                        rx="2"
+                                    /><path d="M7 11V7a5 5 0 0110 0v4" /></svg
+                                >
+                                <span
+                                    ><strong>{activeThemeDef?.name}</strong> provides
+                                    its own accent. Pick a different theme to customize.</span
+                                >
+                            </div>
+                        {/if}
+                        <div
+                            class="stg-swatches"
+                            class:stg-swatches-disabled={accentLocked}
+                        >
+                            {#each ACCENT_COLORS as color}
+                                <button
+                                    class="stg-swatch"
+                                    class:active={accentColor === color.value}
+                                    style="background: {color.value}"
+                                    title={accentLocked
+                                        ? `${activeThemeDef?.name} controls the accent`
+                                        : color.name}
+                                    disabled={accentLocked}
+                                    onclick={() =>
+                                        handleAccentChange(color.value)}
+                                ></button>
+                            {/each}
+                        </div>
+                    </div>
+                {:else if activeTab === "ai"}
+                    <!-- AI sub-tabs -->
+                    <div class="ai-subtabs">
+                        <button
+                            class="ai-subtab"
+                            class:active={aiSubTab === "config"}
+                            onclick={() => (aiSubTab = "config")}
+                        >
+                            Configuration
+                        </button>
+                        <button
+                            class="ai-subtab"
+                            class:active={aiSubTab === "usage"}
+                            class:disabled={!aiHasKey}
+                            onclick={() => {
+                                if (aiHasKey) aiSubTab = "usage";
+                            }}
+                        >
+                            Usage Stats
+                            {#if !aiHasKey}
+                                <svg
+                                    class="ai-subtab-lock"
+                                    viewBox="0 0 24 24"
+                                    width="11"
+                                    height="11"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    ><rect
+                                        x="3"
+                                        y="11"
+                                        width="18"
+                                        height="11"
+                                        rx="2"
+                                        ry="2"
+                                    /><path d="M7 11V7a5 5 0 0110 0v4" /></svg
+                                >
+                            {/if}
+                        </button>
+                    </div>
+
+                    {#if aiSubTab === "config"}
                         <div class="stg-card-stack">
                             <section class="stg-card">
                                 <header class="stg-card-hd">
@@ -1937,488 +1876,118 @@
                                             stroke-width="2"
                                             stroke-linecap="round"
                                             stroke-linejoin="round"
-                                            ><line
-                                                x1="18"
-                                                y1="20"
-                                                x2="18"
-                                                y2="10"
-                                            /><line
-                                                x1="12"
-                                                y1="20"
-                                                x2="12"
-                                                y2="4"
-                                            /><line
-                                                x1="6"
-                                                y1="20"
-                                                x2="6"
-                                                y2="14"
-                                            /></svg
                                         >
+                                            <path
+                                                d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"
+                                            />
+                                        </svg>
                                     </span>
                                     <div class="stg-card-titles">
-                                        <h3 class="stg-card-title">Overview</h3>
+                                        <h3 class="stg-card-title">
+                                            Configuration
+                                        </h3>
                                         <p class="stg-card-sub">
-                                            Aggregated calls, tokens, and
-                                            estimated cost across all AI
-                                            activity.
+                                            Provider, model, and API key for the
+                                            in-app AI assistant.
                                         </p>
                                     </div>
-                                    {#if showResetConfirm}
-                                        <div class="ai-reset-confirm">
-                                            <span>Reset all data?</span>
-                                            <button
-                                                class="ai-action-btn danger sm"
-                                                onclick={handleResetUsage}
-                                                >Reset</button
+                                </header>
+                                <div class="ai-cfg">
+                                    <!-- Provider & Model header -->
+                                    <div class="ai-cfg-row">
+                                        <div class="ai-cfg-field">
+                                            <label class="ai-cfg-label"
+                                                >Provider</label
                                             >
+                                            <select
+                                                class="ai-cfg-select"
+                                                value={aiProvider}
+                                                onchange={(e) =>
+                                                    handleProviderChange(
+                                                        e.currentTarget.value,
+                                                    )}
+                                            >
+                                                {#each AI_PROVIDER_REGISTRY as p (p.providerId)}
+                                                    <option value={p.providerId}
+                                                        >{p.providerLabel}</option
+                                                    >
+                                                {/each}
+                                            </select>
+                                        </div>
+                                        <div class="ai-cfg-field">
+                                            <label class="ai-cfg-label"
+                                                >Model</label
+                                            >
+                                            <span class="ai-model-tag"
+                                                >{currentProviderConfig.modelLabel}</span
+                                            >
+                                        </div>
+                                    </div>
+
+                                    <!-- Divider -->
+                                    <div class="ai-cfg-divider"></div>
+
+                                    <!-- API Key -->
+                                    <div class="ai-cfg-section">
+                                        <label class="ai-cfg-label"
+                                            >API Key</label
+                                        >
+                                        <div class="ai-key-input-wrap">
+                                            <input
+                                                class="ai-cfg-input"
+                                                type={showAiKey
+                                                    ? "text"
+                                                    : "password"}
+                                                placeholder={currentProviderConfig.keyPlaceholder}
+                                                bind:value={aiApiKey}
+                                            />
                                             <button
-                                                class="ai-action-btn sm"
+                                                class="ai-key-toggle"
                                                 onclick={() =>
-                                                    (showResetConfirm = false)}
-                                                >Cancel</button
+                                                    (showAiKey = !showAiKey)}
+                                                type="button"
                                             >
+                                                {#if showAiKey}
+                                                    <svg
+                                                        viewBox="0 0 24 24"
+                                                        width="14"
+                                                        height="14"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="1.8"
+                                                        ><path
+                                                            d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"
+                                                        /><line
+                                                            x1="1"
+                                                            y1="1"
+                                                            x2="23"
+                                                            y2="23"
+                                                        /></svg
+                                                    >
+                                                {:else}
+                                                    <svg
+                                                        viewBox="0 0 24 24"
+                                                        width="14"
+                                                        height="14"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="1.8"
+                                                        ><path
+                                                            d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                                                        /><circle
+                                                            cx="12"
+                                                            cy="12"
+                                                            r="3"
+                                                        /></svg
+                                                    >
+                                                {/if}
+                                            </button>
                                         </div>
-                                    {:else}
-                                        <button
-                                            class="ai-action-btn sm"
-                                            onclick={() =>
-                                                (showResetConfirm = true)}
-                                        >
-                                            <svg
-                                                viewBox="0 0 24 24"
-                                                width="11"
-                                                height="11"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                stroke-width="1.8"
-                                                ><polyline
-                                                    points="3 6 5 6 21 6"
-                                                /><path
-                                                    d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"
-                                                /></svg
-                                            >
-                                            Reset
-                                        </button>
-                                    {/if}
-                                </header>
-                                <div class="stg-card-body">
-                                    <div class="ai-summary-grid">
-                                        <div class="ai-summary-card">
-                                            <span class="ai-summary-val"
-                                                >{aiUsageStats.reduce(
-                                                    (s, v) => s + v.totalCalls,
-                                                    0,
-                                                )}</span
-                                            >
-                                            <span class="ai-summary-lbl"
-                                                >Total Calls</span
-                                            >
-                                        </div>
-                                        <div class="ai-summary-card">
-                                            <span class="ai-summary-val"
-                                                >{formatTokens(
-                                                    aiUsageStats.reduce(
-                                                        (s, v) =>
-                                                            s + v.inputTokens,
-                                                        0,
-                                                    ),
-                                                )}</span
-                                            >
-                                            <span class="ai-summary-lbl"
-                                                >Input Tokens</span
-                                            >
-                                        </div>
-                                        <div class="ai-summary-card">
-                                            <span class="ai-summary-val"
-                                                >{formatTokens(
-                                                    aiUsageStats.reduce(
-                                                        (s, v) =>
-                                                            s + v.outputTokens,
-                                                        0,
-                                                    ),
-                                                )}</span
-                                            >
-                                            <span class="ai-summary-lbl"
-                                                >Output Tokens</span
-                                            >
-                                        </div>
-                                        <div class="ai-summary-card accent">
-                                            <span class="ai-summary-val"
-                                                >{estimateCost(
-                                                    aiUsageStats.reduce(
-                                                        (s, v) =>
-                                                            s + v.inputTokens,
-                                                        0,
-                                                    ),
-                                                    aiUsageStats.reduce(
-                                                        (s, v) =>
-                                                            s + v.outputTokens,
-                                                        0,
-                                                    ),
-                                                )}</span
-                                            >
-                                            <span class="ai-summary-lbl"
-                                                >Est. Cost</span
-                                            >
-                                        </div>
-                                    </div>
-                                </div>
-                            </section>
 
-                            <section class="stg-card">
-                                <header class="stg-card-hd">
-                                    <span
-                                        class="stg-card-icon"
-                                        aria-hidden="true"
-                                    >
-                                        <svg
-                                            viewBox="0 0 24 24"
-                                            width="14"
-                                            height="14"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="2"
-                                            stroke-linecap="round"
-                                            stroke-linejoin="round"
-                                            ><polygon
-                                                points="12 2 2 7 12 12 22 7 12 2"
-                                            /><polyline
-                                                points="2 17 12 22 22 17"
-                                            /><polyline
-                                                points="2 12 12 17 22 12"
-                                            /></svg
-                                        >
-                                    </span>
-                                    <div class="stg-card-titles">
-                                        <h3 class="stg-card-title">By Mode</h3>
-                                        <p class="stg-card-sub">
-                                            Per-mode breakdown of AI calls and
-                                            token spend.
-                                        </p>
-                                    </div>
-                                </header>
-                                <div class="stg-card-body">
-                                    <div class="ai-table">
-                                        <div class="ai-table-head">
-                                            <span>Mode</span>
-                                            <span>Calls</span>
-                                            <span>Input</span>
-                                            <span>Output</span>
-                                            <span>Cost</span>
-                                        </div>
-                                        {#each aiUsageStats as stat}
-                                            <div class="ai-table-row">
-                                                <span class="ai-table-label">
-                                                    <span
-                                                        class="ai-dot"
-                                                        data-mode={stat.mode}
-                                                    ></span>
-                                                    {stat.mode.toUpperCase()}
-                                                </span>
-                                                <span class="ai-table-val"
-                                                    >{stat.totalCalls}</span
-                                                >
-                                                <span class="ai-table-val"
-                                                    >{formatTokens(
-                                                        stat.inputTokens,
-                                                    )}</span
-                                                >
-                                                <span class="ai-table-val"
-                                                    >{formatTokens(
-                                                        stat.outputTokens,
-                                                    )}</span
-                                                >
-                                                <span
-                                                    class="ai-table-val accent"
-                                                    >{estimateCost(
-                                                        stat.inputTokens,
-                                                        stat.outputTokens,
-                                                    )}</span
-                                                >
-                                            </div>
-                                        {/each}
-                                    </div>
-                                </div>
-                            </section>
-
-                            {#if aiProviderStats.length > 0}
-                                <section class="stg-card">
-                                    <header class="stg-card-hd">
-                                        <span
-                                            class="stg-card-icon"
-                                            aria-hidden="true"
-                                        >
-                                            <svg
-                                                viewBox="0 0 24 24"
-                                                width="14"
-                                                height="14"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                stroke-width="2"
-                                                stroke-linecap="round"
-                                                stroke-linejoin="round"
-                                                ><rect
-                                                    x="4"
-                                                    y="4"
-                                                    width="16"
-                                                    height="16"
-                                                    rx="2"
-                                                /><rect
-                                                    x="9"
-                                                    y="9"
-                                                    width="6"
-                                                    height="6"
-                                                /><line
-                                                    x1="9"
-                                                    y1="2"
-                                                    x2="9"
-                                                    y2="4"
-                                                /><line
-                                                    x1="15"
-                                                    y1="2"
-                                                    x2="15"
-                                                    y2="4"
-                                                /><line
-                                                    x1="9"
-                                                    y1="20"
-                                                    x2="9"
-                                                    y2="22"
-                                                /><line
-                                                    x1="15"
-                                                    y1="20"
-                                                    x2="15"
-                                                    y2="22"
-                                                /><line
-                                                    x1="20"
-                                                    y1="9"
-                                                    x2="22"
-                                                    y2="9"
-                                                /><line
-                                                    x1="20"
-                                                    y1="15"
-                                                    x2="22"
-                                                    y2="15"
-                                                /><line
-                                                    x1="2"
-                                                    y1="9"
-                                                    x2="4"
-                                                    y2="9"
-                                                /><line
-                                                    x1="2"
-                                                    y1="15"
-                                                    x2="4"
-                                                    y2="15"
-                                                /></svg
+                                        {#if aiTestStatus === "success"}
+                                            <span
+                                                class="ai-test-result success"
                                             >
-                                        </span>
-                                        <div class="stg-card-titles">
-                                            <h3 class="stg-card-title">
-                                                By Provider
-                                            </h3>
-                                            <p class="stg-card-sub">
-                                                Spend grouped by model — useful
-                                                when switching providers.
-                                            </p>
-                                        </div>
-                                    </header>
-                                    <div class="stg-card-body">
-                                        <div class="ai-table">
-                                            <div class="ai-table-head">
-                                                <span>Model</span>
-                                                <span>Calls</span>
-                                                <span>Input</span>
-                                                <span>Output</span>
-                                                <span>Cost</span>
-                                            </div>
-                                            {#each aiProviderStats as pstat}
-                                                <div class="ai-table-row">
-                                                    <span
-                                                        class="ai-table-label"
-                                                    >
-                                                        <span
-                                                            class="ai-dot"
-                                                            style="background: var(--acc)"
-                                                        ></span>
-                                                        {formatModelName(
-                                                            pstat.model,
-                                                        )}
-                                                    </span>
-                                                    <span class="ai-table-val"
-                                                        >{pstat.totalCalls}</span
-                                                    >
-                                                    <span class="ai-table-val"
-                                                        >{formatTokens(
-                                                            pstat.inputTokens,
-                                                        )}</span
-                                                    >
-                                                    <span class="ai-table-val"
-                                                        >{formatTokens(
-                                                            pstat.outputTokens,
-                                                        )}</span
-                                                    >
-                                                    <span
-                                                        class="ai-table-val accent"
-                                                        >{estimateCost(
-                                                            pstat.inputTokens,
-                                                            pstat.outputTokens,
-                                                        )}</span
-                                                    >
-                                                </div>
-                                            {/each}
-                                        </div>
-                                        <p class="ai-pricing-note">
-                                            Haiku 4.5: $1.00 / MTok in &middot;
-                                            $5.00 / MTok out
-                                        </p>
-                                    </div>
-                                </section>
-                            {/if}
-                        </div>
-                    {/if}
-                {/if}
-            {:else if activeTab === "agent"}
-                <div class="agent-settings-pane">
-                    <!-- Agent sub-tabs -->
-                    <div class="ai-subtabs">
-                        <button
-                            class="ai-subtab"
-                            class:active={agentSubTab === "general"}
-                            onclick={() => (agentSubTab = "general")}
-                        >
-                            General
-                        </button>
-                        <button
-                            class="ai-subtab"
-                            class:active={agentSubTab === "plugins"}
-                            onclick={() => (agentSubTab = "plugins")}
-                        >
-                            Plugins
-                        </button>
-                        <button
-                            class="ai-subtab"
-                            class:active={agentSubTab === "contexts"}
-                            onclick={() => (agentSubTab = "contexts")}
-                        >
-                            Contexts
-                        </button>
-                        <button
-                            class="ai-subtab"
-                            class:active={agentSubTab === "usage"}
-                            onclick={() => (agentSubTab = "usage")}
-                        >
-                            Usage Stats
-                        </button>
-                    </div>
-
-                    <div class="agent-settings-scroll">
-                {#if agentSubTab === "general"}
-                    <div class="stg-card-stack">
-                        <section class="stg-card agent-usage-card">
-                            <header class="stg-card-hd">
-                                <span class="stg-card-icon" aria-hidden="true">
-                                    <svg
-                                        viewBox="0 0 24 24"
-                                        width="14"
-                                        height="14"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        ><path d="M18 20V10M12 20V4M6 20v-6" /></svg
-                                    >
-                                </span>
-                                <div class="stg-card-titles">
-                                    <h3 class="stg-card-title">
-                                        Live usage tracking
-                                    </h3>
-                                    <p class="stg-card-sub">
-                                        Configure the provider limits shown in
-                                        the Agent footer.
-                                    </p>
-                                </div>
-                                {#if agentFooterProvider === "claude" && agentSessionKey && $agentUsageAuthStatus.state === "valid"}
-                                    <span class="ai-status-badge">
-                                        <span class="ai-status-dot"></span>
-                                        Claude connected
-                                    </span>
-                                {:else if agentFooterProvider === "claude" && agentSessionKey && $agentUsageAuthStatus.state === "checking"}
-                                    <span class="ai-status-badge checking">
-                                        <span class="ai-status-dot"></span>
-                                        Checking Claude
-                                    </span>
-                                {:else if agentFooterProvider === "claude" && agentSessionKey && $agentUsageAuthStatus.state === "invalid"}
-                                    <span class="ai-status-badge error" title={$agentUsageAuthStatus.message}>
-                                        <span class="ai-status-dot"></span>
-                                        Claude needs reconfigure
-                                    </span>
-                                {:else if agentFooterProvider === "codex" && agentCodexToken}
-                                    <span class="ai-status-badge">
-                                        <span class="ai-status-dot"></span>
-                                        Codex configured
-                                    </span>
-                                {:else}
-                                    <span class="ai-status-badge muted">
-                                        Footer not configured
-                                    </span>
-                                {/if}
-                            </header>
-                            <div class="stg-card-body">
-                                <div class="stg-card-row">
-                                    <div class="stg-card-row-action-text">
-                                        <span class="stg-card-row-label"
-                                            >Show in Agent footer</span
-                                        >
-                                        <span class="stg-card-row-help">
-                                            Choose the provider whose live limit
-                                            appears next to the Agent terminal.
-                                        </span>
-                                    </div>
-                                    <select
-                                        class="stg-select"
-                                        value={agentFooterProvider}
-                                        onchange={(e) =>
-                                            handleSettingChange(
-                                                "agent_footer_usage_provider",
-                                                e.currentTarget.value,
-                                            )}
-                                    >
-                                        <option
-                                            value="claude"
-                                            disabled={!agentSessionKey}
-                                            >Claude Code{agentSessionKey
-                                                ? ""
-                                                : " (not configured)"}</option
-                                        >
-                                        <option
-                                            value="codex"
-                                            disabled={!agentCodexToken}
-                                            >Codex{agentCodexToken
-                                                ? ""
-                                                : " (not configured)"}</option
-                                        >
-                                        <option value="gemini"
-                                            >Gemini (local data only)</option
-                                        >
-                                        <option value="opencode"
-                                            >OpenCode (local data only)</option
-                                        >
-                                    </select>
-                                </div>
-
-                                <div class="stg-card-row stg-card-row-action">
-                                    <div class="stg-card-row-action-text">
-                                        <span class="stg-card-row-label"
-                                            >Claude session key</span
-                                        >
-                                        <span class="stg-card-row-help">
-                                            Used only to read Claude usage
-                                            limits. Find it in claude.ai
-                                            DevTools > Application > Cookies >
-                                            sessionKey.
-                                        </span>
-                                        {#if agentKeyTestStatus === "success"}
-                                            <span class="ai-test-result success">
                                                 <svg
                                                     viewBox="0 0 24 24"
                                                     width="12"
@@ -2430,9 +1999,9 @@
                                                         points="20 6 9 17 4 12"
                                                     /></svg
                                                 >
-                                                {agentKeyTestMessage}
+                                                {aiTestMessage}
                                             </span>
-                                        {:else if agentKeyTestStatus === "error"}
+                                        {:else if aiTestStatus === "error"}
                                             <span class="ai-test-result error">
                                                 <svg
                                                     viewBox="0 0 24 24"
@@ -2457,217 +2026,2459 @@
                                                         y2="15"
                                                     /></svg
                                                 >
-                                                {agentKeyTestMessage}
-                                            </span>
-                                        {:else if agentSessionKey && $agentUsageAuthStatus.state === "invalid"}
-                                            <span class="ai-test-result error">
-                                                {$agentUsageAuthStatus.message}
+                                                {aiTestMessage}
                                             </span>
                                         {/if}
-                                    </div>
-                                    <div class="agent-session-key-control">
-                                        <div class="ai-key-input-wrap">
-                                            <input
-                                                class="ai-cfg-input"
-                                                type={showAgentKey
-                                                    ? "text"
-                                                    : "password"}
-                                                placeholder="sk-ant-sid01-..."
-                                                bind:value={agentKeyInput}
-                                                onblur={commitAgentKeyIfChanged}
-                                                onkeydown={(e) => {
-                                                    if (e.key === "Enter") {
-                                                        e.preventDefault();
-                                                        commitAgentKeyIfChanged();
-                                                    }
-                                                }}
-                                            />
+
+                                        <div class="ai-key-actions">
                                             <button
-                                                class="ai-key-toggle"
+                                                class="ai-action-btn primary"
                                                 onclick={() =>
-                                                    (showAgentKey =
-                                                        !showAgentKey)}
-                                                type="button"
-                                                title={showAgentKey
-                                                    ? "Hide key"
-                                                    : "Show key"}
+                                                    handleSaveAiKey()}
+                                                disabled={!aiApiKey.trim() ||
+                                                    aiTestStatus === "testing"}
                                             >
-                                                {#if showAgentKey}
-                                                    <svg
-                                                        viewBox="0 0 24 24"
-                                                        width="14"
-                                                        height="14"
-                                                        fill="none"
-                                                        stroke="currentColor"
-                                                        stroke-width="1.8"
-                                                        ><path
-                                                            d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"
-                                                        /><line
-                                                            x1="1"
-                                                            y1="1"
-                                                            x2="23"
-                                                            y2="23"
-                                                        /></svg
-                                                    >
+                                                {#if aiTestStatus === "testing"}
+                                                    Verifying...
                                                 {:else}
-                                                    <svg
-                                                        viewBox="0 0 24 24"
-                                                        width="14"
-                                                        height="14"
-                                                        fill="none"
-                                                        stroke="currentColor"
-                                                        stroke-width="1.8"
-                                                        ><path
-                                                            d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                                                        /><circle
-                                                            cx="12"
-                                                            cy="12"
-                                                            r="3"
-                                                        /></svg
-                                                    >
+                                                    Save & Verify
                                                 {/if}
                                             </button>
-                                        </div>
-                                        <div class="agent-session-key-actions">
-                                            {#if agentKeyTestStatus === "testing"}
-                                                <span class="ai-test-result">Verifying…</span>
-                                            {/if}
-                                            {#if agentSessionKey}
+                                            {#if aiHasKey}
                                                 <button
                                                     class="ai-action-btn danger"
-                                                    onclick={handleRemoveAgentKey}
-                                                    >Remove</button
+                                                    onclick={handleRemoveAiKey}
+                                                    >Remove Key</button
                                                 >
                                             {/if}
                                         </div>
                                     </div>
-                                </div>
 
-                                <div class="stg-card-row stg-card-row-action">
-                                    <div class="stg-card-row-action-text">
-                                        <span class="stg-card-row-label"
-                                            >Codex access token</span
-                                        >
-                                        <span class="stg-card-row-help">
-                                            Grab from <strong>chatgpt.com/codex/cloud/settings/analytics</strong>
-                                            → DevTools → Network → <code>wham/usage</code>
-                                            → <code>authorization</code> header (after <code>Bearer </code>).
-                                        </span>
-                                        {#if codexTokenTestStatus === "success"}
-                                            <span class="ai-test-result success">
-                                                <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
-                                                {codexTokenTestMessage}
-                                            </span>
-                                        {:else if codexTokenTestStatus === "error"}
-                                            <span class="ai-test-result error">
-                                                <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                                                {codexTokenTestMessage}
+                                    <!-- Divider -->
+                                    <div class="ai-cfg-divider"></div>
+
+                                    <!-- Footer: links + status -->
+                                    <div class="ai-cfg-footer">
+                                        <div class="ai-cfg-links">
+                                            <a
+                                                class="ai-link"
+                                                href={currentProviderConfig.keyUrl}
+                                                target="_blank"
+                                                rel="noopener"
+                                            >
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    width="12"
+                                                    height="12"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    ><path d="M15 3h6v6" /><path
+                                                        d="M10 14L21 3"
+                                                    /><path
+                                                        d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"
+                                                    /></svg
+                                                >
+                                                Get API Key
+                                            </a>
+                                            <span class="ai-link-sep"
+                                                >&middot;</span
+                                            >
+                                            <a
+                                                class="ai-link"
+                                                href="https://github.com/mnfst/awesome-free-llm-apis"
+                                                target="_blank"
+                                                rel="noopener"
+                                            >
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    width="12"
+                                                    height="12"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    ><path d="M15 3h6v6" /><path
+                                                        d="M10 14L21 3"
+                                                    /><path
+                                                        d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"
+                                                    /></svg
+                                                >
+                                                Free LLM APIs
+                                            </a>
+                                        </div>
+                                        {#if aiHasKey}
+                                            <span class="ai-status-badge">
+                                                <span class="ai-status-dot"
+                                                ></span>
+                                                Connected
                                             </span>
                                         {/if}
                                     </div>
-                                    <div class="agent-session-key-control">
-                                        <div class="ai-key-input-wrap">
-                                            <input
-                                                class="ai-cfg-input"
-                                                type={showCodexToken
-                                                    ? "text"
-                                                    : "password"}
-                                                placeholder="Bearer token..."
-                                                bind:value={codexTokenInput}
-                                                onblur={commitCodexTokenIfChanged}
-                                                onkeydown={(e) => {
-                                                    if (e.key === "Enter") {
-                                                        e.preventDefault();
-                                                        commitCodexTokenIfChanged();
-                                                    }
-                                                }}
-                                            />
-                                            <button
-                                                class="ai-key-toggle"
-                                                onclick={() =>
-                                                    (showCodexToken =
-                                                        !showCodexToken)}
-                                                type="button"
-                                                title={showCodexToken
-                                                    ? "Hide token"
-                                                    : "Show token"}
-                                            >
-                                                {#if showCodexToken}
-                                                    <svg
-                                                        viewBox="0 0 24 24"
-                                                        width="14"
-                                                        height="14"
-                                                        fill="none"
-                                                        stroke="currentColor"
-                                                        stroke-width="1.8"
-                                                        ><path
-                                                            d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"
-                                                        /><line
-                                                            x1="1"
-                                                            y1="1"
-                                                            x2="23"
-                                                            y2="23"
-                                                        /></svg
-                                                    >
-                                                {:else}
-                                                    <svg
-                                                        viewBox="0 0 24 24"
-                                                        width="14"
-                                                        height="14"
-                                                        fill="none"
-                                                        stroke="currentColor"
-                                                        stroke-width="1.8"
-                                                        ><path
-                                                            d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                                                        /><circle
-                                                            cx="12"
-                                                            cy="12"
-                                                            r="3"
-                                                        /></svg
-                                                    >
-                                                {/if}
-                                            </button>
-                                        </div>
-                                        <div class="agent-session-key-actions">
-                                            {#if codexTokenTestStatus === "testing"}
-                                                <span class="ai-test-result">Verifying…</span>
-                                            {/if}
-                                            {#if agentCodexToken}
-                                                <button
-                                                    class="ai-action-btn danger"
-                                                    onclick={handleRemoveCodexToken}
-                                                    >Remove</button
-                                                >
-                                            {/if}
-                                        </div>
-                                    </div>
                                 </div>
-
-                                <div class="stg-card-row">
-                                    <div class="stg-card-row-action-text">
-                                        <span class="stg-card-row-label"
-                                            >Refresh interval</span
+                            </section>
+                        </div>
+                    {:else if aiSubTab === "usage"}
+                        {#if aiUsageStats.length === 0}
+                            <div class="ai-usage-empty">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    width="36"
+                                    height="36"
+                                    fill="none"
+                                    stroke="var(--t4)"
+                                    stroke-width="1.2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    ><path d="M18 20V10M12 20V4M6 20v-6" /></svg
+                                >
+                                <p>No API calls recorded yet</p>
+                                <span
+                                    >Start chatting with AI to see usage data
+                                    here</span
+                                >
+                            </div>
+                        {:else}
+                            <div class="stg-card-stack">
+                                <section class="stg-card">
+                                    <header class="stg-card-hd">
+                                        <span
+                                            class="stg-card-icon"
+                                            aria-hidden="true"
                                         >
-                                        <span class="stg-card-row-help">
-                                            How often Clauge refreshes live
-                                            limits while Agent mode is open.
+                                            <svg
+                                                viewBox="0 0 24 24"
+                                                width="14"
+                                                height="14"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                ><line
+                                                    x1="18"
+                                                    y1="20"
+                                                    x2="18"
+                                                    y2="10"
+                                                /><line
+                                                    x1="12"
+                                                    y1="20"
+                                                    x2="12"
+                                                    y2="4"
+                                                /><line
+                                                    x1="6"
+                                                    y1="20"
+                                                    x2="6"
+                                                    y2="14"
+                                                /></svg
+                                            >
                                         </span>
+                                        <div class="stg-card-titles">
+                                            <h3 class="stg-card-title">
+                                                Overview
+                                            </h3>
+                                            <p class="stg-card-sub">
+                                                Aggregated calls, tokens, and
+                                                estimated cost across all AI
+                                                activity.
+                                            </p>
+                                        </div>
+                                        {#if showResetConfirm}
+                                            <div class="ai-reset-confirm">
+                                                <span>Reset all data?</span>
+                                                <button
+                                                    class="ai-action-btn danger sm"
+                                                    onclick={handleResetUsage}
+                                                    >Reset</button
+                                                >
+                                                <button
+                                                    class="ai-action-btn sm"
+                                                    onclick={() =>
+                                                        (showResetConfirm = false)}
+                                                    >Cancel</button
+                                                >
+                                            </div>
+                                        {:else}
+                                            <button
+                                                class="ai-action-btn sm"
+                                                onclick={() =>
+                                                    (showResetConfirm = true)}
+                                            >
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    width="11"
+                                                    height="11"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="1.8"
+                                                    ><polyline
+                                                        points="3 6 5 6 21 6"
+                                                    /><path
+                                                        d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"
+                                                    /></svg
+                                                >
+                                                Reset
+                                            </button>
+                                        {/if}
+                                    </header>
+                                    <div class="stg-card-body">
+                                        <div class="ai-summary-grid">
+                                            <div class="ai-summary-card">
+                                                <span class="ai-summary-val"
+                                                    >{aiUsageStats.reduce(
+                                                        (s, v) =>
+                                                            s + v.totalCalls,
+                                                        0,
+                                                    )}</span
+                                                >
+                                                <span class="ai-summary-lbl"
+                                                    >Total Calls</span
+                                                >
+                                            </div>
+                                            <div class="ai-summary-card">
+                                                <span class="ai-summary-val"
+                                                    >{formatTokens(
+                                                        aiUsageStats.reduce(
+                                                            (s, v) =>
+                                                                s +
+                                                                v.inputTokens,
+                                                            0,
+                                                        ),
+                                                    )}</span
+                                                >
+                                                <span class="ai-summary-lbl"
+                                                    >Input Tokens</span
+                                                >
+                                            </div>
+                                            <div class="ai-summary-card">
+                                                <span class="ai-summary-val"
+                                                    >{formatTokens(
+                                                        aiUsageStats.reduce(
+                                                            (s, v) =>
+                                                                s +
+                                                                v.outputTokens,
+                                                            0,
+                                                        ),
+                                                    )}</span
+                                                >
+                                                <span class="ai-summary-lbl"
+                                                    >Output Tokens</span
+                                                >
+                                            </div>
+                                            <div class="ai-summary-card accent">
+                                                <span class="ai-summary-val"
+                                                    >{estimateCost(
+                                                        aiUsageStats.reduce(
+                                                            (s, v) =>
+                                                                s +
+                                                                v.inputTokens,
+                                                            0,
+                                                        ),
+                                                        aiUsageStats.reduce(
+                                                            (s, v) =>
+                                                                s +
+                                                                v.outputTokens,
+                                                            0,
+                                                        ),
+                                                    )}</span
+                                                >
+                                                <span class="ai-summary-lbl"
+                                                    >Est. Cost</span
+                                                >
+                                            </div>
+                                        </div>
                                     </div>
-                                    <select
-                                        class="stg-select"
-                                        value={agentRefreshMins}
-                                        onchange={(e) =>
-                                            handleSettingChange(
-                                                "agent_refresh_mins",
-                                                e.currentTarget.value,
-                                            )}
-                                    >
-                                        {#each REFRESH_OPTIONS as opt}
-                                            <option value={opt.value}
-                                                >{opt.label}</option
+                                </section>
+
+                                <section class="stg-card">
+                                    <header class="stg-card-hd">
+                                        <span
+                                            class="stg-card-icon"
+                                            aria-hidden="true"
+                                        >
+                                            <svg
+                                                viewBox="0 0 24 24"
+                                                width="14"
+                                                height="14"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                ><polygon
+                                                    points="12 2 2 7 12 12 22 7 12 2"
+                                                /><polyline
+                                                    points="2 17 12 22 22 17"
+                                                /><polyline
+                                                    points="2 12 12 17 22 12"
+                                                /></svg
+                                            >
+                                        </span>
+                                        <div class="stg-card-titles">
+                                            <h3 class="stg-card-title">
+                                                By Mode
+                                            </h3>
+                                            <p class="stg-card-sub">
+                                                Per-mode breakdown of AI calls
+                                                and token spend.
+                                            </p>
+                                        </div>
+                                    </header>
+                                    <div class="stg-card-body">
+                                        <div class="ai-table">
+                                            <div class="ai-table-head">
+                                                <span>Mode</span>
+                                                <span>Calls</span>
+                                                <span>Input</span>
+                                                <span>Output</span>
+                                                <span>Cost</span>
+                                            </div>
+                                            {#each aiUsageStats as stat}
+                                                <div class="ai-table-row">
+                                                    <span
+                                                        class="ai-table-label"
+                                                    >
+                                                        <span
+                                                            class="ai-dot"
+                                                            data-mode={stat.mode}
+                                                        ></span>
+                                                        {stat.mode.toUpperCase()}
+                                                    </span>
+                                                    <span class="ai-table-val"
+                                                        >{stat.totalCalls}</span
+                                                    >
+                                                    <span class="ai-table-val"
+                                                        >{formatTokens(
+                                                            stat.inputTokens,
+                                                        )}</span
+                                                    >
+                                                    <span class="ai-table-val"
+                                                        >{formatTokens(
+                                                            stat.outputTokens,
+                                                        )}</span
+                                                    >
+                                                    <span
+                                                        class="ai-table-val accent"
+                                                        >{estimateCost(
+                                                            stat.inputTokens,
+                                                            stat.outputTokens,
+                                                        )}</span
+                                                    >
+                                                </div>
+                                            {/each}
+                                        </div>
+                                    </div>
+                                </section>
+
+                                {#if aiProviderStats.length > 0}
+                                    <section class="stg-card">
+                                        <header class="stg-card-hd">
+                                            <span
+                                                class="stg-card-icon"
+                                                aria-hidden="true"
+                                            >
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    width="14"
+                                                    height="14"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    ><rect
+                                                        x="4"
+                                                        y="4"
+                                                        width="16"
+                                                        height="16"
+                                                        rx="2"
+                                                    /><rect
+                                                        x="9"
+                                                        y="9"
+                                                        width="6"
+                                                        height="6"
+                                                    /><line
+                                                        x1="9"
+                                                        y1="2"
+                                                        x2="9"
+                                                        y2="4"
+                                                    /><line
+                                                        x1="15"
+                                                        y1="2"
+                                                        x2="15"
+                                                        y2="4"
+                                                    /><line
+                                                        x1="9"
+                                                        y1="20"
+                                                        x2="9"
+                                                        y2="22"
+                                                    /><line
+                                                        x1="15"
+                                                        y1="20"
+                                                        x2="15"
+                                                        y2="22"
+                                                    /><line
+                                                        x1="20"
+                                                        y1="9"
+                                                        x2="22"
+                                                        y2="9"
+                                                    /><line
+                                                        x1="20"
+                                                        y1="15"
+                                                        x2="22"
+                                                        y2="15"
+                                                    /><line
+                                                        x1="2"
+                                                        y1="9"
+                                                        x2="4"
+                                                        y2="9"
+                                                    /><line
+                                                        x1="2"
+                                                        y1="15"
+                                                        x2="4"
+                                                        y2="15"
+                                                    /></svg
+                                                >
+                                            </span>
+                                            <div class="stg-card-titles">
+                                                <h3 class="stg-card-title">
+                                                    By Provider
+                                                </h3>
+                                                <p class="stg-card-sub">
+                                                    Spend grouped by model —
+                                                    useful when switching
+                                                    providers.
+                                                </p>
+                                            </div>
+                                        </header>
+                                        <div class="stg-card-body">
+                                            <div class="ai-table">
+                                                <div class="ai-table-head">
+                                                    <span>Model</span>
+                                                    <span>Calls</span>
+                                                    <span>Input</span>
+                                                    <span>Output</span>
+                                                    <span>Cost</span>
+                                                </div>
+                                                {#each aiProviderStats as pstat}
+                                                    <div class="ai-table-row">
+                                                        <span
+                                                            class="ai-table-label"
+                                                        >
+                                                            <span
+                                                                class="ai-dot"
+                                                                style="background: var(--acc)"
+                                                            ></span>
+                                                            {formatModelName(
+                                                                pstat.model,
+                                                            )}
+                                                        </span>
+                                                        <span
+                                                            class="ai-table-val"
+                                                            >{pstat.totalCalls}</span
+                                                        >
+                                                        <span
+                                                            class="ai-table-val"
+                                                            >{formatTokens(
+                                                                pstat.inputTokens,
+                                                            )}</span
+                                                        >
+                                                        <span
+                                                            class="ai-table-val"
+                                                            >{formatTokens(
+                                                                pstat.outputTokens,
+                                                            )}</span
+                                                        >
+                                                        <span
+                                                            class="ai-table-val accent"
+                                                            >{estimateCost(
+                                                                pstat.inputTokens,
+                                                                pstat.outputTokens,
+                                                            )}</span
+                                                        >
+                                                    </div>
+                                                {/each}
+                                            </div>
+                                            <p class="ai-pricing-note">
+                                                Haiku 4.5: $1.00 / MTok in
+                                                &middot; $5.00 / MTok out
+                                            </p>
+                                        </div>
+                                    </section>
+                                {/if}
+                            </div>
+                        {/if}
+                    {/if}
+                {:else if activeTab === "agent"}
+                    <div class="agent-settings-pane">
+                        <!-- Agent sub-tabs -->
+                        <div class="ai-subtabs">
+                            <button
+                                class="ai-subtab"
+                                class:active={agentSubTab === "general"}
+                                onclick={() => (agentSubTab = "general")}
+                            >
+                                General
+                            </button>
+                            <button
+                                class="ai-subtab"
+                                class:active={agentSubTab === "plugins"}
+                                onclick={() => (agentSubTab = "plugins")}
+                            >
+                                Plugins
+                            </button>
+                            <button
+                                class="ai-subtab"
+                                class:active={agentSubTab === "contexts"}
+                                onclick={() => (agentSubTab = "contexts")}
+                            >
+                                Contexts
+                            </button>
+                            <button
+                                class="ai-subtab"
+                                class:active={agentSubTab === "usage"}
+                                onclick={() => (agentSubTab = "usage")}
+                            >
+                                Usage Stats
+                            </button>
+                        </div>
+
+                        <div class="agent-settings-scroll">
+                            {#if agentSubTab === "general"}
+                                <div class="stg-card-stack">
+                                    <section class="stg-card agent-usage-card">
+                                        <header class="stg-card-hd">
+                                            <span
+                                                class="stg-card-icon"
+                                                aria-hidden="true"
+                                            >
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    width="14"
+                                                    height="14"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    ><path
+                                                        d="M18 20V10M12 20V4M6 20v-6"
+                                                    /></svg
+                                                >
+                                            </span>
+                                            <div class="stg-card-titles">
+                                                <h3 class="stg-card-title">
+                                                    Live usage tracking
+                                                </h3>
+                                                <p class="stg-card-sub">
+                                                    Configure the provider
+                                                    limits shown in the Agent
+                                                    footer.
+                                                </p>
+                                            </div>
+                                            {#if agentFooterProvider === "claude" && agentSessionKey && $agentUsageAuthStatus.state === "valid"}
+                                                <span class="ai-status-badge">
+                                                    <span class="ai-status-dot"
+                                                    ></span>
+                                                    Claude connected
+                                                </span>
+                                            {:else if agentFooterProvider === "claude" && agentSessionKey && $agentUsageAuthStatus.state === "checking"}
+                                                <span
+                                                    class="ai-status-badge checking"
+                                                >
+                                                    <span class="ai-status-dot"
+                                                    ></span>
+                                                    Checking Claude
+                                                </span>
+                                            {:else if agentFooterProvider === "claude" && agentSessionKey && $agentUsageAuthStatus.state === "invalid"}
+                                                <span
+                                                    class="ai-status-badge error"
+                                                    title={$agentUsageAuthStatus.message}
+                                                >
+                                                    <span class="ai-status-dot"
+                                                    ></span>
+                                                    Claude needs reconfigure
+                                                </span>
+                                            {:else if agentFooterProvider === "codex" && agentCodexToken}
+                                                <span class="ai-status-badge">
+                                                    <span class="ai-status-dot"
+                                                    ></span>
+                                                    Codex configured
+                                                </span>
+                                            {:else}
+                                                <span
+                                                    class="ai-status-badge muted"
+                                                >
+                                                    Footer not configured
+                                                </span>
+                                            {/if}
+                                        </header>
+                                        <div class="stg-card-body">
+                                            <div class="stg-card-row">
+                                                <div
+                                                    class="stg-card-row-action-text"
+                                                >
+                                                    <span
+                                                        class="stg-card-row-label"
+                                                        >Show in Agent footer</span
+                                                    >
+                                                    <span
+                                                        class="stg-card-row-help"
+                                                    >
+                                                        Choose the provider
+                                                        whose live limit appears
+                                                        next to the Agent
+                                                        terminal.
+                                                    </span>
+                                                </div>
+                                                <select
+                                                    class="stg-select"
+                                                    value={agentFooterProvider}
+                                                    onchange={(e) =>
+                                                        handleSettingChange(
+                                                            "agent_footer_usage_provider",
+                                                            e.currentTarget
+                                                                .value,
+                                                        )}
+                                                >
+                                                    <option
+                                                        value="claude"
+                                                        disabled={!agentSessionKey}
+                                                        >Claude Code{agentSessionKey
+                                                            ? ""
+                                                            : " (not configured)"}</option
+                                                    >
+                                                    <option
+                                                        value="codex"
+                                                        disabled={!agentCodexToken}
+                                                        >Codex{agentCodexToken
+                                                            ? ""
+                                                            : " (not configured)"}</option
+                                                    >
+                                                    <option value="gemini"
+                                                        >Gemini (local data
+                                                        only)</option
+                                                    >
+                                                    <option value="opencode"
+                                                        >OpenCode (local data
+                                                        only)</option
+                                                    >
+                                                </select>
+                                            </div>
+
+                                            <div
+                                                class="stg-card-row stg-card-row-action"
+                                            >
+                                                <div
+                                                    class="stg-card-row-action-text"
+                                                >
+                                                    <span
+                                                        class="stg-card-row-label"
+                                                        >Claude session key</span
+                                                    >
+                                                    <span
+                                                        class="stg-card-row-help"
+                                                    >
+                                                        Used only to read Claude
+                                                        usage limits. Find it in
+                                                        claude.ai DevTools >
+                                                        Application > Cookies >
+                                                        sessionKey.
+                                                    </span>
+                                                    {#if agentKeyTestStatus === "success"}
+                                                        <span
+                                                            class="ai-test-result success"
+                                                        >
+                                                            <svg
+                                                                viewBox="0 0 24 24"
+                                                                width="12"
+                                                                height="12"
+                                                                fill="none"
+                                                                stroke="currentColor"
+                                                                stroke-width="2"
+                                                                ><polyline
+                                                                    points="20 6 9 17 4 12"
+                                                                /></svg
+                                                            >
+                                                            {agentKeyTestMessage}
+                                                        </span>
+                                                    {:else if agentKeyTestStatus === "error"}
+                                                        <span
+                                                            class="ai-test-result error"
+                                                        >
+                                                            <svg
+                                                                viewBox="0 0 24 24"
+                                                                width="12"
+                                                                height="12"
+                                                                fill="none"
+                                                                stroke="currentColor"
+                                                                stroke-width="2"
+                                                                ><circle
+                                                                    cx="12"
+                                                                    cy="12"
+                                                                    r="10"
+                                                                /><line
+                                                                    x1="15"
+                                                                    y1="9"
+                                                                    x2="9"
+                                                                    y2="15"
+                                                                /><line
+                                                                    x1="9"
+                                                                    y1="9"
+                                                                    x2="15"
+                                                                    y2="15"
+                                                                /></svg
+                                                            >
+                                                            {agentKeyTestMessage}
+                                                        </span>
+                                                    {:else if agentSessionKey && $agentUsageAuthStatus.state === "invalid"}
+                                                        <span
+                                                            class="ai-test-result error"
+                                                        >
+                                                            {$agentUsageAuthStatus.message}
+                                                        </span>
+                                                    {/if}
+                                                </div>
+                                                <div
+                                                    class="agent-session-key-control"
+                                                >
+                                                    <div
+                                                        class="ai-key-input-wrap"
+                                                    >
+                                                        <input
+                                                            class="ai-cfg-input"
+                                                            type={showAgentKey
+                                                                ? "text"
+                                                                : "password"}
+                                                            placeholder="sk-ant-sid01-..."
+                                                            bind:value={
+                                                                agentKeyInput
+                                                            }
+                                                            onblur={commitAgentKeyIfChanged}
+                                                            onkeydown={(e) => {
+                                                                if (
+                                                                    e.key ===
+                                                                    "Enter"
+                                                                ) {
+                                                                    e.preventDefault();
+                                                                    commitAgentKeyIfChanged();
+                                                                }
+                                                            }}
+                                                        />
+                                                        <button
+                                                            class="ai-key-toggle"
+                                                            onclick={() =>
+                                                                (showAgentKey =
+                                                                    !showAgentKey)}
+                                                            type="button"
+                                                            title={showAgentKey
+                                                                ? "Hide key"
+                                                                : "Show key"}
+                                                        >
+                                                            {#if showAgentKey}
+                                                                <svg
+                                                                    viewBox="0 0 24 24"
+                                                                    width="14"
+                                                                    height="14"
+                                                                    fill="none"
+                                                                    stroke="currentColor"
+                                                                    stroke-width="1.8"
+                                                                    ><path
+                                                                        d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"
+                                                                    /><line
+                                                                        x1="1"
+                                                                        y1="1"
+                                                                        x2="23"
+                                                                        y2="23"
+                                                                    /></svg
+                                                                >
+                                                            {:else}
+                                                                <svg
+                                                                    viewBox="0 0 24 24"
+                                                                    width="14"
+                                                                    height="14"
+                                                                    fill="none"
+                                                                    stroke="currentColor"
+                                                                    stroke-width="1.8"
+                                                                    ><path
+                                                                        d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                                                                    /><circle
+                                                                        cx="12"
+                                                                        cy="12"
+                                                                        r="3"
+                                                                    /></svg
+                                                                >
+                                                            {/if}
+                                                        </button>
+                                                    </div>
+                                                    <div
+                                                        class="agent-session-key-actions"
+                                                    >
+                                                        {#if agentKeyTestStatus === "testing"}
+                                                            <span
+                                                                class="ai-test-result"
+                                                                >Verifying…</span
+                                                            >
+                                                        {/if}
+                                                        {#if agentSessionKey}
+                                                            <button
+                                                                class="ai-action-btn danger"
+                                                                onclick={handleRemoveAgentKey}
+                                                                >Remove</button
+                                                            >
+                                                        {/if}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div
+                                                class="stg-card-row stg-card-row-action"
+                                            >
+                                                <div
+                                                    class="stg-card-row-action-text"
+                                                >
+                                                    <span
+                                                        class="stg-card-row-label"
+                                                        >Codex access token</span
+                                                    >
+                                                    <span
+                                                        class="stg-card-row-help"
+                                                    >
+                                                        Grab from <strong
+                                                            >chatgpt.com/codex/cloud/settings/analytics</strong
+                                                        >
+                                                        → DevTools → Network →
+                                                        <code>wham/usage</code>
+                                                        →
+                                                        <code
+                                                            >authorization</code
+                                                        >
+                                                        header (after
+                                                        <code>Bearer </code>).
+                                                    </span>
+                                                    {#if codexTokenTestStatus === "success"}
+                                                        <span
+                                                            class="ai-test-result success"
+                                                        >
+                                                            <svg
+                                                                viewBox="0 0 24 24"
+                                                                width="11"
+                                                                height="11"
+                                                                fill="none"
+                                                                stroke="currentColor"
+                                                                stroke-width="2.5"
+                                                                stroke-linecap="round"
+                                                                ><polyline
+                                                                    points="20 6 9 17 4 12"
+                                                                /></svg
+                                                            >
+                                                            {codexTokenTestMessage}
+                                                        </span>
+                                                    {:else if codexTokenTestStatus === "error"}
+                                                        <span
+                                                            class="ai-test-result error"
+                                                        >
+                                                            <svg
+                                                                viewBox="0 0 24 24"
+                                                                width="11"
+                                                                height="11"
+                                                                fill="none"
+                                                                stroke="currentColor"
+                                                                stroke-width="2"
+                                                                ><circle
+                                                                    cx="12"
+                                                                    cy="12"
+                                                                    r="10"
+                                                                /><line
+                                                                    x1="15"
+                                                                    y1="9"
+                                                                    x2="9"
+                                                                    y2="15"
+                                                                /><line
+                                                                    x1="9"
+                                                                    y1="9"
+                                                                    x2="15"
+                                                                    y2="15"
+                                                                /></svg
+                                                            >
+                                                            {codexTokenTestMessage}
+                                                        </span>
+                                                    {/if}
+                                                </div>
+                                                <div
+                                                    class="agent-session-key-control"
+                                                >
+                                                    <div
+                                                        class="ai-key-input-wrap"
+                                                    >
+                                                        <input
+                                                            class="ai-cfg-input"
+                                                            type={showCodexToken
+                                                                ? "text"
+                                                                : "password"}
+                                                            placeholder="Bearer token..."
+                                                            bind:value={
+                                                                codexTokenInput
+                                                            }
+                                                            onblur={commitCodexTokenIfChanged}
+                                                            onkeydown={(e) => {
+                                                                if (
+                                                                    e.key ===
+                                                                    "Enter"
+                                                                ) {
+                                                                    e.preventDefault();
+                                                                    commitCodexTokenIfChanged();
+                                                                }
+                                                            }}
+                                                        />
+                                                        <button
+                                                            class="ai-key-toggle"
+                                                            onclick={() =>
+                                                                (showCodexToken =
+                                                                    !showCodexToken)}
+                                                            type="button"
+                                                            title={showCodexToken
+                                                                ? "Hide token"
+                                                                : "Show token"}
+                                                        >
+                                                            {#if showCodexToken}
+                                                                <svg
+                                                                    viewBox="0 0 24 24"
+                                                                    width="14"
+                                                                    height="14"
+                                                                    fill="none"
+                                                                    stroke="currentColor"
+                                                                    stroke-width="1.8"
+                                                                    ><path
+                                                                        d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"
+                                                                    /><line
+                                                                        x1="1"
+                                                                        y1="1"
+                                                                        x2="23"
+                                                                        y2="23"
+                                                                    /></svg
+                                                                >
+                                                            {:else}
+                                                                <svg
+                                                                    viewBox="0 0 24 24"
+                                                                    width="14"
+                                                                    height="14"
+                                                                    fill="none"
+                                                                    stroke="currentColor"
+                                                                    stroke-width="1.8"
+                                                                    ><path
+                                                                        d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                                                                    /><circle
+                                                                        cx="12"
+                                                                        cy="12"
+                                                                        r="3"
+                                                                    /></svg
+                                                                >
+                                                            {/if}
+                                                        </button>
+                                                    </div>
+                                                    <div
+                                                        class="agent-session-key-actions"
+                                                    >
+                                                        {#if codexTokenTestStatus === "testing"}
+                                                            <span
+                                                                class="ai-test-result"
+                                                                >Verifying…</span
+                                                            >
+                                                        {/if}
+                                                        {#if agentCodexToken}
+                                                            <button
+                                                                class="ai-action-btn danger"
+                                                                onclick={handleRemoveCodexToken}
+                                                                >Remove</button
+                                                            >
+                                                        {/if}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div class="stg-card-row">
+                                                <div
+                                                    class="stg-card-row-action-text"
+                                                >
+                                                    <span
+                                                        class="stg-card-row-label"
+                                                        >Refresh interval</span
+                                                    >
+                                                    <span
+                                                        class="stg-card-row-help"
+                                                    >
+                                                        How often Clauge
+                                                        refreshes live limits
+                                                        while Agent mode is
+                                                        open.
+                                                    </span>
+                                                </div>
+                                                <select
+                                                    class="stg-select"
+                                                    value={agentRefreshMins}
+                                                    onchange={(e) =>
+                                                        handleSettingChange(
+                                                            "agent_refresh_mins",
+                                                            e.currentTarget
+                                                                .value,
+                                                        )}
+                                                >
+                                                    {#each REFRESH_OPTIONS as opt}
+                                                        <option
+                                                            value={opt.value}
+                                                            >{opt.label}</option
+                                                        >
+                                                    {/each}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </section>
+
+                                    <section class="stg-card">
+                                        <header class="stg-card-hd">
+                                            <span
+                                                class="stg-card-icon"
+                                                aria-hidden="true"
+                                            >
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    width="14"
+                                                    height="14"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    ><path
+                                                        d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"
+                                                    /><path
+                                                        d="M13.73 21a2 2 0 0 1-3.46 0"
+                                                    /></svg
+                                                >
+                                            </span>
+                                            <div class="stg-card-titles">
+                                                <h3 class="stg-card-title">
+                                                    Notifications
+                                                </h3>
+                                                <p class="stg-card-sub">
+                                                    Sound and dock bounce when
+                                                    an agent session finishes
+                                                    its work.
+                                                </p>
+                                            </div>
+                                        </header>
+                                        <div class="stg-card-body">
+                                            <div class="stg-card-row">
+                                                <label
+                                                    class="stg-card-row-label"
+                                                    >Enable sound alerts</label
+                                                >
+                                                <label class="stg-toggle">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={agentSoundEnabled}
+                                                        onchange={(e) =>
+                                                            handleSettingChange(
+                                                                "agent_sound_enabled",
+                                                                String(
+                                                                    e
+                                                                        .currentTarget
+                                                                        .checked,
+                                                                ),
+                                                            )}
+                                                    />
+                                                    <span
+                                                        class="stg-toggle-slider"
+                                                    ></span>
+                                                </label>
+                                            </div>
+                                            <div class="stg-card-row">
+                                                <label
+                                                    class="stg-card-row-label"
+                                                    >Enable dock bounce</label
+                                                >
+                                                <label class="stg-toggle">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={agentDockBounceEnabled}
+                                                        onchange={(e) =>
+                                                            handleSettingChange(
+                                                                "agent_dock_bounce_enabled",
+                                                                String(
+                                                                    e
+                                                                        .currentTarget
+                                                                        .checked,
+                                                                ),
+                                                            )}
+                                                    />
+                                                    <span
+                                                        class="stg-toggle-slider"
+                                                    ></span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </section>
+                                </div>
+                            {:else if agentSubTab === "plugins"}
+                                <!-- Plugins pane lays itself out as a flex column that
+                         fills the right pane. The provider tab strip and
+                         the Installed/Marketplace toggle stay pinned at
+                         the top; only the list itself scrolls. Without
+                         this wrapper the whole settings pane scrolls when
+                         the list grows, which hides the toggle as you
+                         scan plugins. -->
+                                <div class="agent-plugins-pane">
+                                    <!-- CLI provider tab strip — each provider has its own
+                         marketplace + installed list. OpenCode isn't here
+                         because its plugins are npm packages with no
+                         marketplace concept (handled at the runner level). -->
+                                    <div class="plugin-provider-tabs">
+                                        {#each PLUGIN_PROVIDER_TABS as t}
+                                            <button
+                                                class="plugin-provider-tab"
+                                                class:active={pluginProvider ===
+                                                    t.id}
+                                                onclick={() =>
+                                                    selectPluginProvider(t.id)}
+                                                >{t.label}</button
                                             >
                                         {/each}
-                                    </select>
+                                    </div>
+
+                                    <!-- Installed / Marketplace toggle. Codex doesn't
+                         have a Clauge-side marketplace browser (installs
+                         happen inside the codex TUI), so we hide that
+                         half of the toggle and show only Installed. -->
+                                    {#if pluginProvider !== "codex"}
+                                        <div class="agent-plugin-views">
+                                            <button
+                                                class="ai-action-btn"
+                                                class:primary={pluginView ===
+                                                    "installed"}
+                                                onclick={() =>
+                                                    (pluginView = "installed")}
+                                                >Installed</button
+                                            >
+                                            <button
+                                                class="ai-action-btn"
+                                                class:primary={pluginView ===
+                                                    "marketplace"}
+                                                onclick={() =>
+                                                    (pluginView =
+                                                        "marketplace")}
+                                                >Marketplace</button
+                                            >
+                                        </div>
+                                    {/if}
+
+                                    {#if pluginProvider === "codex"}
+                                        <div
+                                            class="plugin-codex-hint"
+                                            role="status"
+                                        >
+                                            <svg
+                                                width="14"
+                                                height="14"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                            >
+                                                <circle
+                                                    cx="12"
+                                                    cy="12"
+                                                    r="10"
+                                                /><line
+                                                    x1="12"
+                                                    y1="16"
+                                                    x2="12"
+                                                    y2="12"
+                                                /><line
+                                                    x1="12"
+                                                    y1="8"
+                                                    x2="12.01"
+                                                    y2="8"
+                                                />
+                                            </svg>
+                                            <span>
+                                                Codex installs plugins from
+                                                inside its own UI — run <code
+                                                    >codex</code
+                                                >
+                                                in a terminal and use the
+                                                <code>/plugins</code> slash command.
+                                                Installed plugins show up here and
+                                                can be enabled or disabled.
+                                            </span>
+                                        </div>
+                                    {/if}
+
+                                    {#if pluginView === "installed"}
+                                        {#if installedPlugins.length === 0}
+                                            <div class="ai-usage-empty">
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    width="36"
+                                                    height="36"
+                                                    fill="none"
+                                                    stroke="var(--t4)"
+                                                    stroke-width="1.2"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    ><path
+                                                        d="M20.5 7.27783L12 12.0001M12 12.0001L3.49997 7.27783M12 12.0001L12 21.5001M14 20.6701L12.7 21.4001C12.2 21.6001 11.8 21.6001 11.3 21.4001L4.8 17.7001C4.3 17.4001 4 16.9001 4 16.3001V7.70011C4 7.10011 4.3 6.60011 4.8 6.30011L11.3 2.60011C11.8 2.40011 12.2 2.40011 12.7 2.60011L19.2 6.30011C19.7 6.60011 20 7.10011 20 7.70011V16.3001"
+                                                    /></svg
+                                                >
+                                                <p>No plugins installed</p>
+                                                <span
+                                                    >Browse the marketplace to
+                                                    install plugins</span
+                                                >
+                                            </div>
+                                        {:else}
+                                            <div class="agent-plugin-list">
+                                                {#each installedPlugins as plugin}
+                                                    <div
+                                                        class="agent-plugin-card"
+                                                    >
+                                                        <div
+                                                            class="agent-plugin-info"
+                                                        >
+                                                            <span
+                                                                class="agent-plugin-name"
+                                                                >{plugin.name}</span
+                                                            >
+                                                            <span
+                                                                class="agent-plugin-meta"
+                                                            >
+                                                                {plugin.marketplace}
+                                                                {#if plugin.version}
+                                                                    <span
+                                                                        class="ai-link-sep"
+                                                                        >&middot;</span
+                                                                    >
+                                                                    v{plugin.version}
+                                                                {/if}
+                                                            </span>
+                                                        </div>
+                                                        <div
+                                                            class="agent-plugin-actions"
+                                                        >
+                                                            <label
+                                                                class="stg-toggle"
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={plugin.enabled}
+                                                                    onchange={() =>
+                                                                        handleTogglePlugin(
+                                                                            plugin.name,
+                                                                            !plugin.enabled,
+                                                                        )}
+                                                                />
+                                                                <span
+                                                                    class="stg-toggle-slider"
+                                                                ></span>
+                                                            </label>
+                                                            <button
+                                                                class="ai-action-btn danger sm"
+                                                                onclick={() =>
+                                                                    handleUninstallPlugin(
+                                                                        plugin.name,
+                                                                        plugin.marketplace,
+                                                                    )}
+                                                            >
+                                                                Uninstall
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                {/each}
+                                            </div>
+                                        {/if}
+                                    {:else}
+                                        <div class="agent-marketplace-search">
+                                            <input
+                                                class="stg-input"
+                                                type="text"
+                                                style="width: 100%;"
+                                                placeholder="Search plugins..."
+                                                bind:value={pluginSearchQuery}
+                                            />
+                                        </div>
+                                        {#if filteredMarketplacePlugins.length === 0}
+                                            <div class="ai-usage-empty">
+                                                <p>No plugins found</p>
+                                            </div>
+                                        {:else}
+                                            <div class="agent-plugin-list">
+                                                {#each filteredMarketplacePlugins as plugin}
+                                                    <div
+                                                        class="agent-plugin-card"
+                                                    >
+                                                        <div
+                                                            class="agent-plugin-info"
+                                                        >
+                                                            <span
+                                                                class="agent-plugin-name"
+                                                                >{plugin.name}</span
+                                                            >
+                                                            <span
+                                                                class="agent-plugin-desc"
+                                                                >{plugin.description}</span
+                                                            >
+                                                            {#if plugin.installs != null}
+                                                                <span
+                                                                    class="agent-plugin-meta"
+                                                                    >{plugin.installs.toLocaleString()}
+                                                                    installs</span
+                                                                >
+                                                            {/if}
+                                                        </div>
+                                                        <div
+                                                            class="agent-plugin-actions"
+                                                        >
+                                                            {#if plugin.installed}
+                                                                <span
+                                                                    class="ai-status-badge"
+                                                                >
+                                                                    <span
+                                                                        class="ai-status-dot"
+                                                                    ></span>
+                                                                    Installed
+                                                                </span>
+                                                            {:else}
+                                                                <button
+                                                                    class="ai-action-btn primary sm"
+                                                                    onclick={() =>
+                                                                        handleInstallPlugin(
+                                                                            plugin.name,
+                                                                            plugin.marketplace,
+                                                                        )}
+                                                                >
+                                                                    Install
+                                                                </button>
+                                                            {/if}
+                                                        </div>
+                                                    </div>
+                                                {/each}
+                                            </div>
+                                        {/if}
+                                    {/if}
+                                </div>
+                                <!-- /.agent-plugins-pane -->
+                            {:else if agentSubTab === "contexts"}
+                                {#if isNewContext || editingContext}
+                                    <!-- Context editor -->
+                                    <div class="agent-ctx-editor">
+                                        <div
+                                            class="stg-field"
+                                            style="flex-direction: column; align-items: stretch;"
+                                        >
+                                            <label class="stg-label">Name</label
+                                            >
+                                            <input
+                                                class="stg-input"
+                                                type="text"
+                                                style="width: 100%;"
+                                                placeholder="Context name..."
+                                                bind:value={editContextName}
+                                            />
+                                        </div>
+                                        <div
+                                            class="stg-field"
+                                            style="flex-direction: column; align-items: stretch;"
+                                        >
+                                            <label class="stg-label"
+                                                >Content</label
+                                            >
+                                            <textarea
+                                                class="agent-ctx-textarea"
+                                                placeholder="Context content..."
+                                                bind:value={editContextContent}
+                                            ></textarea>
+                                        </div>
+                                        <div class="ai-key-actions">
+                                            <button
+                                                class="ai-action-btn primary"
+                                                onclick={handleSaveAgentContext}
+                                                >Save</button
+                                            >
+                                            <button
+                                                class="ai-action-btn"
+                                                onclick={cancelEditContext}
+                                                >Cancel</button
+                                            >
+                                        </div>
+                                    </div>
+                                {:else}
+                                    <div class="agent-ctx-header">
+                                        <span
+                                            class="stg-section-label"
+                                            style="margin-bottom: 0;"
+                                            >Contexts</span
+                                        >
+                                        <button
+                                            class="ai-action-btn primary sm"
+                                            onclick={startNewContext}
+                                            >New Context</button
+                                        >
+                                    </div>
+
+                                    {#if agentContexts.length === 0}
+                                        <div class="ai-usage-empty">
+                                            <svg
+                                                viewBox="0 0 24 24"
+                                                width="36"
+                                                height="36"
+                                                fill="none"
+                                                stroke="var(--t4)"
+                                                stroke-width="1.2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                ><path
+                                                    d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"
+                                                /><polyline
+                                                    points="14 2 14 8 20 8"
+                                                /><line
+                                                    x1="16"
+                                                    y1="13"
+                                                    x2="8"
+                                                    y2="13"
+                                                /><line
+                                                    x1="16"
+                                                    y1="17"
+                                                    x2="8"
+                                                    y2="17"
+                                                /><polyline
+                                                    points="10 9 9 9 8 9"
+                                                /></svg
+                                            >
+                                            <p>No contexts yet</p>
+                                            <span
+                                                >Create a context to attach to
+                                                agent sessions</span
+                                            >
+                                        </div>
+                                    {:else}
+                                        <div class="agent-plugin-list">
+                                            {#each agentContexts as ctx}
+                                                <div
+                                                    class="agent-plugin-card agent-ctx-card"
+                                                    onclick={() =>
+                                                        startEditContext(ctx)}
+                                                    role="button"
+                                                    tabindex="0"
+                                                    onkeydown={(e) => {
+                                                        if (e.key === "Enter")
+                                                            startEditContext(
+                                                                ctx,
+                                                            );
+                                                    }}
+                                                >
+                                                    <div
+                                                        class="agent-plugin-info"
+                                                    >
+                                                        <span
+                                                            class="agent-plugin-name"
+                                                            >{ctx.name}</span
+                                                        >
+                                                        <span
+                                                            class="agent-plugin-desc"
+                                                            >{ctx.content
+                                                                .split("\n")[0]
+                                                                .slice(
+                                                                    0,
+                                                                    80,
+                                                                )}{ctx.content
+                                                                .length > 80
+                                                                ? "..."
+                                                                : ""}</span
+                                                        >
+                                                    </div>
+                                                    <div
+                                                        class="agent-plugin-actions"
+                                                        onclick={(e) => {
+                                                            e.stopPropagation();
+                                                        }}
+                                                    >
+                                                        {#if deleteConfirmId === ctx.id}
+                                                            <span
+                                                                class="ai-reset-confirm"
+                                                            >
+                                                                <span
+                                                                    >Delete?</span
+                                                                >
+                                                                <button
+                                                                    class="ai-action-btn danger sm"
+                                                                    onclick={(
+                                                                        e,
+                                                                    ) => {
+                                                                        e.stopPropagation();
+                                                                        handleDeleteAgentContext(
+                                                                            ctx.id,
+                                                                        );
+                                                                    }}
+                                                                    >Yes</button
+                                                                >
+                                                                <button
+                                                                    class="ai-action-btn sm"
+                                                                    onclick={(
+                                                                        e,
+                                                                    ) => {
+                                                                        e.stopPropagation();
+                                                                        deleteConfirmId =
+                                                                            null;
+                                                                    }}
+                                                                    >No</button
+                                                                >
+                                                            </span>
+                                                        {:else}
+                                                            <button
+                                                                class="ai-action-btn danger sm"
+                                                                onclick={(
+                                                                    e,
+                                                                ) => {
+                                                                    e.stopPropagation();
+                                                                    deleteConfirmId =
+                                                                        ctx.id;
+                                                                }}
+                                                                >Delete</button
+                                                            >
+                                                        {/if}
+                                                    </div>
+                                                </div>
+                                            {/each}
+                                        </div>
+                                    {/if}
+                                {/if}
+                            {:else if agentSubTab === "usage"}
+                                <!-- Day range selector -->
+                                <div class="ud-days">
+                                    {#each [7, 14, 30, 90] as d}
+                                        <button
+                                            class="ud-day-btn"
+                                            class:active={agentUsageDays === d}
+                                            onclick={() =>
+                                                selectAgentUsageDays(d)}
+                                            >{d}d</button
+                                        >
+                                    {/each}
+                                    <button
+                                        class="ai-action-btn sm"
+                                        style="margin-left: auto;"
+                                        onclick={loadAgentUsage}
+                                    >
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            width="11"
+                                            height="11"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            ><polyline
+                                                points="23 4 23 10 17 10"
+                                            /><path
+                                                d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"
+                                            /></svg
+                                        >
+                                        Refresh
+                                    </button>
+                                </div>
+
+                                {#if agentUsageLoading}
+                                    <div class="ud-loading">
+                                        <div class="ud-spinner"></div>
+                                        Loading analytics...
+                                    </div>
+                                {:else if agentUsageData}
+                                    <!-- Summary cards -->
+                                    <div class="ud-cards">
+                                        <div class="ud-card">
+                                            <span class="ud-val"
+                                                >{agentFormatCost(
+                                                    agentUsageData.totalCost,
+                                                )}</span
+                                            ><span class="ud-lbl"
+                                                >Total Cost</span
+                                            >
+                                        </div>
+                                        <div class="ud-card">
+                                            <span class="ud-val"
+                                                >{agentUsageData.totalApiCalls.toLocaleString()}</span
+                                            ><span class="ud-lbl"
+                                                >API Calls</span
+                                            >
+                                        </div>
+                                        <div class="ud-card">
+                                            <span class="ud-val"
+                                                >{agentUsageData.totalSessions}</span
+                                            ><span class="ud-lbl">Sessions</span
+                                            >
+                                        </div>
+                                        <div class="ud-card">
+                                            <span class="ud-val"
+                                                >{agentUsageData.cacheHitPercent.toFixed(
+                                                    1,
+                                                )}%</span
+                                            ><span class="ud-lbl"
+                                                >Cache Hit</span
+                                            >
+                                        </div>
+                                    </div>
+
+                                    <!-- Token breakdown -->
+                                    <div class="ud-token-row">
+                                        <span
+                                            ><strong>In:</strong>
+                                            {agentFormatTokens(
+                                                agentUsageData.totalInputTokens,
+                                            )}</span
+                                        >
+                                        <span
+                                            ><strong>Out:</strong>
+                                            {agentFormatTokens(
+                                                agentUsageData.totalOutputTokens,
+                                            )}</span
+                                        >
+                                        <span
+                                            ><strong>Cache R:</strong>
+                                            {agentFormatTokens(
+                                                agentUsageData.totalCacheReadTokens,
+                                            )}</span
+                                        >
+                                        <span
+                                            ><strong>Cache W:</strong>
+                                            {agentFormatTokens(
+                                                agentUsageData.totalCacheWriteTokens,
+                                            )}</span
+                                        >
+                                    </div>
+
+                                    <!-- Daily chart -->
+                                    {#if agentUsageData.daily.length > 0}
+                                        <div class="ud-section-inline">
+                                            <div class="ud-section-title">
+                                                Daily Activity
+                                            </div>
+                                            <div class="ud-chart">
+                                                {#each agentUsageData.daily.slice(-21) as day}
+                                                    {@const maxCost = Math.max(
+                                                        ...agentUsageData.daily
+                                                            .slice(-21)
+                                                            .map((d) => d.cost),
+                                                        0.01,
+                                                    )}
+                                                    <div
+                                                        class="ud-bar-wrap"
+                                                        title="{day.date}: {agentFormatCost(
+                                                            day.cost,
+                                                        )} / {day.calls} calls"
+                                                    >
+                                                        <div
+                                                            class="ud-bar"
+                                                            style="height:{Math.max(
+                                                                3,
+                                                                (day.cost /
+                                                                    maxCost) *
+                                                                    100,
+                                                            )}%"
+                                                        ></div>
+                                                        <span class="ud-bar-lbl"
+                                                            >{day.date.slice(
+                                                                8,
+                                                            )}</span
+                                                        >
+                                                    </div>
+                                                {/each}
+                                            </div>
+                                        </div>
+                                    {/if}
+                                    <!-- Live Usage + Models -->
+                                    <div class="ud-grid">
+                                        <div class="ud-section">
+                                            <div class="ud-section-title">
+                                                Live Usage
+                                            </div>
+                                            {#if $agentUsageLimits}
+                                                {@const sessionPct =
+                                                    $agentUsageLimits.five_hour
+                                                        ?.utilization ??
+                                                    $agentUsageLimits.standard
+                                                        ?.percentUsed ??
+                                                    null}
+                                                {@const weeklyPct =
+                                                    $agentUsageLimits.seven_day
+                                                        ?.utilization ??
+                                                    $agentUsageLimits.extended
+                                                        ?.percentUsed ??
+                                                    null}
+                                                {@const sonnetPct =
+                                                    $agentUsageLimits
+                                                        .seven_day_sonnet
+                                                        ?.utilization ?? null}
+                                                <div class="ud-live-rows">
+                                                    {#if sessionPct != null}
+                                                        <div
+                                                            class="ud-live-row"
+                                                        >
+                                                            <span
+                                                                class="ud-live-lbl"
+                                                                >Session</span
+                                                            >
+                                                            <div
+                                                                class="ud-live-bar"
+                                                            >
+                                                                <div
+                                                                    class="ud-live-fill"
+                                                                    style="width:{sessionPct}%;background:{agentLiveColor(
+                                                                        sessionPct,
+                                                                    )}"
+                                                                ></div>
+                                                            </div>
+                                                            <span
+                                                                class="ud-live-pct"
+                                                                style="color:{agentLiveColor(
+                                                                    sessionPct,
+                                                                )}"
+                                                                >{sessionPct.toFixed(
+                                                                    1,
+                                                                )}%</span
+                                                            >
+                                                        </div>
+                                                    {/if}
+                                                    {#if weeklyPct != null}
+                                                        <div
+                                                            class="ud-live-row"
+                                                        >
+                                                            <span
+                                                                class="ud-live-lbl"
+                                                                >Weekly</span
+                                                            >
+                                                            <div
+                                                                class="ud-live-bar"
+                                                            >
+                                                                <div
+                                                                    class="ud-live-fill"
+                                                                    style="width:{weeklyPct}%;background:{agentLiveColor(
+                                                                        weeklyPct,
+                                                                    )}"
+                                                                ></div>
+                                                            </div>
+                                                            <span
+                                                                class="ud-live-pct"
+                                                                style="color:{agentLiveColor(
+                                                                    weeklyPct,
+                                                                )}"
+                                                                >{weeklyPct.toFixed(
+                                                                    1,
+                                                                )}%</span
+                                                            >
+                                                        </div>
+                                                    {/if}
+                                                    {#if sonnetPct != null}
+                                                        <div
+                                                            class="ud-live-row"
+                                                        >
+                                                            <span
+                                                                class="ud-live-lbl"
+                                                                >Sonnet</span
+                                                            >
+                                                            <div
+                                                                class="ud-live-bar"
+                                                            >
+                                                                <div
+                                                                    class="ud-live-fill"
+                                                                    style="width:{sonnetPct}%;background:{agentLiveColor(
+                                                                        sonnetPct,
+                                                                    )}"
+                                                                ></div>
+                                                            </div>
+                                                            <span
+                                                                class="ud-live-pct"
+                                                                style="color:{agentLiveColor(
+                                                                    sonnetPct,
+                                                                )}"
+                                                                >{sonnetPct.toFixed(
+                                                                    1,
+                                                                )}%</span
+                                                            >
+                                                        </div>
+                                                    {/if}
+                                                </div>
+                                            {:else}
+                                                <div
+                                                    style="padding:8px 0;font-size:11px;color:var(--t3);"
+                                                >
+                                                    Fetching live data...
+                                                </div>
+                                            {/if}
+                                        </div>
+                                        <div class="ud-section">
+                                            <div class="ud-section-title">
+                                                Models
+                                            </div>
+                                            <div class="ud-scroll">
+                                                {#each agentUsageData.byModel as m}
+                                                    <div class="ud-row">
+                                                        <div
+                                                            class="ud-row-info"
+                                                        >
+                                                            <span
+                                                                class="ud-row-name"
+                                                                >{m.model}</span
+                                                            >
+                                                            <span
+                                                                class="ud-row-meta"
+                                                                >{m.calls} calls &middot;
+                                                                {m.cacheHitPercent.toFixed(
+                                                                    0,
+                                                                )}% cache</span
+                                                            >
+                                                        </div>
+                                                        <span
+                                                            class="ud-row-cost"
+                                                            >{agentFormatCost(
+                                                                m.cost,
+                                                            )}</span
+                                                        >
+                                                    </div>
+                                                {/each}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Projects + Top Sessions (2-col) -->
+                                    <div class="ud-grid">
+                                        <div class="ud-section">
+                                            <div class="ud-section-title">
+                                                Projects ({agentUsageData
+                                                    .byProject.length})
+                                            </div>
+                                            <div class="ud-scroll">
+                                                {#each agentUsageData.byProject as p}
+                                                    <div class="ud-row">
+                                                        <div
+                                                            class="ud-row-info"
+                                                        >
+                                                            <span
+                                                                class="ud-row-name"
+                                                                title={p.project}
+                                                                >{agentDecodeName(
+                                                                    p.project,
+                                                                )}</span
+                                                            >
+                                                            <span
+                                                                class="ud-row-meta"
+                                                                >{p.sessions} sess
+                                                                &middot; {p.calls}
+                                                                calls</span
+                                                            >
+                                                        </div>
+                                                        <span
+                                                            class="ud-row-cost"
+                                                            >{agentFormatCost(
+                                                                p.cost,
+                                                            )}</span
+                                                        >
+                                                    </div>
+                                                {/each}
+                                            </div>
+                                        </div>
+                                        <div class="ud-section">
+                                            <div class="ud-section-title">
+                                                Top Sessions
+                                            </div>
+                                            <div class="ud-scroll">
+                                                {#each agentUsageData.topSessions.slice(0, 6) as s}
+                                                    <div class="ud-row">
+                                                        <div
+                                                            class="ud-row-info"
+                                                        >
+                                                            <span
+                                                                class="ud-row-name"
+                                                                title={s.project}
+                                                                >{agentDecodeName(
+                                                                    s.project,
+                                                                )}</span
+                                                            >
+                                                            <span
+                                                                class="ud-row-meta"
+                                                                >{s.model} &middot;
+                                                                {s.sessionId.slice(
+                                                                    0,
+                                                                    8,
+                                                                )}</span
+                                                            >
+                                                        </div>
+                                                        <span
+                                                            class="ud-row-cost"
+                                                            >{agentFormatCost(
+                                                                s.cost,
+                                                            )}</span
+                                                        >
+                                                    </div>
+                                                {/each}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Tools + Shell (2-col) -->
+                                    <div class="ud-grid">
+                                        <div class="ud-section">
+                                            <div class="ud-section-title">
+                                                Tools
+                                            </div>
+                                            <div class="ud-scroll">
+                                                {#each agentUsageData.tools.slice(0, 6) as t}
+                                                    <div class="ud-tool-row">
+                                                        <span
+                                                            class="ud-tool-name"
+                                                            >{t.name}</span
+                                                        >
+                                                        <div
+                                                            class="ud-tool-bar"
+                                                        >
+                                                            <div
+                                                                class="ud-tool-fill"
+                                                                style="width:{Math.max(
+                                                                    3,
+                                                                    (t.count /
+                                                                        (agentUsageData
+                                                                            .tools[0]
+                                                                            ?.count ||
+                                                                            1)) *
+                                                                        100,
+                                                                )}%"
+                                                            ></div>
+                                                        </div>
+                                                        <span class="ud-tool-ct"
+                                                            >{t.count.toLocaleString()}</span
+                                                        >
+                                                    </div>
+                                                {/each}
+                                            </div>
+                                        </div>
+                                        <div class="ud-section">
+                                            <div class="ud-section-title">
+                                                Shell
+                                            </div>
+                                            <div class="ud-scroll">
+                                                {#each agentUsageData.shellCommands.slice(0, 6) as cmd}
+                                                    <div class="ud-tool-row">
+                                                        <span
+                                                            class="ud-tool-name"
+                                                            style="font-family:var(--mono)"
+                                                            >{cmd.name}</span
+                                                        >
+                                                        <div
+                                                            class="ud-tool-bar"
+                                                        >
+                                                            <div
+                                                                class="ud-tool-fill"
+                                                                style="width:{Math.max(
+                                                                    3,
+                                                                    (cmd.count /
+                                                                        (agentUsageData
+                                                                            .shellCommands[0]
+                                                                            ?.count ||
+                                                                            1)) *
+                                                                        100,
+                                                                )}%"
+                                                            ></div>
+                                                        </div>
+                                                        <span class="ud-tool-ct"
+                                                            >{cmd.count.toLocaleString()}</span
+                                                        >
+                                                    </div>
+                                                {/each}
+                                            </div>
+                                        </div>
+                                    </div>
+                                {:else}
+                                    <div class="ud-loading">
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            width="36"
+                                            height="36"
+                                            fill="none"
+                                            stroke="var(--t4)"
+                                            stroke-width="1.2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            ><path
+                                                d="M18 20V10M12 20V4M6 20v-6"
+                                            /></svg
+                                        >
+                                        <p
+                                            style="margin: 0; font-size: 13px; color: var(--t2); font-weight: 500;"
+                                        >
+                                            No usage data found
+                                        </p>
+                                        <span
+                                            style="font-size: 11px; color: var(--t3);"
+                                            >Start using Claude Code sessions to
+                                            see analytics here</span
+                                        >
+                                    </div>
+                                {/if}
+                            {/if}
+                        </div>
+                    </div>
+                {:else if activeTab === "shortcuts"}
+                    <div class="stg-section">
+                        <span class="stg-section-label">Keyboard Shortcuts</span
+                        >
+                        <div class="stg-shortcuts">
+                            {#each SHORTCUTS as shortcut}
+                                <div class="stg-shortcut-row">
+                                    <span class="stg-shortcut-desc"
+                                        >{shortcut.desc}</span
+                                    >
+                                    <span class="stg-shortcut-keys">
+                                        {#each shortcut.keys as key, i}
+                                            <kbd class="kbd">{key}</kbd>
+                                            {#if i < shortcut.keys.length - 1}
+                                                <span class="stg-shortcut-plus"
+                                                    >+</span
+                                                >
+                                            {/if}
+                                        {/each}
+                                    </span>
+                                </div>
+                            {/each}
+                        </div>
+                    </div>
+                {:else if activeTab === "sql"}
+                    <div class="stg-card-stack">
+                        <section class="stg-card">
+                            <header class="stg-card-hd">
+                                <span class="stg-card-icon" aria-hidden="true">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        width="14"
+                                        height="14"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        ><ellipse
+                                            cx="12"
+                                            cy="5"
+                                            rx="8"
+                                            ry="2.5"
+                                        /><path
+                                            d="M4 5v14c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"
+                                        /><path
+                                            d="M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"
+                                        /></svg
+                                    >
+                                </span>
+                                <div class="stg-card-titles">
+                                    <h3 class="stg-card-title">
+                                        Connection & Query
+                                    </h3>
+                                    <p class="stg-card-sub">
+                                        Defaults for SQL connections. Timeout
+                                        changes apply to new connections —
+                                        already-open pools keep their existing
+                                        values until reconnect.
+                                    </p>
+                                </div>
+                            </header>
+                            <div class="stg-card-body">
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Pool Acquire Timeout (ms)</label
+                                    >
+                                    <input
+                                        class="stg-input"
+                                        type="number"
+                                        value={sqlAcquireTimeoutMs}
+                                        min="1000"
+                                        step="1000"
+                                        onchange={(e) =>
+                                            handleSettingChange(
+                                                "sql_acquire_timeout_ms",
+                                                e.currentTarget.value,
+                                            )}
+                                    />
+                                </div>
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Pool Idle Timeout (minutes)</label
+                                    >
+                                    <input
+                                        class="stg-input"
+                                        type="number"
+                                        value={sqlIdleTimeoutMin}
+                                        min="1"
+                                        step="1"
+                                        onchange={(e) =>
+                                            handleSettingChange(
+                                                "sql_idle_timeout_min",
+                                                e.currentTarget.value,
+                                            )}
+                                    />
+                                </div>
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >HTTP Query Timeout (s)</label
+                                    >
+                                    <input
+                                        class="stg-input"
+                                        type="number"
+                                        value={sqlHttpQueryTimeoutSec}
+                                        min="5"
+                                        step="5"
+                                        onchange={(e) =>
+                                            handleSettingChange(
+                                                "sql_http_query_timeout_sec",
+                                                e.currentTarget.value,
+                                            )}
+                                    />
+                                </div>
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Schema Browser Limit</label
+                                    >
+                                    <input
+                                        class="stg-input"
+                                        type="number"
+                                        value={sqlTableListLimit}
+                                        min="10"
+                                        max="10000"
+                                        step="10"
+                                        onchange={(e) =>
+                                            handleSettingChange(
+                                                "sql_table_list_limit",
+                                                e.currentTarget.value,
+                                            )}
+                                    />
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                {:else if activeTab === "nosql"}
+                    <div class="stg-card-stack">
+                        <section class="stg-card">
+                            <header class="stg-card-hd">
+                                <span class="stg-card-icon" aria-hidden="true">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        width="14"
+                                        height="14"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        ><path
+                                            d="M8 3a2 2 0 00-2 2v4a2 2 0 01-2 2H3a1 1 0 000 2h1a2 2 0 012 2v4a2 2 0 002 2"
+                                        /><path
+                                            d="M16 3a2 2 0 012 2v4a2 2 0 002 2h1a1 1 0 010 2h-1a2 2 0 00-2 2v4a2 2 0 01-2 2"
+                                        /></svg
+                                    >
+                                </span>
+                                <div class="stg-card-titles">
+                                    <h3 class="stg-card-title">
+                                        Connection & Query
+                                    </h3>
+                                    <p class="stg-card-sub">
+                                        Defaults for NoSQL connections. Timeouts
+                                        apply to new connections; the find-limit
+                                        caps gate both the document viewer and
+                                        the AI-tool query path.
+                                    </p>
+                                </div>
+                            </header>
+                            <div class="stg-card-body">
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Server Selection Timeout (ms)</label
+                                    >
+                                    <input
+                                        class="stg-input"
+                                        type="number"
+                                        value={nosqlServerSelectionTimeoutMs}
+                                        min="1000"
+                                        step="1000"
+                                        onchange={(e) =>
+                                            handleSettingChange(
+                                                "nosql_server_selection_timeout_ms",
+                                                e.currentTarget.value,
+                                            )}
+                                    />
+                                </div>
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Connect Timeout (ms)</label
+                                    >
+                                    <input
+                                        class="stg-input"
+                                        type="number"
+                                        value={nosqlConnectTimeoutMs}
+                                        min="1000"
+                                        step="1000"
+                                        onchange={(e) =>
+                                            handleSettingChange(
+                                                "nosql_connect_timeout_ms",
+                                                e.currentTarget.value,
+                                            )}
+                                    />
+                                </div>
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Default Find Limit</label
+                                    >
+                                    <input
+                                        class="stg-input"
+                                        type="number"
+                                        value={nosqlDefaultFindLimit}
+                                        min="1"
+                                        step="10"
+                                        onchange={(e) =>
+                                            handleSettingChange(
+                                                "nosql_default_find_limit",
+                                                e.currentTarget.value,
+                                            )}
+                                    />
+                                </div>
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Max Find Limit</label
+                                    >
+                                    <input
+                                        class="stg-input"
+                                        type="number"
+                                        value={nosqlMaxFindLimit}
+                                        min="1"
+                                        step="10"
+                                        onchange={(e) =>
+                                            handleSettingChange(
+                                                "nosql_max_find_limit",
+                                                e.currentTarget.value,
+                                            )}
+                                    />
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                {:else if activeTab === "about"}
+                    <div class="stg-card-stack stg-about">
+                        <section class="stg-card stg-card-bare about-identity">
+                            <div class="about-header">
+                                <span class="about-app-name">Clauge</span>
+                                <span class="about-version"
+                                    >v{appVersion || "—"}</span
+                                >
+                            </div>
+                            <p class="about-desc">
+                                An AI-powered cross-platform desktop super-app
+                                for developers. One shell, many tools.
+                            </p>
+                        </section>
+
+                        <section class="stg-card">
+                            <header class="stg-card-hd">
+                                <span class="stg-card-icon" aria-hidden="true">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        width="14"
+                                        height="14"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        ><path
+                                            d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                                        /><polyline
+                                            points="7 10 12 15 17 10"
+                                        /><line
+                                            x1="12"
+                                            y1="15"
+                                            x2="12"
+                                            y2="3"
+                                        /></svg
+                                    >
+                                </span>
+                                <div class="stg-card-titles">
+                                    <h3 class="stg-card-title">Updates</h3>
+                                    <p class="stg-card-sub">
+                                        Choose the release channel Clauge checks
+                                        for new versions.
+                                    </p>
+                                </div>
+                            </header>
+                            <div class="stg-card-body">
+                                <label class="about-channel-row">
+                                    <input
+                                        type="checkbox"
+                                        checked={updateChannel === "pre"}
+                                        onchange={onPreReleaseToggle}
+                                    />
+                                    <span class="about-channel-text">
+                                        <span class="about-channel-title"
+                                            >Receive pre-release updates</span
+                                        >
+                                        <span class="about-channel-desc"
+                                            >Get alpha and beta builds before
+                                            they're stable. May contain bugs.</span
+                                        >
+                                    </span>
+                                </label>
+                            </div>
+                        </section>
+
+                        <section class="stg-card">
+                            <header class="stg-card-hd">
+                                <span class="stg-card-icon" aria-hidden="true">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        width="14"
+                                        height="14"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        ><polyline
+                                            points="12 2 2 7 12 12 22 7 12 2"
+                                        /><polyline
+                                            points="2 17 12 22 22 17"
+                                        /><polyline
+                                            points="2 12 12 17 22 12"
+                                        /></svg
+                                    >
+                                </span>
+                                <div class="stg-card-titles">
+                                    <h3 class="stg-card-title">Tech Stack</h3>
+                                    <p class="stg-card-sub">
+                                        What Clauge is built on.
+                                    </p>
+                                </div>
+                            </header>
+                            <div class="stg-card-body">
+                                <div class="about-tech-grid">
+                                    <span class="about-tech-pill">
+                                        <svg
+                                            viewBox="0 0 106 106"
+                                            class="tech-icon"
+                                            ><path
+                                                d="M103.3 53.1c0-3.8-2-7.2-5.2-10.2-2.1-2-4.7-3.7-7.6-5.2.4-3.5.3-6.7-.4-9.5-1-4-3.2-7-6.5-8.9-3.1-1.8-6.8-2.2-10.6-1.4-2.6.5-5.3 1.6-8 3.1-2.4-2.6-5-4.8-7.8-6.4-4-2.3-8-3.3-11.8-2.8-3.9.5-7.2 2.4-9.6 5.6-1.7 2.3-2.9 5.1-3.7 8.2-3.4-.6-6.6-.6-9.4 0-4 .9-7.2 3-9.3 6.2-2 3-2.5 6.7-1.8 10.5.5 2.6 1.5 5.4 3 8.2-2.7 2.3-4.9 4.9-6.5 7.6-2.3 3.9-3.3 7.9-2.8 11.7.5 3.9 2.4 7.2 5.7 9.6 2.3 1.7 5.2 2.9 8.3 3.6-.6 3.4-.6 6.6 0 9.4.9 3.9 3 7.1 6.2 9.2 3 2 6.7 2.6 10.5 1.9 2.6-.5 5.4-1.6 8.2-3.1 2.4 2.7 5 4.9 7.7 6.5 3.9 2.3 7.9 3.3 11.7 2.8 3.9-.5 7.2-2.4 9.6-5.7 1.7-2.3 2.9-5.2 3.7-8.3 3.4.6 6.6.6 9.4 0 4-.9 7.2-3 9.3-6.2 2-3 2.5-6.7 1.8-10.5-.5-2.6-1.5-5.4-3-8.2 2.7-2.4 4.9-5 6.5-7.7 2.3-3.9 3.3-7.9 2.8-11.7z"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="6"
+                                            /></svg
+                                        >
+                                        Rust
+                                    </span>
+                                    <span class="about-tech-pill">
+                                        <svg
+                                            viewBox="0 0 128 128"
+                                            class="tech-icon"
+                                            ><path
+                                                d="M64 0C28.6 0 0 28.6 0 64s28.6 64 64 64 64-28.6 64-64S99.4 0 64 0zm0 110c-25.4 0-46-20.6-46-46S38.6 18 64 18s46 20.6 46 46-20.6 46-46 46z"
+                                                fill="currentColor"
+                                            /><circle
+                                                cx="64"
+                                                cy="64"
+                                                r="24"
+                                                fill="currentColor"
+                                            /></svg
+                                        >
+                                        Tauri v2
+                                    </span>
+                                    <span class="about-tech-pill">
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            class="tech-icon"
+                                            ><path
+                                                d="M12.1 2L1 21h22L12.1 2z"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="1.5"
+                                                stroke-linejoin="round"
+                                            /></svg
+                                        >
+                                        SvelteKit
+                                    </span>
+                                    <span class="about-tech-pill">
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            class="tech-icon"
+                                            ><rect
+                                                x="2"
+                                                y="3"
+                                                width="20"
+                                                height="18"
+                                                rx="2"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="1.5"
+                                            /><text
+                                                x="12"
+                                                y="16"
+                                                text-anchor="middle"
+                                                font-size="10"
+                                                font-weight="700"
+                                                font-family="sans-serif"
+                                                fill="currentColor">TS</text
+                                            ></svg
+                                        >
+                                        TypeScript
+                                    </span>
+                                    <span class="about-tech-pill">
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            class="tech-icon"
+                                            ><ellipse
+                                                cx="12"
+                                                cy="6"
+                                                rx="8"
+                                                ry="3"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="1.5"
+                                            /><path
+                                                d="M4 6v12c0 1.66 3.58 3 8 3s8-1.34 8-3V6"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="1.5"
+                                            /><path
+                                                d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="1.5"
+                                            /></svg
+                                        >
+                                        SQLite
+                                    </span>
+                                    <span class="about-tech-pill">
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            class="tech-icon"
+                                            ><polyline
+                                                points="16 18 22 12 16 6"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="1.5"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                            /><polyline
+                                                points="8 6 2 12 8 18"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="1.5"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                            /></svg
+                                        >
+                                        CodeMirror
+                                    </span>
                                 </div>
                             </div>
                         </section>
@@ -2685,1175 +4496,161 @@
                                         stroke-linecap="round"
                                         stroke-linejoin="round"
                                         ><path
-                                            d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"
+                                            d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
                                         /><path
-                                            d="M13.73 21a2 2 0 0 1-3.46 0"
+                                            d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
                                         /></svg
                                     >
                                 </span>
                                 <div class="stg-card-titles">
-                                    <h3 class="stg-card-title">
-                                        Notifications
-                                    </h3>
+                                    <h3 class="stg-card-title">Links</h3>
                                     <p class="stg-card-sub">
-                                        Sound and dock bounce when an agent
-                                        session finishes its work.
+                                        Project, issues, developer, website.
                                     </p>
                                 </div>
                             </header>
                             <div class="stg-card-body">
-                                <div class="stg-card-row">
-                                    <label class="stg-card-row-label"
-                                        >Enable sound alerts</label
+                                <div class="about-links">
+                                    <a
+                                        class="about-link-btn"
+                                        href="https://github.com/ansxuman/Clauge"
+                                        target="_blank"
+                                        rel="noopener"
+                                        title="GitHub Repository"
                                     >
-                                    <label class="stg-toggle">
-                                        <input
-                                            type="checkbox"
-                                            checked={agentSoundEnabled}
-                                            onchange={(e) =>
-                                                handleSettingChange(
-                                                    "agent_sound_enabled",
-                                                    String(
-                                                        e.currentTarget.checked,
-                                                    ),
-                                                )}
-                                        />
-                                        <span class="stg-toggle-slider"></span>
-                                    </label>
-                                </div>
-                                <div class="stg-card-row">
-                                    <label class="stg-card-row-label"
-                                        >Enable dock bounce</label
+                                        <svg viewBox="0 0 24 24"
+                                            ><path
+                                                d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"
+                                            /></svg
+                                        >
+                                        <span>Project</span>
+                                    </a>
+                                    <a
+                                        class="about-link-btn"
+                                        href="https://github.com/ansxuman/Clauge/issues/new"
+                                        target="_blank"
+                                        rel="noopener"
+                                        title="Report an Issue"
                                     >
-                                    <label class="stg-toggle">
-                                        <input
-                                            type="checkbox"
-                                            checked={agentDockBounceEnabled}
-                                            onchange={(e) =>
-                                                handleSettingChange(
-                                                    "agent_dock_bounce_enabled",
-                                                    String(
-                                                        e.currentTarget.checked,
-                                                    ),
-                                                )}
-                                        />
-                                        <span class="stg-toggle-slider"></span>
-                                    </label>
+                                        <svg viewBox="0 0 24 24"
+                                            ><circle
+                                                cx="12"
+                                                cy="12"
+                                                r="10"
+                                            /><path
+                                                d="M12 8v4M12 16h.01"
+                                            /></svg
+                                        >
+                                        <span>Report Issue</span>
+                                    </a>
+                                    <a
+                                        class="about-link-btn"
+                                        href="https://github.com/ansxuman"
+                                        target="_blank"
+                                        rel="noopener"
+                                        title="Developer"
+                                    >
+                                        <svg viewBox="0 0 24 24"
+                                            ><path
+                                                d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"
+                                            /><circle
+                                                cx="12"
+                                                cy="7"
+                                                r="4"
+                                            /></svg
+                                        >
+                                        <span>Developer</span>
+                                    </a>
+                                    <a
+                                        class="about-link-btn"
+                                        href="https://clauge.in/"
+                                        target="_blank"
+                                        rel="noopener"
+                                        title="Website"
+                                    >
+                                        <svg viewBox="0 0 24 24"
+                                            ><circle
+                                                cx="12"
+                                                cy="12"
+                                                r="10"
+                                            /><line
+                                                x1="2"
+                                                y1="12"
+                                                x2="22"
+                                                y2="12"
+                                            /><path
+                                                d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"
+                                            /></svg
+                                        >
+                                        <span>Website</span>
+                                    </a>
                                 </div>
                             </div>
                         </section>
-                    </div>
-                {:else if agentSubTab === "plugins"}
-                    <!-- Plugins pane lays itself out as a flex column that
-                         fills the right pane. The provider tab strip and
-                         the Installed/Marketplace toggle stay pinned at
-                         the top; only the list itself scrolls. Without
-                         this wrapper the whole settings pane scrolls when
-                         the list grows, which hides the toggle as you
-                         scan plugins. -->
-                    <div class="agent-plugins-pane">
-                    <!-- CLI provider tab strip — each provider has its own
-                         marketplace + installed list. OpenCode isn't here
-                         because its plugins are npm packages with no
-                         marketplace concept (handled at the runner level). -->
-                    <div class="plugin-provider-tabs">
-                        {#each PLUGIN_PROVIDER_TABS as t}
-                            <button
-                                class="plugin-provider-tab"
-                                class:active={pluginProvider === t.id}
-                                onclick={() => selectPluginProvider(t.id)}
-                                >{t.label}</button
-                            >
-                        {/each}
-                    </div>
 
-                    <!-- Installed / Marketplace toggle. Codex doesn't
-                         have a Clauge-side marketplace browser (installs
-                         happen inside the codex TUI), so we hide that
-                         half of the toggle and show only Installed. -->
-                    {#if pluginProvider !== "codex"}
-                        <div class="agent-plugin-views">
-                            <button
-                                class="ai-action-btn"
-                                class:primary={pluginView === "installed"}
-                                onclick={() => (pluginView = "installed")}
-                                >Installed</button
-                            >
-                            <button
-                                class="ai-action-btn"
-                                class:primary={pluginView === "marketplace"}
-                                onclick={() => (pluginView = "marketplace")}
-                                >Marketplace</button
-                            >
-                        </div>
-                    {/if}
-
-                    {#if pluginProvider === "codex"}
-                        <div class="plugin-codex-hint" role="status">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-                            </svg>
-                            <span>
-                                Codex installs plugins from inside its own UI — run <code>codex</code> in a terminal and use the <code>/plugins</code> slash command. Installed plugins show up here and can be enabled or disabled.
-                            </span>
-                        </div>
-                    {/if}
-
-                    {#if pluginView === "installed"}
-                        {#if installedPlugins.length === 0}
-                            <div class="ai-usage-empty">
-                                <svg
-                                    viewBox="0 0 24 24"
-                                    width="36"
-                                    height="36"
-                                    fill="none"
-                                    stroke="var(--t4)"
-                                    stroke-width="1.2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    ><path
-                                        d="M20.5 7.27783L12 12.0001M12 12.0001L3.49997 7.27783M12 12.0001L12 21.5001M14 20.6701L12.7 21.4001C12.2 21.6001 11.8 21.6001 11.3 21.4001L4.8 17.7001C4.3 17.4001 4 16.9001 4 16.3001V7.70011C4 7.10011 4.3 6.60011 4.8 6.30011L11.3 2.60011C11.8 2.40011 12.2 2.40011 12.7 2.60011L19.2 6.30011C19.7 6.60011 20 7.10011 20 7.70011V16.3001"
-                                    /></svg
-                                >
-                                <p>No plugins installed</p>
-                                <span
-                                    >Browse the marketplace to install plugins</span
-                                >
-                            </div>
-                        {:else}
-                            <div class="agent-plugin-list">
-                                {#each installedPlugins as plugin}
-                                    <div class="agent-plugin-card">
-                                        <div class="agent-plugin-info">
-                                            <span class="agent-plugin-name"
-                                                >{plugin.name}</span
-                                            >
-                                            <span class="agent-plugin-meta">
-                                                {plugin.marketplace}
-                                                {#if plugin.version}
-                                                    <span class="ai-link-sep"
-                                                        >&middot;</span
-                                                    >
-                                                    v{plugin.version}
-                                                {/if}
-                                            </span>
-                                        </div>
-                                        <div class="agent-plugin-actions">
-                                            <label class="stg-toggle">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={plugin.enabled}
-                                                    onchange={() =>
-                                                        handleTogglePlugin(
-                                                            plugin.name,
-                                                            !plugin.enabled,
-                                                        )}
-                                                />
-                                                <span class="stg-toggle-slider"
-                                                ></span>
-                                            </label>
-                                            <button
-                                                class="ai-action-btn danger sm"
-                                                onclick={() =>
-                                                    handleUninstallPlugin(
-                                                        plugin.name,
-                                                        plugin.marketplace,
-                                                    )}
-                                            >
-                                                Uninstall
-                                            </button>
-                                        </div>
-                                    </div>
-                                {/each}
-                            </div>
-                        {/if}
-                    {:else}
-                        <div class="agent-marketplace-search">
-                            <input
-                                class="stg-input"
-                                type="text"
-                                style="width: 100%;"
-                                placeholder="Search plugins..."
-                                bind:value={pluginSearchQuery}
-                            />
-                        </div>
-                        {#if filteredMarketplacePlugins.length === 0}
-                            <div class="ai-usage-empty">
-                                <p>No plugins found</p>
-                            </div>
-                        {:else}
-                            <div class="agent-plugin-list">
-                                {#each filteredMarketplacePlugins as plugin}
-                                    <div class="agent-plugin-card">
-                                        <div class="agent-plugin-info">
-                                            <span class="agent-plugin-name"
-                                                >{plugin.name}</span
-                                            >
-                                            <span class="agent-plugin-desc"
-                                                >{plugin.description}</span
-                                            >
-                                            {#if plugin.installs != null}
-                                                <span class="agent-plugin-meta"
-                                                    >{plugin.installs.toLocaleString()}
-                                                    installs</span
-                                                >
-                                            {/if}
-                                        </div>
-                                        <div class="agent-plugin-actions">
-                                            {#if plugin.installed}
-                                                <span class="ai-status-badge">
-                                                    <span class="ai-status-dot"
-                                                    ></span>
-                                                    Installed
-                                                </span>
-                                            {:else}
-                                                <button
-                                                    class="ai-action-btn primary sm"
-                                                    onclick={() =>
-                                                        handleInstallPlugin(
-                                                            plugin.name,
-                                                            plugin.marketplace,
-                                                        )}
-                                                >
-                                                    Install
-                                                </button>
-                                            {/if}
-                                        </div>
-                                    </div>
-                                {/each}
-                            </div>
-                        {/if}
-                    {/if}
-                    </div><!-- /.agent-plugins-pane -->
-                {:else if agentSubTab === "contexts"}
-                    {#if isNewContext || editingContext}
-                        <!-- Context editor -->
-                        <div class="agent-ctx-editor">
-                            <div
-                                class="stg-field"
-                                style="flex-direction: column; align-items: stretch;"
-                            >
-                                <label class="stg-label">Name</label>
-                                <input
-                                    class="stg-input"
-                                    type="text"
-                                    style="width: 100%;"
-                                    placeholder="Context name..."
-                                    bind:value={editContextName}
-                                />
-                            </div>
-                            <div
-                                class="stg-field"
-                                style="flex-direction: column; align-items: stretch;"
-                            >
-                                <label class="stg-label">Content</label>
-                                <textarea
-                                    class="agent-ctx-textarea"
-                                    placeholder="Context content..."
-                                    bind:value={editContextContent}
-                                ></textarea>
-                            </div>
-                            <div class="ai-key-actions">
-                                <button
-                                    class="ai-action-btn primary"
-                                    onclick={handleSaveAgentContext}
-                                    >Save</button
-                                >
-                                <button
-                                    class="ai-action-btn"
-                                    onclick={cancelEditContext}>Cancel</button
-                                >
-                            </div>
-                        </div>
-                    {:else}
-                        <div class="agent-ctx-header">
-                            <span
-                                class="stg-section-label"
-                                style="margin-bottom: 0;">Contexts</span
-                            >
-                            <button
-                                class="ai-action-btn primary sm"
-                                onclick={startNewContext}>New Context</button
-                            >
-                        </div>
-
-                        {#if agentContexts.length === 0}
-                            <div class="ai-usage-empty">
-                                <svg
-                                    viewBox="0 0 24 24"
-                                    width="36"
-                                    height="36"
-                                    fill="none"
-                                    stroke="var(--t4)"
-                                    stroke-width="1.2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    ><path
-                                        d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"
-                                    /><polyline points="14 2 14 8 20 8" /><line
-                                        x1="16"
-                                        y1="13"
-                                        x2="8"
-                                        y2="13"
-                                    /><line
-                                        x1="16"
-                                        y1="17"
-                                        x2="8"
-                                        y2="17"
-                                    /><polyline points="10 9 9 9 8 9" /></svg
-                                >
-                                <p>No contexts yet</p>
-                                <span
-                                    >Create a context to attach to agent
-                                    sessions</span
-                                >
-                            </div>
-                        {:else}
-                            <div class="agent-plugin-list">
-                                {#each agentContexts as ctx}
-                                    <div
-                                        class="agent-plugin-card agent-ctx-card"
-                                        onclick={() => startEditContext(ctx)}
-                                        role="button"
-                                        tabindex="0"
-                                        onkeydown={(e) => {
-                                            if (e.key === "Enter")
-                                                startEditContext(ctx);
-                                        }}
-                                    >
-                                        <div class="agent-plugin-info">
-                                            <span class="agent-plugin-name"
-                                                >{ctx.name}</span
-                                            >
-                                            <span class="agent-plugin-desc"
-                                                >{ctx.content
-                                                    .split("\n")[0]
-                                                    .slice(0, 80)}{ctx.content
-                                                    .length > 80
-                                                    ? "..."
-                                                    : ""}</span
-                                            >
-                                        </div>
-                                        <div
-                                            class="agent-plugin-actions"
-                                            onclick={(e) => {
-                                                e.stopPropagation();
-                                            }}
-                                        >
-                                            {#if deleteConfirmId === ctx.id}
-                                                <span class="ai-reset-confirm">
-                                                    <span>Delete?</span>
-                                                    <button
-                                                        class="ai-action-btn danger sm"
-                                                        onclick={(e) => {
-                                                            e.stopPropagation();
-                                                            handleDeleteAgentContext(
-                                                                ctx.id,
-                                                            );
-                                                        }}>Yes</button
-                                                    >
-                                                    <button
-                                                        class="ai-action-btn sm"
-                                                        onclick={(e) => {
-                                                            e.stopPropagation();
-                                                            deleteConfirmId =
-                                                                null;
-                                                        }}>No</button
-                                                    >
-                                                </span>
-                                            {:else}
-                                                <button
-                                                    class="ai-action-btn danger sm"
-                                                    onclick={(e) => {
-                                                        e.stopPropagation();
-                                                        deleteConfirmId =
-                                                            ctx.id;
-                                                    }}>Delete</button
-                                                >
-                                            {/if}
-                                        </div>
-                                    </div>
-                                {/each}
-                            </div>
-                        {/if}
-                    {/if}
-                {:else if agentSubTab === "usage"}
-                    <!-- Day range selector -->
-                    <div class="ud-days">
-                        {#each [7, 14, 30, 90] as d}
-                            <button
-                                class="ud-day-btn"
-                                class:active={agentUsageDays === d}
-                                onclick={() => selectAgentUsageDays(d)}
-                                >{d}d</button
-                            >
-                        {/each}
-                        <button
-                            class="ai-action-btn sm"
-                            style="margin-left: auto;"
-                            onclick={loadAgentUsage}
-                        >
-                            <svg
-                                viewBox="0 0 24 24"
-                                width="11"
-                                height="11"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                ><polyline points="23 4 23 10 17 10" /><path
-                                    d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"
-                                /></svg
-                            >
-                            Refresh
-                        </button>
-                    </div>
-
-                    {#if agentUsageLoading}
-                        <div class="ud-loading">
-                            <div class="ud-spinner"></div>
-                            Loading analytics...
-                        </div>
-                    {:else if agentUsageData}
-                        <!-- Summary cards -->
-                        <div class="ud-cards">
-                            <div class="ud-card">
-                                <span class="ud-val"
-                                    >{agentFormatCost(
-                                        agentUsageData.totalCost,
-                                    )}</span
-                                ><span class="ud-lbl">Total Cost</span>
-                            </div>
-                            <div class="ud-card">
-                                <span class="ud-val"
-                                    >{agentUsageData.totalApiCalls.toLocaleString()}</span
-                                ><span class="ud-lbl">API Calls</span>
-                            </div>
-                            <div class="ud-card">
-                                <span class="ud-val"
-                                    >{agentUsageData.totalSessions}</span
-                                ><span class="ud-lbl">Sessions</span>
-                            </div>
-                            <div class="ud-card">
-                                <span class="ud-val"
-                                    >{agentUsageData.cacheHitPercent.toFixed(
-                                        1,
-                                    )}%</span
-                                ><span class="ud-lbl">Cache Hit</span>
-                            </div>
-                        </div>
-
-                        <!-- Token breakdown -->
-                        <div class="ud-token-row">
-                            <span
-                                ><strong>In:</strong>
-                                {agentFormatTokens(
-                                    agentUsageData.totalInputTokens,
-                                )}</span
-                            >
-                            <span
-                                ><strong>Out:</strong>
-                                {agentFormatTokens(
-                                    agentUsageData.totalOutputTokens,
-                                )}</span
-                            >
-                            <span
-                                ><strong>Cache R:</strong>
-                                {agentFormatTokens(
-                                    agentUsageData.totalCacheReadTokens,
-                                )}</span
-                            >
-                            <span
-                                ><strong>Cache W:</strong>
-                                {agentFormatTokens(
-                                    agentUsageData.totalCacheWriteTokens,
-                                )}</span
-                            >
-                        </div>
-
-                        <!-- Daily chart -->
-                        {#if agentUsageData.daily.length > 0}
-                            <div class="ud-section-inline">
-                                <div class="ud-section-title">
-                                    Daily Activity
-                                </div>
-                                <div class="ud-chart">
-                                    {#each agentUsageData.daily.slice(-21) as day}
-                                        {@const maxCost = Math.max(
-                                            ...agentUsageData.daily
-                                                .slice(-21)
-                                                .map((d) => d.cost),
-                                            0.01,
-                                        )}
-                                        <div
-                                            class="ud-bar-wrap"
-                                            title="{day.date}: {agentFormatCost(
-                                                day.cost,
-                                            )} / {day.calls} calls"
-                                        >
-                                            <div
-                                                class="ud-bar"
-                                                style="height:{Math.max(
-                                                    3,
-                                                    (day.cost / maxCost) * 100,
-                                                )}%"
-                                            ></div>
-                                            <span class="ud-bar-lbl"
-                                                >{day.date.slice(8)}</span
-                                            >
-                                        </div>
-                                    {/each}
-                                </div>
-                            </div>
-                        {/if}
-                        <!-- Live Usage + Models -->
-                        <div class="ud-grid">
-                            <div class="ud-section">
-                                <div class="ud-section-title">Live Usage</div>
-                                {#if $agentUsageLimits}
-                                    {@const sessionPct =
-                                        $agentUsageLimits.five_hour
-                                            ?.utilization ??
-                                        $agentUsageLimits.standard
-                                            ?.percentUsed ??
-                                        null}
-                                    {@const weeklyPct =
-                                        $agentUsageLimits.seven_day
-                                            ?.utilization ??
-                                        $agentUsageLimits.extended
-                                            ?.percentUsed ??
-                                        null}
-                                    {@const sonnetPct =
-                                        $agentUsageLimits.seven_day_sonnet
-                                            ?.utilization ?? null}
-                                    <div class="ud-live-rows">
-                                        {#if sessionPct != null}
-                                            <div class="ud-live-row">
-                                                <span class="ud-live-lbl"
-                                                    >Session</span
-                                                >
-                                                <div class="ud-live-bar">
-                                                    <div
-                                                        class="ud-live-fill"
-                                                        style="width:{sessionPct}%;background:{agentLiveColor(
-                                                            sessionPct,
-                                                        )}"
-                                                    ></div>
-                                                </div>
-                                                <span
-                                                    class="ud-live-pct"
-                                                    style="color:{agentLiveColor(
-                                                        sessionPct,
-                                                    )}"
-                                                    >{sessionPct.toFixed(
-                                                        1,
-                                                    )}%</span
-                                                >
-                                            </div>
-                                        {/if}
-                                        {#if weeklyPct != null}
-                                            <div class="ud-live-row">
-                                                <span class="ud-live-lbl"
-                                                    >Weekly</span
-                                                >
-                                                <div class="ud-live-bar">
-                                                    <div
-                                                        class="ud-live-fill"
-                                                        style="width:{weeklyPct}%;background:{agentLiveColor(
-                                                            weeklyPct,
-                                                        )}"
-                                                    ></div>
-                                                </div>
-                                                <span
-                                                    class="ud-live-pct"
-                                                    style="color:{agentLiveColor(
-                                                        weeklyPct,
-                                                    )}"
-                                                    >{weeklyPct.toFixed(
-                                                        1,
-                                                    )}%</span
-                                                >
-                                            </div>
-                                        {/if}
-                                        {#if sonnetPct != null}
-                                            <div class="ud-live-row">
-                                                <span class="ud-live-lbl"
-                                                    >Sonnet</span
-                                                >
-                                                <div class="ud-live-bar">
-                                                    <div
-                                                        class="ud-live-fill"
-                                                        style="width:{sonnetPct}%;background:{agentLiveColor(
-                                                            sonnetPct,
-                                                        )}"
-                                                    ></div>
-                                                </div>
-                                                <span
-                                                    class="ud-live-pct"
-                                                    style="color:{agentLiveColor(
-                                                        sonnetPct,
-                                                    )}"
-                                                    >{sonnetPct.toFixed(
-                                                        1,
-                                                    )}%</span
-                                                >
-                                            </div>
-                                        {/if}
-                                    </div>
-                                {:else}
-                                    <div
-                                        style="padding:8px 0;font-size:11px;color:var(--t3);"
-                                    >
-                                        Fetching live data...
-                                    </div>
-                                {/if}
-                            </div>
-                            <div class="ud-section">
-                                <div class="ud-section-title">Models</div>
-                                <div class="ud-scroll">
-                                    {#each agentUsageData.byModel as m}
-                                        <div class="ud-row">
-                                            <div class="ud-row-info">
-                                                <span class="ud-row-name"
-                                                    >{m.model}</span
-                                                >
-                                                <span class="ud-row-meta"
-                                                    >{m.calls} calls &middot; {m.cacheHitPercent.toFixed(
-                                                        0,
-                                                    )}% cache</span
-                                                >
-                                            </div>
-                                            <span class="ud-row-cost"
-                                                >{agentFormatCost(m.cost)}</span
-                                            >
-                                        </div>
-                                    {/each}
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Projects + Top Sessions (2-col) -->
-                        <div class="ud-grid">
-                            <div class="ud-section">
-                                <div class="ud-section-title">
-                                    Projects ({agentUsageData.byProject.length})
-                                </div>
-                                <div class="ud-scroll">
-                                    {#each agentUsageData.byProject as p}
-                                        <div class="ud-row">
-                                            <div class="ud-row-info">
-                                                <span
-                                                    class="ud-row-name"
-                                                    title={p.project}
-                                                    >{agentDecodeName(
-                                                        p.project,
-                                                    )}</span
-                                                >
-                                                <span class="ud-row-meta"
-                                                    >{p.sessions} sess &middot; {p.calls}
-                                                    calls</span
-                                                >
-                                            </div>
-                                            <span class="ud-row-cost"
-                                                >{agentFormatCost(p.cost)}</span
-                                            >
-                                        </div>
-                                    {/each}
-                                </div>
-                            </div>
-                            <div class="ud-section">
-                                <div class="ud-section-title">Top Sessions</div>
-                                <div class="ud-scroll">
-                                    {#each agentUsageData.topSessions.slice(0, 6) as s}
-                                        <div class="ud-row">
-                                            <div class="ud-row-info">
-                                                <span
-                                                    class="ud-row-name"
-                                                    title={s.project}
-                                                    >{agentDecodeName(
-                                                        s.project,
-                                                    )}</span
-                                                >
-                                                <span class="ud-row-meta"
-                                                    >{s.model} &middot; {s.sessionId.slice(
-                                                        0,
-                                                        8,
-                                                    )}</span
-                                                >
-                                            </div>
-                                            <span class="ud-row-cost"
-                                                >{agentFormatCost(s.cost)}</span
-                                            >
-                                        </div>
-                                    {/each}
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Tools + Shell (2-col) -->
-                        <div class="ud-grid">
-                            <div class="ud-section">
-                                <div class="ud-section-title">Tools</div>
-                                <div class="ud-scroll">
-                                    {#each agentUsageData.tools.slice(0, 6) as t}
-                                        <div class="ud-tool-row">
-                                            <span class="ud-tool-name"
-                                                >{t.name}</span
-                                            >
-                                            <div class="ud-tool-bar">
-                                                <div
-                                                    class="ud-tool-fill"
-                                                    style="width:{Math.max(
-                                                        3,
-                                                        (t.count /
-                                                            (agentUsageData
-                                                                .tools[0]
-                                                                ?.count || 1)) *
-                                                            100,
-                                                    )}%"
-                                                ></div>
-                                            </div>
-                                            <span class="ud-tool-ct"
-                                                >{t.count.toLocaleString()}</span
-                                            >
-                                        </div>
-                                    {/each}
-                                </div>
-                            </div>
-                            <div class="ud-section">
-                                <div class="ud-section-title">Shell</div>
-                                <div class="ud-scroll">
-                                    {#each agentUsageData.shellCommands.slice(0, 6) as cmd}
-                                        <div class="ud-tool-row">
-                                            <span
-                                                class="ud-tool-name"
-                                                style="font-family:var(--mono)"
-                                                >{cmd.name}</span
-                                            >
-                                            <div class="ud-tool-bar">
-                                                <div
-                                                    class="ud-tool-fill"
-                                                    style="width:{Math.max(
-                                                        3,
-                                                        (cmd.count /
-                                                            (agentUsageData
-                                                                .shellCommands[0]
-                                                                ?.count || 1)) *
-                                                            100,
-                                                    )}%"
-                                                ></div>
-                                            </div>
-                                            <span class="ud-tool-ct"
-                                                >{cmd.count.toLocaleString()}</span
-                                            >
-                                        </div>
-                                    {/each}
-                                </div>
-                            </div>
-                        </div>
-                    {:else}
-                        <div class="ud-loading">
-                            <svg
-                                viewBox="0 0 24 24"
-                                width="36"
-                                height="36"
-                                fill="none"
-                                stroke="var(--t4)"
-                                stroke-width="1.2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                ><path d="M18 20V10M12 20V4M6 20v-6" /></svg
-                            >
-                            <p
-                                style="margin: 0; font-size: 13px; color: var(--t2); font-weight: 500;"
-                            >
-                                No usage data found
-                            </p>
-                            <span style="font-size: 11px; color: var(--t3);"
-                                >Start using Claude Code sessions to see
-                                analytics here</span
-                            >
-                        </div>
-                    {/if}
-                    {/if}
-                    </div>
-                </div>
-            {:else if activeTab === "shortcuts"}
-                <div class="stg-section">
-                    <span class="stg-section-label">Keyboard Shortcuts</span>
-                    <div class="stg-shortcuts">
-                        {#each SHORTCUTS as shortcut}
-                            <div class="stg-shortcut-row">
-                                <span class="stg-shortcut-desc"
-                                    >{shortcut.desc}</span
-                                >
-                                <span class="stg-shortcut-keys">
-                                    {#each shortcut.keys as key, i}
-                                        <kbd class="kbd">{key}</kbd>
-                                        {#if i < shortcut.keys.length - 1}
-                                            <span class="stg-shortcut-plus"
-                                                >+</span
-                                            >
-                                        {/if}
-                                    {/each}
-                                </span>
-                            </div>
-                        {/each}
-                    </div>
-                </div>
-            {:else if activeTab === "about"}
-                <div class="stg-card-stack stg-about">
-                    <section class="stg-card stg-card-bare about-identity">
-                        <div class="about-header">
-                            <span class="about-app-name">Clauge</span>
-                            <span class="about-version"
-                                >v{appVersion || "—"}</span
-                            >
-                        </div>
-                        <p class="about-desc">
-                            An AI-powered cross-platform desktop super-app for
-                            developers. One shell, many tools.
-                        </p>
-                    </section>
-
-                    <section class="stg-card">
-                        <header class="stg-card-hd">
-                            <span class="stg-card-icon" aria-hidden="true">
-                                <svg
-                                    viewBox="0 0 24 24"
-                                    width="14"
-                                    height="14"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    ><path
-                                        d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
-                                    /><polyline
-                                        points="7 10 12 15 17 10"
-                                    /><line
-                                        x1="12"
-                                        y1="15"
-                                        x2="12"
-                                        y2="3"
-                                    /></svg
-                                >
-                            </span>
-                            <div class="stg-card-titles">
-                                <h3 class="stg-card-title">Updates</h3>
-                                <p class="stg-card-sub">
-                                    Choose the release channel Clauge checks for
-                                    new versions.
-                                </p>
-                            </div>
-                        </header>
-                        <div class="stg-card-body">
-                            <label class="about-channel-row">
-                                <input
-                                    type="checkbox"
-                                    checked={updateChannel === "pre"}
-                                    onchange={onPreReleaseToggle}
-                                />
-                                <span class="about-channel-text">
-                                    <span class="about-channel-title"
-                                        >Receive pre-release updates</span
-                                    >
-                                    <span class="about-channel-desc"
-                                        >Get alpha and beta builds before
-                                        they're stable. May contain bugs.</span
-                                    >
-                                </span>
-                            </label>
-                        </div>
-                    </section>
-
-                    <section class="stg-card">
-                        <header class="stg-card-hd">
-                            <span class="stg-card-icon" aria-hidden="true">
-                                <svg
-                                    viewBox="0 0 24 24"
-                                    width="14"
-                                    height="14"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    ><polyline
-                                        points="12 2 2 7 12 12 22 7 12 2"
-                                    /><polyline
-                                        points="2 17 12 22 22 17"
-                                    /><polyline
-                                        points="2 12 12 17 22 12"
-                                    /></svg
-                                >
-                            </span>
-                            <div class="stg-card-titles">
-                                <h3 class="stg-card-title">Tech Stack</h3>
-                                <p class="stg-card-sub">
-                                    What Clauge is built on.
-                                </p>
-                            </div>
-                        </header>
-                        <div class="stg-card-body">
-                            <div class="about-tech-grid">
-                                <span class="about-tech-pill">
-                                    <svg viewBox="0 0 106 106" class="tech-icon"
+                        <section class="stg-card">
+                            <header class="stg-card-hd">
+                                <span class="stg-card-icon" aria-hidden="true">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        width="14"
+                                        height="14"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
                                         ><path
-                                            d="M103.3 53.1c0-3.8-2-7.2-5.2-10.2-2.1-2-4.7-3.7-7.6-5.2.4-3.5.3-6.7-.4-9.5-1-4-3.2-7-6.5-8.9-3.1-1.8-6.8-2.2-10.6-1.4-2.6.5-5.3 1.6-8 3.1-2.4-2.6-5-4.8-7.8-6.4-4-2.3-8-3.3-11.8-2.8-3.9.5-7.2 2.4-9.6 5.6-1.7 2.3-2.9 5.1-3.7 8.2-3.4-.6-6.6-.6-9.4 0-4 .9-7.2 3-9.3 6.2-2 3-2.5 6.7-1.8 10.5.5 2.6 1.5 5.4 3 8.2-2.7 2.3-4.9 4.9-6.5 7.6-2.3 3.9-3.3 7.9-2.8 11.7.5 3.9 2.4 7.2 5.7 9.6 2.3 1.7 5.2 2.9 8.3 3.6-.6 3.4-.6 6.6 0 9.4.9 3.9 3 7.1 6.2 9.2 3 2 6.7 2.6 10.5 1.9 2.6-.5 5.4-1.6 8.2-3.1 2.4 2.7 5 4.9 7.7 6.5 3.9 2.3 7.9 3.3 11.7 2.8 3.9-.5 7.2-2.4 9.6-5.7 1.7-2.3 2.9-5.2 3.7-8.3 3.4.6 6.6.6 9.4 0 4-.9 7.2-3 9.3-6.2 2-3 2.5-6.7 1.8-10.5-.5-2.6-1.5-5.4-3-8.2 2.7-2.4 4.9-5 6.5-7.7 2.3-3.9 3.3-7.9 2.8-11.7z"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="6"
+                                            d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
                                         /></svg
                                     >
-                                    Rust
                                 </span>
-                                <span class="about-tech-pill">
-                                    <svg viewBox="0 0 128 128" class="tech-icon"
+                                <div class="stg-card-titles">
+                                    <h3 class="stg-card-title">Support</h3>
+                                    <p class="stg-card-sub">
+                                        If Clauge helped you in development,
+                                        consider buying the developer a coffee.
+                                    </p>
+                                </div>
+                            </header>
+                            <div class="stg-card-body">
+                                <a
+                                    class="about-coffee"
+                                    href="https://buymeacoffee.com/ansxuman"
+                                    target="_blank"
+                                    rel="noopener"
+                                >
+                                    <svg viewBox="0 0 24 24"
                                         ><path
-                                            d="M64 0C28.6 0 0 28.6 0 64s28.6 64 64 64 64-28.6 64-64S99.4 0 64 0zm0 110c-25.4 0-46-20.6-46-46S38.6 18 64 18s46 20.6 46 46-20.6 46-46 46z"
-                                            fill="currentColor"
-                                        /><circle
-                                            cx="64"
-                                            cy="64"
-                                            r="24"
-                                            fill="currentColor"
-                                        /></svg
-                                    >
-                                    Tauri v2
-                                </span>
-                                <span class="about-tech-pill">
-                                    <svg viewBox="0 0 24 24" class="tech-icon"
-                                        ><path
-                                            d="M12.1 2L1 21h22L12.1 2z"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="1.5"
-                                            stroke-linejoin="round"
-                                        /></svg
-                                    >
-                                    SvelteKit
-                                </span>
-                                <span class="about-tech-pill">
-                                    <svg viewBox="0 0 24 24" class="tech-icon"
-                                        ><rect
-                                            x="2"
-                                            y="3"
-                                            width="20"
-                                            height="18"
-                                            rx="2"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="1.5"
-                                        /><text
-                                            x="12"
-                                            y="16"
-                                            text-anchor="middle"
-                                            font-size="10"
-                                            font-weight="700"
-                                            font-family="sans-serif"
-                                            fill="currentColor">TS</text
-                                        ></svg
-                                    >
-                                    TypeScript
-                                </span>
-                                <span class="about-tech-pill">
-                                    <svg viewBox="0 0 24 24" class="tech-icon"
-                                        ><ellipse
-                                            cx="12"
-                                            cy="6"
-                                            rx="8"
-                                            ry="3"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="1.5"
+                                            d="M17 8h1a4 4 0 110 8h-1"
                                         /><path
-                                            d="M4 6v12c0 1.66 3.58 3 8 3s8-1.34 8-3V6"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="1.5"
-                                        /><path
-                                            d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="1.5"
+                                            d="M3 8h14v9a4 4 0 01-4 4H7a4 4 0 01-4-4V8z"
+                                        /><line
+                                            x1="6"
+                                            y1="2"
+                                            x2="6"
+                                            y2="4"
+                                        /><line
+                                            x1="10"
+                                            y1="2"
+                                            x2="10"
+                                            y2="4"
+                                        /><line
+                                            x1="14"
+                                            y1="2"
+                                            x2="14"
+                                            y2="4"
                                         /></svg
                                     >
-                                    SQLite
-                                </span>
-                                <span class="about-tech-pill">
-                                    <svg viewBox="0 0 24 24" class="tech-icon"
-                                        ><polyline
-                                            points="16 18 22 12 16 6"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="1.5"
-                                            stroke-linecap="round"
-                                            stroke-linejoin="round"
-                                        /><polyline
-                                            points="8 6 2 12 8 18"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="1.5"
-                                            stroke-linecap="round"
-                                            stroke-linejoin="round"
-                                        /></svg
-                                    >
-                                    CodeMirror
-                                </span>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="stg-card">
-                        <header class="stg-card-hd">
-                            <span class="stg-card-icon" aria-hidden="true">
-                                <svg
-                                    viewBox="0 0 24 24"
-                                    width="14"
-                                    height="14"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    ><path
-                                        d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
-                                    /><path
-                                        d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
-                                    /></svg
-                                >
-                            </span>
-                            <div class="stg-card-titles">
-                                <h3 class="stg-card-title">Links</h3>
-                                <p class="stg-card-sub">
-                                    Project, issues, developer, website.
-                                </p>
-                            </div>
-                        </header>
-                        <div class="stg-card-body">
-                            <div class="about-links">
-                                <a
-                                    class="about-link-btn"
-                                    href="https://github.com/ansxuman/Clauge"
-                                    target="_blank"
-                                    rel="noopener"
-                                    title="GitHub Repository"
-                                >
-                                    <svg viewBox="0 0 24 24"
-                                        ><path
-                                            d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"
-                                        /></svg
-                                    >
-                                    <span>Project</span>
-                                </a>
-                                <a
-                                    class="about-link-btn"
-                                    href="https://github.com/ansxuman/Clauge/issues/new"
-                                    target="_blank"
-                                    rel="noopener"
-                                    title="Report an Issue"
-                                >
-                                    <svg viewBox="0 0 24 24"
-                                        ><circle cx="12" cy="12" r="10" /><path
-                                            d="M12 8v4M12 16h.01"
-                                        /></svg
-                                    >
-                                    <span>Report Issue</span>
-                                </a>
-                                <a
-                                    class="about-link-btn"
-                                    href="https://github.com/ansxuman"
-                                    target="_blank"
-                                    rel="noopener"
-                                    title="Developer"
-                                >
-                                    <svg viewBox="0 0 24 24"
-                                        ><path
-                                            d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"
-                                        /><circle cx="12" cy="7" r="4" /></svg
-                                    >
-                                    <span>Developer</span>
-                                </a>
-                                <a
-                                    class="about-link-btn"
-                                    href="https://clauge.in/"
-                                    target="_blank"
-                                    rel="noopener"
-                                    title="Website"
-                                >
-                                    <svg viewBox="0 0 24 24"
-                                        ><circle cx="12" cy="12" r="10" /><line
-                                            x1="2"
-                                            y1="12"
-                                            x2="22"
-                                            y2="12"
-                                        /><path
-                                            d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"
-                                        /></svg
-                                    >
-                                    <span>Website</span>
+                                    Buy me a coffee
                                 </a>
                             </div>
-                        </div>
-                    </section>
-
-                    <section class="stg-card">
-                        <header class="stg-card-hd">
-                            <span class="stg-card-icon" aria-hidden="true">
-                                <svg
-                                    viewBox="0 0 24 24"
-                                    width="14"
-                                    height="14"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    ><path
-                                        d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
-                                    /></svg
-                                >
-                            </span>
-                            <div class="stg-card-titles">
-                                <h3 class="stg-card-title">Support</h3>
-                                <p class="stg-card-sub">
-                                    If Clauge helped you in development,
-                                    consider buying the developer a coffee.
-                                </p>
-                            </div>
-                        </header>
-                        <div class="stg-card-body">
-                            <a
-                                class="about-coffee"
-                                href="https://buymeacoffee.com/ansxuman"
-                                target="_blank"
-                                rel="noopener"
-                            >
-                                <svg viewBox="0 0 24 24"
-                                    ><path d="M17 8h1a4 4 0 110 8h-1" /><path
-                                        d="M3 8h14v9a4 4 0 01-4 4H7a4 4 0 01-4-4V8z"
-                                    /><line x1="6" y1="2" x2="6" y2="4" /><line
-                                        x1="10"
-                                        y1="2"
-                                        x2="10"
-                                        y2="4"
-                                    /><line
-                                        x1="14"
-                                        y1="2"
-                                        x2="14"
-                                        y2="4"
-                                    /></svg
-                                >
-                                Buy me a coffee
-                            </a>
-                        </div>
-                    </section>
-                </div>
-            {/if}
+                        </section>
+                    </div>
+                {/if}
+            </div>
         </div>
     </div>
-</div>
 {/if}
 
 <ConfirmDialog
@@ -4163,7 +4960,9 @@
         font-family: var(--ui);
         font-size: 11px;
         cursor: default;
-        transition: border-color 0.12s, color 0.12s;
+        transition:
+            border-color 0.12s,
+            color 0.12s;
     }
     .stg-card-mini-btn:hover:not(:disabled) {
         border-color: var(--b2);
@@ -4193,9 +4992,13 @@
         font-size: 12.5px;
         font-weight: 500;
         cursor: default;
-        transition: color 0.12s, border-color 0.12s;
+        transition:
+            color 0.12s,
+            border-color 0.12s;
     }
-    .plugin-provider-tab:hover { color: var(--t1); }
+    .plugin-provider-tab:hover {
+        color: var(--t1);
+    }
     .plugin-provider-tab.active {
         color: var(--t1);
         border-bottom-color: var(--acc);
@@ -4215,7 +5018,11 @@
         color: var(--t2);
         font-family: var(--ui);
     }
-    .plugin-codex-hint svg { flex-shrink: 0; margin-top: 2px; color: var(--acc); }
+    .plugin-codex-hint svg {
+        flex-shrink: 0;
+        margin-top: 2px;
+        color: var(--acc);
+    }
     .plugin-codex-hint code {
         font-family: var(--mono, monospace);
         font-size: 11px;
