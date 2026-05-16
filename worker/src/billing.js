@@ -249,6 +249,34 @@ function planToPriceId(plan, env) {
   return null;
 }
 
+export async function handleCreatePortal(env, userId) {
+  if (!userId) return new Response("unauthorized", { status: 401 });
+  const row = await env.CLAUGE_DB.prepare(
+    "SELECT polar_customer_id FROM users WHERE user_id = ?"
+  )
+    .bind(userId)
+    .first();
+  if (!row?.polar_customer_id) return new Response("no customer", { status: 404 });
+
+  const resp = await fetch("https://api.polar.sh/v1/customer-sessions/", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.POLAR_API_KEY}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ customer_id: row.polar_customer_id }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    return new Response("polar portal create failed: " + text.slice(0, 200), { status: 502 });
+  }
+  const data = await resp.json();
+  return new Response(JSON.stringify({ url: data.customer_portal_url }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 export async function handleCreateCheckout(request, env, userId) {
   if (!userId) return new Response("unauthorized", { status: 401 });
   let body;

@@ -360,6 +360,46 @@ describe("order.refunded handler", () => {
   });
 });
 
+describe("POST /api/billing/portal", () => {
+  it("returns 401 without auth", async () => {
+    const { handleCreatePortal } = await import("../src/billing.js");
+    const r = await handleCreatePortal(env, null);
+    expect(r.status).toBe(401);
+  });
+
+  it("returns 404 if user has no polar_customer_id", async () => {
+    const userId = await seedUser({ slug: "u_portal_none" });
+    const { handleCreatePortal } = await import("../src/billing.js");
+    const r = await handleCreatePortal(env, userId);
+    expect(r.status).toBe(404);
+  });
+
+  it("returns a portal url (Polar API mocked)", async () => {
+    const userId = await seedUser({ slug: "u_portal" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET polar_customer_id='cus_x1' WHERE user_id=?"
+    )
+      .bind(userId)
+      .run();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      expect(String(url)).toContain("polar.sh");
+      return new Response(JSON.stringify({ customer_portal_url: "https://sandbox.polar.sh/portal/x" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    try {
+      const { handleCreatePortal } = await import("../src/billing.js");
+      const r = await handleCreatePortal(env, userId);
+      expect(r.status).toBe(200);
+      const p = await r.json();
+      expect(p.url).toContain("polar.sh/portal");
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+});
+
 describe("POST /api/billing/checkout", () => {
   it("returns 401 without auth", async () => {
     const { handleCreateCheckout } = await import("../src/billing.js");
