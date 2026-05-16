@@ -128,7 +128,7 @@ describe("subscription.created handler", () => {
     expect(row.subscription_status).toBe("active");
     expect(row.polar_subscription_id).toBe("sub_abc");
     expect(row.credit_allowance_per_cycle).toBeGreaterThan(0);
-    expect(row.credits_remaining).toBe(row.credit_allowance_per_cycle);
+    expect(row.credits_remaining).toBe(0);
     expect(row.current_period_end).toBe("2026-06-16T00:00:00Z");
   });
 });
@@ -297,29 +297,30 @@ describe("order.paid handler", () => {
     expect(row.current_period_start).toBe("2026-06-16T00:00:00Z");
   });
 
-  it("is idempotent — no double-grant when first sub+order both fire", async () => {
-    const userId = await seedUser({ slug: "u_idem" });
-    // Simulate subscription.created already ran for THIS period
+});
+
+describe("order.paid handler — yearly subscription", () => {
+  it("grants allowance × 12 for yearly billing period", async () => {
+    const userId = await seedUser({ slug: "u_yearly" });
     await env.CLAUGE_DB.prepare(
       `UPDATE users SET plan='pro', subscription_status='active',
-         polar_subscription_id='sub_i1',
+         polar_subscription_id='sub_y1',
          current_period_start='2026-05-16T00:00:00Z',
-         current_period_end='2026-06-16T00:00:00Z',
-         credit_allowance_per_cycle=1000, credits_remaining=950
+         current_period_end='2027-05-16T00:00:00Z',
+         credit_allowance_per_cycle=1000, credits_remaining=42
        WHERE user_id=?`
     )
       .bind(userId)
       .run();
-    // First-purchase order.paid carries the SAME period start
     const body = JSON.stringify({
-      id: "evt_paid_idem",
+      id: "evt_yearly_paid",
       type: "order.paid",
       created_at: new Date().toISOString(),
       data: {
-        id: "ord_i1",
-        subscription_id: "sub_i1",
-        current_period_start: "2026-05-16T00:00:00Z",
-        current_period_end: "2026-06-16T00:00:00Z",
+        id: "ord_y1",
+        subscription_id: "sub_y1",
+        current_period_start: "2027-05-16T00:00:00Z",
+        current_period_end: "2028-05-16T00:00:00Z",
         customer: { external_id: String(userId) },
       },
     });
@@ -327,10 +328,56 @@ describe("order.paid handler", () => {
     await postWebhook(body, sig);
     const row = await env.CLAUGE_DB.prepare(
       "SELECT credits_remaining FROM users WHERE user_id=?"
-    )
-      .bind(userId)
-      .first();
-    expect(row.credits_remaining).toBe(950); // preserved — already 50 used this cycle
+    ).bind(userId).first();
+    expect(row.credits_remaining).toBe(12000);
+  });
+});
+
+describe("initial purchase flow (sub.created + order.paid)", () => {
+  it("grants credits exactly once across both events", async () => {
+    const userId = await seedUser({ slug: "u_initial" });
+
+    // 1. subscription.created fires (no credits granted)
+    const subBody = JSON.stringify({
+      id: "evt_init_sub",
+      type: "subscription.created",
+      created_at: new Date().toISOString(),
+      data: {
+        id: "sub_init",
+        status: "active",
+        cancel_at_period_end: false,
+        current_period_start: "2026-05-16T00:00:00Z",
+        current_period_end: "2026-06-16T00:00:00Z",
+        customer: { external_id: String(userId) },
+        product: { prices: [{ id: env.POLAR_PRICE_MONTHLY }] },
+      },
+    });
+    await postWebhook(subBody, await signedSig(subBody));
+    let row = await env.CLAUGE_DB.prepare(
+      "SELECT plan, credits_remaining, credit_allowance_per_cycle FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.plan).toBe("pro");
+    expect(row.credit_allowance_per_cycle).toBe(1000);
+    expect(row.credits_remaining).toBe(0); // not yet granted
+
+    // 2. order.paid fires (grants 1× allowance for monthly)
+    const ordBody = JSON.stringify({
+      id: "evt_init_ord",
+      type: "order.paid",
+      created_at: new Date().toISOString(),
+      data: {
+        id: "ord_init",
+        subscription_id: "sub_init",
+        current_period_start: "2026-05-16T00:00:00Z",
+        current_period_end: "2026-06-16T00:00:00Z",
+        customer: { external_id: String(userId) },
+      },
+    });
+    await postWebhook(ordBody, await signedSig(ordBody));
+    row = await env.CLAUGE_DB.prepare(
+      "SELECT credits_remaining FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.credits_remaining).toBe(1000);
   });
 });
 

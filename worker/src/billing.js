@@ -1,5 +1,14 @@
 import { verifyPolarSignature, checkReplayWindow, parsePolarEvent } from "./polar.js";
 
+// Derive billing period length in months from period bounds (~30d ≈ 1 month).
+// Used to scale credit grant: monthly = 1× allowance, yearly = 12× allowance.
+function periodMonthsFromBounds(startIso, endIso) {
+  if (!startIso || !endIso) return 1;
+  const days = (Date.parse(endIso) - Date.parse(startIso)) / 86_400_000;
+  if (!Number.isFinite(days) || days <= 0) return 1;
+  return days >= 60 ? 12 : 1;
+}
+
 // Per spec §10b: webhook signature verification ALWAYS comes first.
 // No DB write happens unless verification passes.
 //
@@ -104,6 +113,9 @@ async function defaultCreditAllowance(env) {
 
 async function handleSubscriptionCreated(event, userId, env) {
   const d = event.data;
+  // Set plan + period metadata only. Credits are granted by handleOrderPaid
+  // on the first order.paid event (which fires alongside subscription.created
+  // on initial purchase). This avoids double-granting credits on first cycle.
   const allowance = await defaultCreditAllowance(env);
   await env.CLAUGE_DB.prepare(
     `UPDATE users SET
@@ -114,7 +126,6 @@ async function handleSubscriptionCreated(event, userId, env) {
        current_period_end = ?,
        polar_subscription_id = ?,
        credit_allowance_per_cycle = ?,
-       credits_remaining = ?,
        past_due_started_at = NULL,
        updated_at = CURRENT_TIMESTAMP
      WHERE user_id = ?`
@@ -125,7 +136,6 @@ async function handleSubscriptionCreated(event, userId, env) {
       d.current_period_start,
       d.current_period_end,
       d.id,
-      allowance,
       allowance,
       userId
     )
@@ -208,22 +218,15 @@ async function revokeUser(userId, terminalStatus, env) {
 
 async function handleOrderPaid(event, userId, env) {
   const d = event.data;
-  // Idempotency: only reset credits if the order's period_start differs
-  // from the user's currently-stored period_start. Avoids double-grant
-  // when subscription.created already ran for the same period.
   const current = await env.CLAUGE_DB.prepare(
-    "SELECT current_period_start, credit_allowance_per_cycle FROM users WHERE user_id = ?"
+    "SELECT credit_allowance_per_cycle FROM users WHERE user_id = ?"
   )
     .bind(userId)
     .first();
   if (!current) return;
-
-  const incomingPeriodStart = d.current_period_start ?? null;
-  if (incomingPeriodStart && incomingPeriodStart === current.current_period_start) {
-    return; // already provisioned for this cycle
-  }
-
   const allowance = current.credit_allowance_per_cycle || (await defaultCreditAllowance(env));
+  const months = periodMonthsFromBounds(d.current_period_start, d.current_period_end);
+  const grantTotal = allowance * months;
   await env.CLAUGE_DB.prepare(
     `UPDATE users SET
        subscription_status = 'active',
@@ -235,7 +238,7 @@ async function handleOrderPaid(event, userId, env) {
        updated_at = CURRENT_TIMESTAMP
      WHERE user_id = ?`
   )
-    .bind(incomingPeriodStart, d.current_period_end ?? null, allowance, userId)
+    .bind(d.current_period_start ?? null, d.current_period_end ?? null, grantTotal, userId)
     .run();
 }
 
