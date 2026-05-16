@@ -8,9 +8,12 @@ use crate::cloud::auth::{self, AuthState};
 use crate::cloud::client::{self, CloudError};
 use crate::cloud::config::{settings_key_synced_at, SETTINGS_KEY_HAS_SYNCED};
 use crate::cloud::domains::ALL_KINDS;
-use crate::cloud::models::{CloudStatus, CloudUser};
+use crate::cloud::models::{CloudAiBalance, CloudAiUsage, CloudPricing, CloudStatus, CloudUser};
 use crate::cloud::scheduler::Scheduler;
 use crate::cloud::sync;
+use crate::cloud::{ai as ai_client, billing as billing_client};
+use crate::shared::repos::ai_configurations as ai_repo;
+use crate::shared::repos::ai_configurations::{AiConfiguration, AiConfigurationInput};
 use crate::shared::repos::settings;
 
 // ─── Status / OAuth URL builders ────────────────────────────────────────────
@@ -360,5 +363,113 @@ async fn build_status(
         plan: resp.plan.clone(),
         last_synced,
     }
+}
+
+// ─── ai_configurations CRUD (local DB) ─────────────────────────────────────
+
+#[tauri::command]
+pub async fn ai_config_list(
+    pool: State<'_, SqlitePool>,
+) -> Result<Vec<AiConfiguration>, String> {
+    ai_repo::list_all(pool.inner()).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ai_config_create(
+    pool: State<'_, SqlitePool>,
+    input: AiConfigurationInput,
+) -> Result<i64, String> {
+    ai_repo::create(pool.inner(), &input).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ai_config_update(
+    pool: State<'_, SqlitePool>,
+    id: i64,
+    input: AiConfigurationInput,
+) -> Result<(), String> {
+    ai_repo::update(pool.inner(), id, &input).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ai_config_delete(
+    pool: State<'_, SqlitePool>,
+    id: i64,
+) -> Result<(), String> {
+    ai_repo::delete(pool.inner(), id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ai_config_set_default(
+    pool: State<'_, SqlitePool>,
+    id: i64,
+) -> Result<(), String> {
+    ai_repo::set_default(pool.inner(), id).await.map_err(|e| e.to_string())
+}
+
+// ─── cloud billing + AI proxy wrappers ──────────────────────────────────────
+
+#[tauri::command]
+pub async fn cloud_get_pricing(
+    pool: State<'_, SqlitePool>,
+) -> Result<CloudPricing, String> {
+    billing_client::get_pricing(pool.inner()).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cloud_create_checkout(
+    pool: State<'_, SqlitePool>,
+    state: State<'_, AuthState>,
+    plan: String,
+) -> Result<String, String> {
+    let (token, provider) = state
+        .active_token_and_provider()
+        .ok_or_else(|| "not signed in".to_string())?;
+    let resp = billing_client::create_checkout(pool.inner(), &token, &provider, &plan)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(resp.url)
+}
+
+#[tauri::command]
+pub async fn cloud_open_portal(
+    pool: State<'_, SqlitePool>,
+    state: State<'_, AuthState>,
+) -> Result<String, String> {
+    let (token, provider) = state
+        .active_token_and_provider()
+        .ok_or_else(|| "not signed in".to_string())?;
+    let resp = billing_client::create_portal_session(pool.inner(), &token, &provider)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(resp.url)
+}
+
+#[tauri::command]
+pub async fn cloud_ai_balance(
+    pool: State<'_, SqlitePool>,
+    state: State<'_, AuthState>,
+) -> Result<CloudAiBalance, String> {
+    let (token, provider) = state
+        .active_token_and_provider()
+        .ok_or_else(|| "not signed in".to_string())?;
+    ai_client::get_balance(pool.inner(), &token, &provider)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cloud_ai_usage(
+    pool: State<'_, SqlitePool>,
+    state: State<'_, AuthState>,
+    limit: Option<u32>,
+    before: Option<String>,
+) -> Result<CloudAiUsage, String> {
+    let (token, provider) = state
+        .active_token_and_provider()
+        .ok_or_else(|| "not signed in".to_string())?;
+    ai_client::get_usage(pool.inner(), &token, &provider, limit, before.as_deref())
+        .await
+        .map_err(|e| e.to_string())
 }
 
