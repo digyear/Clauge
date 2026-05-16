@@ -15,6 +15,17 @@ export async function checkRpm(userId, limitPerMinute, env) {
   return true;
 }
 
+// Generic per-key per-minute rate limiter. Used for IP-based gating
+// on routes that have no authenticated user (e.g. webhook pre-HMAC).
+export async function checkKeyRpm(keyId, limitPerMinute, env) {
+  const minute = Math.floor(Date.now() / 60_000);
+  const key = `rl:key:${keyId}:${minute}`;
+  const current = Number((await env.CLAUGE_KV.get(key)) ?? 0);
+  if (current >= limitPerMinute) return false;
+  await env.CLAUGE_KV.put(key, String(current + 1), { expirationTtl: RPM_TTL_SECONDS });
+  return true;
+}
+
 // Burst budget: at most `fraction` of allowance per `windowSeconds`.
 // `costCredits` is added to the running total; if over cap, refused.
 export async function checkBurstBudget(userId, allowancePerCycle, fraction, windowSeconds, costCredits, env) {
