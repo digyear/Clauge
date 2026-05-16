@@ -472,15 +472,7 @@ function serializeProvider(p) {
 }
 
 function entitlementsForPlan(plan) {
-  const isPro = plan === 'pro' || plan === 'enterprise';
-  return {
-    plan,
-    features: {
-      clauge_ai:           isPro,
-      unlimited_coworkers: isPro,
-      premium_themes:      isPro,
-    },
-  };
+  return { plan };
 }
 
 async function safeJson(request) {

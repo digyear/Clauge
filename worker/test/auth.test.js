@@ -4,18 +4,9 @@ import { entitlementsForPlan } from "../src/auth.js";
 import { seedUser } from "./setup.js";
 
 describe("entitlementsForPlan", () => {
-  it("free returns features all locked", () => {
-    const ent = entitlementsForPlan("free");
-    expect(ent.features.clauge_ai).toBe(false);
-    expect(ent.features.unlimited_coworkers).toBe(false);
-    expect(ent.features.premium_themes).toBe(false);
-  });
-
-  it("pro returns features unlocked", () => {
-    const ent = entitlementsForPlan("pro");
-    expect(ent.features.clauge_ai).toBe(true);
-    expect(ent.features.unlimited_coworkers).toBe(true);
-    expect(ent.features.premium_themes).toBe(true);
+  it("returns just the plan", () => {
+    expect(entitlementsForPlan("free")).toEqual({ plan: "free" });
+    expect(entitlementsForPlan("pro")).toEqual({ plan: "pro" });
   });
 });
 
@@ -39,7 +30,6 @@ describe("/api/auth/me response (smoke)", () => {
     expect(resp.status).toBe(200);
     const body = await resp.json();
     expect(body.plan).toBe("pro");
-    expect(body.entitlements.features.clauge_ai).toBe(true);
     expect(body.entitlements.credits.remaining).toBe(600);
     expect(body.entitlements.credits.allowance).toBe(1000);
     expect(body.entitlements.credits.resets_at).toBe("2026-06-16T00:00:00Z");
