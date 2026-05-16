@@ -9,7 +9,7 @@ import {
 import {
   handleSyncState, handleSyncPull, handleSyncPush, handleSyncWipe,
 } from './sync.js';
-import { handleBillingWebhook } from './billing.js';
+import { handleBillingWebhook, handleCreateCheckout } from './billing.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -59,6 +59,12 @@ export default {
       // ─── /api/billing/webhook — server-to-server, no bearer ─
       if (path === '/api/billing/webhook' && method === 'POST') {
         return await handleBillingWebhook(request, env);
+      }
+
+      // ─── /api/billing/checkout — bearer required ────────────
+      if (path === '/api/billing/checkout' && method === 'POST') {
+        const checkoutCtx = await authenticate(request, env);
+        return handleCreateCheckout(request, env, checkoutCtx?.userId ?? null);
       }
 
       // ─── /api/sync/* — bearer required ─────────────────────

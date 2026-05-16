@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { handleBillingWebhook } from "../src/billing.js";
 import { seedUser } from "./setup.js";
@@ -357,5 +357,59 @@ describe("order.refunded handler", () => {
       .first();
     expect(row.plan).toBe("free");
     expect(row.credits_remaining).toBe(0);
+  });
+});
+
+describe("POST /api/billing/checkout", () => {
+  it("returns 401 without auth", async () => {
+    const { handleCreateCheckout } = await import("../src/billing.js");
+    const r = await handleCreateCheckout(
+      new Request("https://x", { method: "POST", body: '{"plan":"monthly"}' }),
+      env,
+      null
+    );
+    expect(r.status).toBe(401);
+  });
+
+  it("returns 400 on invalid plan", async () => {
+    const userId = await seedUser({ slug: "u_chk" });
+    const { handleCreateCheckout } = await import("../src/billing.js");
+    const r = await handleCreateCheckout(
+      new Request("https://x", { method: "POST", body: '{"plan":"weekly"}' }),
+      env,
+      userId
+    );
+    expect(r.status).toBe(400);
+  });
+
+  it("returns a checkout url for monthly plan (Polar API mocked)", async () => {
+    const userId = await seedUser({ slug: "u_chk2", email: "user@test.invalid" });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      expect(String(url)).toContain("polar.sh");
+      const body = JSON.parse(init.body);
+      expect(body.product_price_id).toBe(env.POLAR_PRICE_MONTHLY);
+      expect(body.customer_external_id).toBe(String(userId));
+      return new Response(JSON.stringify({ url: "https://sandbox.polar.sh/checkout/abc" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    try {
+      const { handleCreateCheckout } = await import("../src/billing.js");
+      const r = await handleCreateCheckout(
+        new Request("https://x", {
+          method: "POST",
+          body: '{"plan":"monthly","intro":true}',
+          headers: { "content-type": "application/json" },
+        }),
+        env,
+        userId
+      );
+      expect(r.status).toBe(200);
+      const payload = await r.json();
+      expect(payload.url).toContain("polar.sh/checkout");
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 });

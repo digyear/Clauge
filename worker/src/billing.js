@@ -242,3 +242,55 @@ async function handleOrderPaid(event, userId, env) {
 async function handleOrderRefunded(event, userId, env) {
   await revokeUser(userId, "canceled", env);
 }
+
+function planToPriceId(plan, env) {
+  if (plan === "monthly") return env.POLAR_PRICE_MONTHLY;
+  if (plan === "yearly") return env.POLAR_PRICE_YEARLY;
+  return null;
+}
+
+export async function handleCreateCheckout(request, env, userId) {
+  if (!userId) return new Response("unauthorized", { status: 401 });
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response("bad json", { status: 400 });
+  }
+  const priceId = planToPriceId(body.plan, env);
+  if (!priceId) return new Response("invalid plan", { status: 400 });
+
+  const userRow = await env.CLAUGE_DB.prepare(
+    "SELECT primary_email, polar_customer_id FROM users WHERE user_id = ?"
+  )
+    .bind(userId)
+    .first();
+
+  const req = {
+    product_price_id: priceId,
+    customer_external_id: String(userId),
+    customer_email: userRow?.primary_email ?? undefined,
+    success_url: "https://clauge.in/upgrade-success?ref=" + encodeURIComponent(String(userId)),
+  };
+  if (body.intro && env.POLAR_DISCOUNT_INTRO) {
+    req.discount_id = env.POLAR_DISCOUNT_INTRO;
+  }
+
+  const resp = await fetch("https://api.polar.sh/v1/checkouts/", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.POLAR_API_KEY}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(req),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    return new Response("polar checkout create failed: " + text.slice(0, 200), { status: 502 });
+  }
+  const data = await resp.json();
+  return new Response(JSON.stringify({ url: data.url }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
