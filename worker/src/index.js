@@ -11,6 +11,7 @@ import {
 } from './sync.js';
 import { handleBillingWebhook, handleCreateCheckout, handleCreatePortal } from './billing.js';
 import { sweepPastDue } from './cron.js';
+import { handleAiChat } from './ai.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -55,6 +56,12 @@ export default {
       }
       if (path === '/api/auth/unlink' && method === 'POST') {
         return await handleUnlink(request, env);
+      }
+
+      // ─── /api/ai/chat — bearer required ────────────────────
+      if (request.method === 'POST' && path === '/api/ai/chat') {
+        const ctx = await authenticate(request, env);
+        return handleAiChat(request, env, ctx?.userId ?? null);
       }
 
       // ─── /api/billing/webhook — server-to-server, no bearer ─
