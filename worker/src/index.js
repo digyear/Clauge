@@ -9,6 +9,7 @@ import {
 import {
   handleSyncState, handleSyncPull, handleSyncPush, handleSyncWipe,
 } from './sync.js';
+import { handleBillingWebhook } from './billing.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -53,6 +54,11 @@ export default {
       }
       if (path === '/api/auth/unlink' && method === 'POST') {
         return await handleUnlink(request, env);
+      }
+
+      // ─── /api/billing/webhook — server-to-server, no bearer ─
+      if (path === '/api/billing/webhook' && method === 'POST') {
+        return await handleBillingWebhook(request, env);
       }
 
       // ─── /api/sync/* — bearer required ─────────────────────
