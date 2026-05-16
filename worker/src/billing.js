@@ -280,29 +280,43 @@ export async function handleCreatePortal(env, userId) {
   });
 }
 
-// Public, anonymous, cache-friendly. Reads two operator-managed tables.
-// Discount is OMITTED entirely from the response when no row exists,
-// so the UI renders clean (un-slashed) prices.
+// Public, anonymous, edge-cacheable. Reads two small operator-managed tables.
+// Returns a minimal contract — desktop app computes per-month math,
+// slashed prices, and all UI formatting from these raw values.
+//
+// schema_version=1 lets clients gracefully handle future shape changes
+// (rule: only add fields, never remove or rename).
 export async function handleGetPricing(env) {
-  const { results: plans } = await env.CLAUGE_DB.prepare(
-    "SELECT plan_id AS id, label, price_usd, period FROM billing_pricing ORDER BY price_usd ASC"
-  ).all();
+  const [pricingResult, discountResult] = await Promise.all([
+    env.CLAUGE_DB.prepare(
+      "SELECT plan_id AS id, price_usd FROM billing_pricing ORDER BY price_usd ASC"
+    ).all(),
+    env.CLAUGE_DB.prepare(
+      "SELECT plan_id, percent, code FROM billing_discount"
+    ).all(),
+  ]);
 
-  const discount = await env.CLAUGE_DB.prepare(
-    "SELECT percent, label, code FROM billing_discount WHERE id = 1"
-  ).first();
+  const discountsByPlan = new Map();
+  for (const row of discountResult.results) {
+    discountsByPlan.set(row.plan_id, { percent: row.percent, code: row.code });
+  }
 
-  const payload = { plans };
-  if (discount) payload.discount = discount;
+  const plans = pricingResult.results.map((p) => ({
+    id: p.id,
+    price_usd: p.price_usd,
+    discount: discountsByPlan.get(p.id) ?? null,
+  }));
 
-  return new Response(JSON.stringify(payload), {
-    status: 200,
-    headers: {
-      "content-type": "application/json",
-      // 5-minute edge cache. Operator price changes propagate within this window.
-      "cache-control": "public, max-age=300",
-    },
-  });
+  return new Response(
+    JSON.stringify({ schema_version: 1, plans }),
+    {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "public, max-age=300",
+      },
+    }
+  );
 }
 
 export async function handleCreateCheckout(request, env, userId) {

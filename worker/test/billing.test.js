@@ -470,42 +470,56 @@ describe("GET /api/billing/pricing", () => {
     await env.CLAUGE_DB.prepare("DELETE FROM billing_discount").run();
   });
 
-  it("returns seeded monthly + yearly plans with no discount", async () => {
+  it("returns schema_version=1 and seeded plans with discount=null", async () => {
     const { handleGetPricing } = await import("../src/billing.js");
     const r = await handleGetPricing(env);
     expect(r.status).toBe(200);
     expect(r.headers.get("cache-control")).toContain("max-age=300");
     const body = await r.json();
-    expect(body.plans.map(p => p.id).sort()).toEqual(["monthly", "yearly"]);
-    expect(body.plans.find(p => p.id === "monthly").price_usd).toBe(15);
-    expect(body.plans.find(p => p.id === "yearly").price_usd).toBe(150);
-    expect(body.discount).toBeUndefined();
+    expect(body.schema_version).toBe(1);
+    expect(body.plans.map((p) => p.id).sort()).toEqual(["monthly", "yearly"]);
+    const monthly = body.plans.find((p) => p.id === "monthly");
+    const yearly  = body.plans.find((p) => p.id === "yearly");
+    expect(monthly).toEqual({ id: "monthly", price_usd: 15, discount: null });
+    expect(yearly).toEqual({ id: "yearly", price_usd: 150, discount: null });
   });
 
-  it("includes discount object when a row exists", async () => {
+  it("attaches per-plan discount when row exists", async () => {
     await env.CLAUGE_DB.prepare(
-      "INSERT OR REPLACE INTO billing_discount (id, percent, label, code) VALUES (1, 53, 'Introductory offer', 'INTRO53')"
+      "INSERT OR REPLACE INTO billing_discount (plan_id, percent, code) VALUES ('yearly', 53, 'INTRO53')"
     ).run();
     const { handleGetPricing } = await import("../src/billing.js");
     const r = await handleGetPricing(env);
     const body = await r.json();
-    expect(body.discount).toEqual({
-      percent: 53,
-      label: "Introductory offer",
-      code: "INTRO53",
-    });
+    const yearly = body.plans.find((p) => p.id === "yearly");
+    expect(yearly.discount).toEqual({ percent: 53, code: "INTRO53" });
+    // Monthly stays null
+    expect(body.plans.find((p) => p.id === "monthly").discount).toBeNull();
   });
 
-  it("discount.code is nullable (auto-apply variant)", async () => {
+  it("supports different discounts per plan", async () => {
     await env.CLAUGE_DB.prepare(
-      "INSERT OR REPLACE INTO billing_discount (id, percent, label, code) VALUES (1, 20, 'Auto applied', NULL)"
+      "INSERT OR REPLACE INTO billing_discount (plan_id, percent, code) VALUES ('monthly', 53, 'INTRO53M')"
+    ).run();
+    await env.CLAUGE_DB.prepare(
+      "INSERT OR REPLACE INTO billing_discount (plan_id, percent, code) VALUES ('yearly', 30, 'YEAR30')"
     ).run();
     const { handleGetPricing } = await import("../src/billing.js");
     const r = await handleGetPricing(env);
     const body = await r.json();
-    expect(body.discount.percent).toBe(20);
-    expect(body.discount.label).toBe("Auto applied");
-    expect(body.discount.code).toBeNull();
+    expect(body.plans.find((p) => p.id === "monthly").discount).toEqual({ percent: 53, code: "INTRO53M" });
+    expect(body.plans.find((p) => p.id === "yearly").discount).toEqual({ percent: 30, code: "YEAR30" });
+  });
+
+  it("supports auto-apply discount (code is null)", async () => {
+    await env.CLAUGE_DB.prepare(
+      "INSERT OR REPLACE INTO billing_discount (plan_id, percent, code) VALUES ('yearly', 20, NULL)"
+    ).run();
+    const { handleGetPricing } = await import("../src/billing.js");
+    const r = await handleGetPricing(env);
+    const body = await r.json();
+    const yearly = body.plans.find((p) => p.id === "yearly");
+    expect(yearly.discount).toEqual({ percent: 20, code: null });
   });
 });
 
