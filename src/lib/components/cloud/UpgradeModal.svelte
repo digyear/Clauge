@@ -71,12 +71,23 @@
     return p.id === 'yearly' ? Math.round((p.price_usd / 12) * 100) / 100 : p.price_usd;
   }
 
+  // Marketing-positive savings badge:
+  // Compare yearly's *effective* price (post any discount) to a full year
+  // of monthly *sticker* (no discount on the comparison baseline). This
+  // concentrates the discount benefit onto the yearly choice, which is
+  // the desired upsell framing.
   function savingsVsMonthly(yearly: Plan, monthly: Plan | undefined): number | null {
     if (!monthly) return null;
-    const yearlyPerMonth = yearly.price_usd / 12;
-    if (yearlyPerMonth >= monthly.price_usd) return null;
-    const savings = monthly.price_usd * 12 - yearly.price_usd;
-    return Math.round((savings / (monthly.price_usd * 12)) * 100);
+    const yearlyEff = effectivePrice(yearly);
+    const fullMonthlyYear = monthly.price_usd * 12;
+    if (yearlyEff >= fullMonthlyYear) return null;
+    const savings = fullMonthlyYear - yearlyEff;
+    return Math.round((savings / fullMonthlyYear) * 100);
+  }
+
+  // Per-month equivalent of yearly's *discounted* price
+  function discountedPerMonth(p: Plan): number {
+    return Math.round((effectivePrice(p) / 12) * 100) / 100;
   }
 </script>
 
@@ -86,7 +97,20 @@
   <div class="overlay" onclick={close} use:teleportToBody>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+    <div class="modal-wrap" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      {#if pricing}
+        {@const firstDiscount = pricing.plans.find((p) => p.discount)?.discount ?? null}
+        {#if firstDiscount}
+          <div class="discount-banner">
+            <svg class="bn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span><strong>{firstDiscount.percent}% off applied</strong>{#if firstDiscount.code} · code <strong>{firstDiscount.code}</strong> will be used at checkout{:else} · automatically at checkout{/if}</span>
+          </div>
+        {/if}
+      {/if}
+
+      <div class="modal">
       <button class="close-btn" onclick={close} aria-label="Close">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
           <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -169,16 +193,11 @@
             <div class="plan-card">
               <div class="plan-label">MONTHLY</div>
               <div class="price-row">
-                {#if monthly.discount}
-                  <span class="strike">${monthly.price_usd}</span>
-                {/if}
                 <span class="amount">${monthly.discount ? effectivePrice(monthly).toFixed(2) : monthly.price_usd}</span>
                 <span class="period">/month</span>
               </div>
               {#if monthly.discount}
-                <p class="discount-line">
-                  {monthly.discount.percent}% off{#if monthly.discount.code} · code <strong>{monthly.discount.code}</strong>{/if}
-                </p>
+                <p class="was-line"><span class="strike">was ${monthly.price_usd.toFixed(2)}</span></p>
               {/if}
               <button
                 class="choose-btn outlined"
@@ -197,18 +216,16 @@
               {/if}
               <div class="plan-label">YEARLY</div>
               <div class="price-row">
-                {#if yearly.discount}
-                  <span class="strike">${yearly.price_usd}</span>
-                {/if}
                 <span class="amount">${yearly.discount ? effectivePrice(yearly).toFixed(2) : yearly.price_usd}</span>
                 <span class="period">/year</span>
               </div>
-              <p class="per-month">${perMonth(yearly).toFixed(2)} / month</p>
-              {#if yearly.discount}
-                <p class="discount-line">
-                  {yearly.discount.percent}% off{#if yearly.discount.code} · code <strong>{yearly.discount.code}</strong>{/if}
-                </p>
-              {/if}
+              <p class="per-month">
+                {#if yearly.discount}
+                  <span class="strike">${yearly.price_usd}</span> · ${discountedPerMonth(yearly).toFixed(2)}/month
+                {:else}
+                  ${perMonth(yearly).toFixed(2)} / month
+                {/if}
+              </p>
               <button
                 class="choose-btn filled"
                 onclick={() => startCheckout('yearly')}
@@ -230,6 +247,7 @@
           <span class="dot">·</span> Credits non-refundable once used
         </p>
       {/if}
+      </div>
     </div>
   </div>
 {/if}
@@ -246,16 +264,36 @@
     backdrop-filter: blur(2px);
   }
 
-  .modal {
-    background: var(--n2, #0e0e0e);
-    border-radius: var(--radius-lg, 14px);
-    padding: 2rem 2rem 1.5rem;
+  .modal-wrap {
     width: 560px;
     max-width: 92vw;
+    display: flex;
+    flex-direction: column;
     color: var(--t1, #ddd);
     font-family: var(--ui);
-    position: relative;
+    border-radius: var(--radius-lg, 14px);
+    overflow: hidden;
     border: 1px solid var(--b1, #2a2a2a);
+  }
+  .discount-banner {
+    background: color-mix(in srgb, #22c55e 14%, var(--n2, #0e0e0e));
+    color: #4ade80;
+    padding: 0.75rem 1.25rem;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 1px solid color-mix(in srgb, #22c55e 30%, transparent);
+  }
+  .discount-banner strong {
+    font-weight: 600;
+    color: #4ade80;
+  }
+  .bn-icon { flex: 0 0 auto; }
+  .modal {
+    background: var(--n2, #0e0e0e);
+    padding: 2rem 2rem 1.5rem;
+    position: relative;
   }
 
   .close-btn {
@@ -413,13 +451,18 @@
     font-size: 0.8rem;
     color: var(--t3, #888);
   }
-  .discount-line {
-    margin: 0.25rem 0 0.6rem;
-    font-size: 0.75rem;
-    color: var(--acc, #c2185b);
+  .was-line {
+    margin: 0 0 0.9rem;
+    font-size: 0.8rem;
+    color: var(--t3, #888);
   }
-  .discount-line strong {
-    font-weight: 600;
+  .was-line .strike {
+    text-decoration: line-through;
+  }
+  .per-month .strike {
+    text-decoration: line-through;
+    color: var(--t3, #888);
+    margin-right: 0.15rem;
   }
 
   .choose-btn {
