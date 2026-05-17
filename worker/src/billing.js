@@ -219,9 +219,13 @@ async function handleSubscriptionRevoked(event, userId, env) {
 }
 
 async function revokeUser(userId, terminalStatus, env) {
+  // Also clears is_lifetime — fired for both subscription cancel/revoke
+  // (no-op on is_lifetime since it was already 0) and lifetime refunds
+  // (where order.refunded reaches this via handleOrderRefunded).
   await env.CLAUGE_DB.prepare(
     `UPDATE users SET
        plan = 'free',
+       is_lifetime = 0,
        subscription_status = ?,
        cancel_at_period_end = 0,
        credits_remaining = 0,
@@ -233,11 +237,22 @@ async function revokeUser(userId, terminalStatus, env) {
     .run();
 }
 
+// Lifetime annual credit allowance — refilled on each purchase anniversary.
+// More generous than yearly (12k) to justify the higher one-time price.
+const LIFETIME_ANNUAL_CREDITS = 20000;
+
 async function handleOrderPaid(event, userId, env) {
   const d = event.data;
-  // Period bounds live on the Subscription, surfaced via subscription.created/updated
-  // (which fire BEFORE order.paid). The order.paid payload itself may not include
-  // them, so we read the user row to get the authoritative bounds.
+  // Branch on the product id to detect lifetime purchases. Recurring
+  // (monthly/yearly) takes the existing path — period bounds come from
+  // the subscription.created/updated event that fired BEFORE this one.
+  const purchasedPlan = productIdToPlan(d.product_id, env);
+  if (purchasedPlan === "lifetime") {
+    return handleLifetimeOrderPaid(d, userId, env);
+  }
+
+  // Existing recurring path: read authoritative period bounds set by the
+  // prior subscription event, then grant credits = allowance × months.
   const current = await env.CLAUGE_DB.prepare(
     "SELECT credit_allowance_per_cycle, current_period_start, current_period_end FROM users WHERE user_id = ?"
   )
@@ -264,6 +279,38 @@ async function handleOrderPaid(event, userId, env) {
     .run();
 }
 
+// Lifetime is a one-time order — no Polar subscription object exists for
+// it, so we synthesize the period bounds ourselves (now → now+1yr) and
+// the lazy-refill code in ai.js advances them on each anniversary.
+// Credit allowance + initial balance both seeded from LIFETIME_ANNUAL_CREDITS.
+async function handleLifetimeOrderPaid(orderData, userId, env) {
+  const polarCustomerId = resolvePolarCustomerId(orderData);
+  await env.CLAUGE_DB.prepare(
+    `UPDATE users SET
+       plan = 'pro',
+       is_lifetime = 1,
+       subscription_status = 'active',
+       cancel_at_period_end = 0,
+       past_due_started_at = NULL,
+       current_period_start = CURRENT_TIMESTAMP,
+       current_period_end = datetime(CURRENT_TIMESTAMP, '+1 year'),
+       credit_allowance_per_cycle = ?,
+       credits_remaining = ?,
+       polar_customer_id = COALESCE(?, polar_customer_id),
+       polar_lifetime_order_id = ?,
+       updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = ?`
+  )
+    .bind(
+      LIFETIME_ANNUAL_CREDITS,
+      LIFETIME_ANNUAL_CREDITS,
+      polarCustomerId,
+      orderData.id,
+      userId,
+    )
+    .run();
+}
+
 async function handleOrderRefunded(event, userId, env) {
   await revokeUser(userId, "canceled", env);
 }
@@ -271,6 +318,16 @@ async function handleOrderRefunded(event, userId, env) {
 function planToProductId(plan, env) {
   if (plan === "monthly") return env.POLAR_PRODUCT_MONTHLY;
   if (plan === "yearly") return env.POLAR_PRODUCT_YEARLY;
+  if (plan === "lifetime") return env.POLAR_PRODUCT_LIFETIME;
+  return null;
+}
+
+// Inverse lookup — used by handleOrderPaid to branch on which product was
+// just paid for. Returns "monthly" | "yearly" | "lifetime" | null.
+function productIdToPlan(productId, env) {
+  if (productId === env.POLAR_PRODUCT_MONTHLY) return "monthly";
+  if (productId === env.POLAR_PRODUCT_YEARLY) return "yearly";
+  if (productId === env.POLAR_PRODUCT_LIFETIME) return "lifetime";
   return null;
 }
 

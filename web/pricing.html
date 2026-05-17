@@ -440,10 +440,23 @@
                 font-weight: 600;
             }
 
-            /* Show/hide price + credit blocks based on toggle state */
+            /* Show/hide price + credit blocks based on the active toggle.
+               Each [data-show] block reveals only when the parent card's
+               data-billing matches. Three plans now: monthly / yearly / lifetime. */
             .pr-card[data-billing="monthly"] [data-show="yearly"],
-            .pr-card[data-billing="yearly"] [data-show="monthly"] {
+            .pr-card[data-billing="monthly"] [data-show="lifetime"],
+            .pr-card[data-billing="yearly"] [data-show="monthly"],
+            .pr-card[data-billing="yearly"] [data-show="lifetime"],
+            .pr-card[data-billing="lifetime"] [data-show="monthly"],
+            .pr-card[data-billing="lifetime"] [data-show="yearly"] {
                 display: none;
+            }
+
+            /* "Best deal" pill on the Lifetime toggle option — amber accent. */
+            .pr-toggle-best {
+                color: #f0b429;
+                font-weight: 600;
+                margin-left: 4px;
             }
         </style>
     </head>
@@ -487,13 +500,23 @@
                         </button>
                         <button
                             type="button"
-                            class="pr-toggle-opt is-active"
+                            class="pr-toggle-opt"
                             data-period="yearly"
+                            role="tab"
+                            aria-selected="false"
+                        >
+                            Yearly
+                            <span class="pr-toggle-save">· Save 30%</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="pr-toggle-opt is-active"
+                            data-period="lifetime"
                             role="tab"
                             aria-selected="true"
                         >
-                            Yearly
-                            <span class="pr-toggle-save">· Save 17%</span>
+                            Lifetime
+                            <span class="pr-toggle-best">· Best deal</span>
                         </button>
                     </div>
                 </div>
@@ -562,21 +585,28 @@
                     </article>
 
                     <!-- PRO -->
-                    <article class="pr-card is-highlight" data-billing="yearly">
+                    <article class="pr-card is-highlight" data-billing="lifetime">
                         <span class="pr-tier-label">Pro</span>
 
                         <div class="pr-price-display" data-show="monthly">
-                            $15
+                            $<span data-price-key="monthly">12</span>
                         </div>
                         <p class="pr-price-unit" data-show="monthly">
                             per month &middot; billed monthly
                         </p>
 
                         <div class="pr-price-display" data-show="yearly">
-                            $12.50
+                            $<span data-price-key="yearly-permonth">8.33</span>
                         </div>
                         <p class="pr-price-unit" data-show="yearly">
-                            per month &middot; billed $150 yearly
+                            per month &middot; billed $<span data-price-key="yearly-total">100</span> yearly
+                        </p>
+
+                        <div class="pr-price-display" data-show="lifetime">
+                            $<span data-price-key="lifetime">299</span>
+                        </div>
+                        <p class="pr-price-unit" data-show="lifetime">
+                            one-time &middot; yours forever
                         </p>
 
                         <p class="pr-tagline">
@@ -599,20 +629,37 @@
                                 <i class="fa-solid fa-check"></i> 12,000 credits
                                 up front, refilled yearly
                             </li>
+                            <li data-show="lifetime">
+                                <i class="fa-solid fa-check"></i> 20,000 credits
+                                a year, refilled on every anniversary
+                            </li>
                             <li>
                                 <i class="fa-solid fa-check"></i> Unlimited
                                 coworkers in workspaces (free is capped at 3)
                             </li>
                             <li>
                                 <i class="fa-solid fa-check"></i> Premium themes
-                                &mdash; Aurora Drift, Carbon Grain, CRT Phosphor
                             </li>
                             <li>
-                                <i class="fa-solid fa-check"></i> Email support
+                                <i class="fa-solid fa-check"></i> AI meeting
+                                notes &mdash; coming soon
                             </li>
                             <li>
+                                <i class="fa-solid fa-check"></i> All future
+                                premium features included
+                            </li>
+                            <li data-show="monthly">
                                 <i class="fa-solid fa-check"></i> Cancel anytime
                                 &middot; credits non-refundable once used
+                            </li>
+                            <li data-show="yearly">
+                                <i class="fa-solid fa-check"></i> Cancel anytime
+                                &middot; credits non-refundable once used
+                            </li>
+                            <li data-show="lifetime">
+                                <i class="fa-solid fa-check"></i> No recurring
+                                charges ever &middot; credits non-refundable
+                                once used
                             </li>
                         </ul>
                         <div class="pr-cta-wrap">
@@ -758,6 +805,43 @@
                         });
                     });
                 });
+
+                // Live-fetch current Pro pricing from the worker. The inline
+                // numbers above are a fallback so the page renders sane prices
+                // even before the fetch resolves (or if it fails).
+                fetch("https://clauge.in/api/billing/pricing", {
+                    headers: { Accept: "application/json" },
+                })
+                    .then(function (r) {
+                        return r.ok ? r.json() : null;
+                    })
+                    .then(function (data) {
+                        if (!data || !Array.isArray(data.plans)) return;
+                        var byId = {};
+                        data.plans.forEach(function (p) {
+                            byId[p.id] = p;
+                        });
+                        var write = function (key, value) {
+                            document
+                                .querySelectorAll('[data-price-key="' + key + '"]')
+                                .forEach(function (el) {
+                                    el.textContent = value;
+                                });
+                        };
+                        if (byId.monthly) write("monthly", byId.monthly.price_usd);
+                        if (byId.yearly) {
+                            write("yearly-total", byId.yearly.price_usd);
+                            write(
+                                "yearly-permonth",
+                                (byId.yearly.price_usd / 12).toFixed(2),
+                            );
+                        }
+                        if (byId.lifetime)
+                            write("lifetime", byId.lifetime.price_usd);
+                    })
+                    .catch(function () {
+                        // Network blip — inline fallbacks stay visible.
+                    });
             })();
         </script>
     </body>

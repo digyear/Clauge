@@ -1,6 +1,6 @@
 import { loadCreditWeights, loadRateLimits } from "./kvconfig.js";
 import { buildUpstreamRequest, callUpstream, sanitizeChunk, sanitizeFinalUsage } from "./upstream.js";
-import { deductCredits, classifyOperation, computeChargeCredits, estimateTokens } from "./credits.js";
+import { deductCredits, classifyOperation, computeChargeCredits, estimateTokens, maybeRefillLifetime } from "./credits.js";
 import { checkRpm, checkBurstBudget } from "./ratelimit.js";
 
 // UUID v4 shape: 8-4-4-4-12 hex, 3rd group starts with '4', 4th group with [89ab]
@@ -21,6 +21,9 @@ function errResponse(code, message, status) {
 
 export async function handleAiChat(request, env, userId) {
   if (!userId) return errResponse("UNAUTHORIZED", "sign in required", 401);
+  // Lifetime users: refill credits if their purchase anniversary just
+  // passed. No-op for recurring users (handled by Polar webhooks instead).
+  await maybeRefillLifetime(userId, env);
 
   let body;
   try {
@@ -156,6 +159,10 @@ export async function handleAiChat(request, env, userId) {
 
       // 4. Deduct (atomic CAS). With the cap, this should always succeed
       //    unless balance changed concurrently to 0.
+      // `mode` is sent by the desktop's stream_openai when provider === clauge.
+      // Stored alongside the deduction so the Clauge AI tab can render a
+      // per-mode credits breakdown.
+      const mode = typeof body.mode === "string" ? body.mode : null;
       await deductCredits(
         userId,
         {
@@ -163,6 +170,7 @@ export async function handleAiChat(request, env, userId) {
           clauge_credits: cappedCharge,
           cost_usd_micros: finalUsage.cost_usd_micros,
           request_id: body.request_id,
+          mode,
         },
         env
       );
@@ -188,6 +196,7 @@ export async function handleAiChat(request, env, userId) {
 
 export async function handleAiBalance(env, userId) {
   if (!userId) return errResponse("UNAUTHORIZED", "sign in required", 401);
+  await maybeRefillLifetime(userId, env);
   const row = await env.CLAUGE_DB.prepare(
     "SELECT credits_remaining, credit_allowance_per_cycle, current_period_end FROM users WHERE user_id = ?"
   )
@@ -210,13 +219,13 @@ export async function handleAiUsage(env, userId, url) {
   const before = url.searchParams.get("before"); // ISO timestamp
   const stmt = before
     ? env.CLAUGE_DB.prepare(
-        `SELECT occurred_at, operation, clauge_credits, cost_usd_micros, request_id
+        `SELECT occurred_at, operation, clauge_credits, cost_usd_micros, request_id, mode
            FROM credit_usage_log
           WHERE user_id = ? AND occurred_at < ?
           ORDER BY occurred_at DESC LIMIT ?`
       ).bind(userId, before, limit)
     : env.CLAUGE_DB.prepare(
-        `SELECT occurred_at, operation, clauge_credits, cost_usd_micros, request_id
+        `SELECT occurred_at, operation, clauge_credits, cost_usd_micros, request_id, mode
            FROM credit_usage_log
           WHERE user_id = ?
           ORDER BY occurred_at DESC LIMIT ?`

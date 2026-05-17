@@ -422,8 +422,10 @@ async function buildAuthSuccess(env, userId, tokens) {
 async function buildMeResponse(env, userId) {
   const user = await env.CLAUGE_DB.prepare(
     `SELECT user_id, primary_email, display_name, first_name, last_name, avatar_url, slug,
-            plan, subscription_status, cancel_at_period_end,
-            current_period_end, credit_allowance_per_cycle, credits_remaining
+            created_at,
+            plan, subscription_status, cancel_at_period_end, is_lifetime,
+            current_period_start, current_period_end,
+            credit_allowance_per_cycle, credits_remaining
        FROM users WHERE user_id = ?`
   ).bind(userId).first();
   if (!user) return err(env, 404, 'User not found');
@@ -435,9 +437,42 @@ async function buildMeResponse(env, userId) {
     allowance:  user.credit_allowance_per_cycle,
     resets_at:  user.current_period_end,
   };
+
+  // Derive billing interval. Lifetime takes precedence — the period
+  // bounds for lifetime are synthesized (now → now+1yr) by handleLifetime
+  // OrderPaid, so the simple length-based heuristic would incorrectly call
+  // it "yearly". For recurring users (monthly/yearly), derive from period
+  // length: ~30d = monthly, ~365d = yearly.
+  let interval = null;
+  if (user.is_lifetime) {
+    interval = 'lifetime';
+  } else if (user.current_period_start && user.current_period_end) {
+    const start = Date.parse(user.current_period_start);
+    const end = Date.parse(user.current_period_end);
+    if (!Number.isNaN(start) && !Number.isNaN(end)) {
+      interval = (end - start) > 35 * 86400000 ? 'yearly' : 'monthly';
+    }
+  }
+
+  // Look up the operator-configured display price for the current plan.
+  // Falls back to null if the row isn't present (defensive — seeded by
+  // migration 0003, shouldn't ever be missing in practice).
+  let priceUsd = null;
+  if (interval) {
+    const row = await env.CLAUGE_DB.prepare(
+      'SELECT price_usd FROM billing_pricing WHERE plan_id = ?'
+    ).bind(interval).first();
+    priceUsd = row?.price_usd ?? null;
+  }
+
   ent.subscription = {
-    status:              user.subscription_status,
+    status:               user.subscription_status,
     cancel_at_period_end: !!user.cancel_at_period_end,
+    is_lifetime:          !!user.is_lifetime,
+    current_period_end:   user.current_period_end,
+    current_period_start: user.current_period_start,
+    interval,             // "monthly" | "yearly" | "lifetime" | null
+    price_usd:            priceUsd,
   };
 
   return json(env, {
@@ -457,6 +492,7 @@ function serializeUser(u) {
     lastName:     u.last_name,
     avatarUrl:    u.avatar_url,
     slug:         u.slug,
+    createdAt:    u.created_at,
   };
 }
 

@@ -12,7 +12,8 @@ export async function sweepPastDue(env) {
        past_due_started_at = NULL,
        updated_at = CURRENT_TIMESTAMP
      WHERE subscription_status = 'past_due'
-       AND past_due_started_at < datetime('now', '-3 days')`
+       AND past_due_started_at < datetime('now', '-3 days')
+       AND is_lifetime = 0`
   ).run();
   // D1 returns meta with changes count.
   return result.meta?.changes ?? 0;
