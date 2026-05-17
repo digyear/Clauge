@@ -1,44 +1,59 @@
 <script lang="ts">
-  import { cloudPlan, upgradeModalOpen } from '$lib/stores/cloud';
+  import { cloudConnected, cloudPlan, upgradeModalOpen } from '$lib/stores/cloud';
 
-  const visible = $derived($cloudPlan !== 'pro');
+  const isPro = $derived($cloudPlan === 'pro');
+  const visible = $derived($cloudConnected);
 </script>
 
 {#if visible}
   <button
     class="get-pro-badge"
-    onclick={(e) => { e.stopPropagation(); upgradeModalOpen.set(true); }}
-    title="Upgrade to Clauge Pro"
-    aria-label="Upgrade to Clauge Pro"
+    class:pro={isPro}
+    onclick={(e) => {
+      e.stopPropagation();
+      if (!isPro) upgradeModalOpen.set(true);
+    }}
+    title={isPro ? 'Clauge Pro active' : 'Upgrade to Clauge Pro'}
+    aria-label={isPro ? 'Clauge Pro active' : 'Upgrade to Clauge Pro'}
+    disabled={isPro}
   >
-    PRO
+    {isPro ? 'Pro' : 'Get Pro'}
   </button>
 {/if}
 
 <style>
   .get-pro-badge {
+    /* Floats above-and-right of the avatar.
+       Bottom-left corner of the badge touches the upper-right corner of the
+       avatar with a small inward overlap so it reads as "attached" without
+       covering the face. */
     position: absolute;
-    top: -4px;
-    right: -4px;
-    padding: 1px 5px;
-    border-radius: 6px;
+    bottom: 100%;
+    left: 100%;
+    margin-bottom: -5px;
+    margin-left: -10px;
+    padding: 2px 6px;
+    border-radius: 5px;
     border: 1px solid var(--n2, #0e0e0e);
-    background: linear-gradient(135deg, var(--acc, #4a90e2), color-mix(in srgb, var(--acc, #4a90e2) 60%, transparent));
+    background: linear-gradient(135deg, var(--acc, #c2185b), color-mix(in srgb, var(--acc, #c2185b) 65%, transparent));
     color: white;
     cursor: pointer;
     font-size: 9px;
     font-weight: 700;
     font-family: var(--ui);
     letter-spacing: 0.04em;
-    line-height: 1;
+    line-height: 1.2;
     white-space: nowrap;
-    z-index: 1;
-    pointer-events: auto;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    z-index: 2;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
     transition: transform 0.12s ease, box-shadow 0.12s ease;
   }
-  .get-pro-badge:hover {
+  .get-pro-badge:not(.pro):hover {
     transform: scale(1.08);
-    box-shadow: 0 2px 4px rgba(74, 144, 226, 0.5);
+    box-shadow: 0 2px 5px color-mix(in srgb, var(--acc, #c2185b) 55%, transparent);
+  }
+  .get-pro-badge.pro {
+    cursor: default;
+    background: color-mix(in srgb, var(--acc, #c2185b) 80%, transparent);
   }
 </style>
