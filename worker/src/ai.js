@@ -1,6 +1,6 @@
 import { loadCreditWeights, loadRateLimits } from "./kvconfig.js";
 import { buildUpstreamRequest, callUpstream, sanitizeChunk, sanitizeFinalUsage } from "./upstream.js";
-import { deductCredits, classifyOperation, computeChargeCredits, estimateTokens, maybeRefillLifetime } from "./credits.js";
+import { classifyOperation, computeChargeCredits, estimateTokens, reserveCredits, refundReservation } from "./credits.js";
 import { checkRpm, checkBurstBudget } from "./ratelimit.js";
 
 // UUID v4 shape: 8-4-4-4-12 hex, 3rd group starts with '4', 4th group with [89ab]
@@ -21,9 +21,6 @@ function errResponse(code, message, status) {
 
 export async function handleAiChat(request, env, userId) {
   if (!userId) return errResponse("UNAUTHORIZED", "sign in required", 401);
-  // Lifetime users: refill credits if their purchase anniversary just
-  // passed. No-op for recurring users (handled by Polar webhooks instead).
-  await maybeRefillLifetime(userId, env);
 
   let body;
   try {
@@ -59,23 +56,32 @@ export async function handleAiChat(request, env, userId) {
   const estCharge = computeChargeCredits(operation, estTokens, 0, weights);
 
   const userRow = await env.CLAUGE_DB.prepare(
-    "SELECT credit_allowance_per_cycle, credits_remaining, plan FROM users WHERE user_id = ?"
+    "SELECT credit_allowance_per_cycle, plan FROM users WHERE user_id = ?"
   )
     .bind(userId)
     .first();
   if (!userRow || userRow.plan !== "pro") {
     return errResponse("NOT_PRO", "Clauge AI requires Pro", 403);
   }
-  if (userRow.credits_remaining < estCharge) {
-    return errResponse("INSUFFICIENT_CREDITS", "out of Clauge AI credits this cycle", 402);
-  }
-  if (!(await checkBurstBudget(userId, userRow.credit_allowance_per_cycle, limits.burst_budget_fraction, limits.burst_window_seconds, estCharge, env))) {
-    return errResponse("BURST_LIMITED", "using credits too quickly, try in an hour", 429);
-  }
 
   if (!env.AI_UPSTREAM_MODEL) {
     return errResponse("AI_UNAVAILABLE", "Clauge AI is not configured", 503);
   }
+
+  // Atomic CAS reservation. Two concurrent requests at the same near-zero
+  // balance can't both pass — only one will get the credits, the other
+  // gets 402. The reservation is settled in `finally` (debit any delta,
+  // or refund overage if the upstream cost ended up below estimate).
+  const reserveAmount = Math.max(estCharge, weights.min_credits_per_call ?? 1);
+  if (!(await reserveCredits(userId, reserveAmount, env))) {
+    return errResponse("INSUFFICIENT_CREDITS", "out of Clauge AI credits this cycle", 402);
+  }
+
+  if (!(await checkBurstBudget(userId, userRow.credit_allowance_per_cycle, limits.burst_budget_fraction, limits.burst_window_seconds, estCharge, env))) {
+    await refundReservation(userId, reserveAmount, env);
+    return errResponse("BURST_LIMITED", "using credits too quickly, try in an hour", 429);
+  }
+
   const upReq = buildUpstreamRequest({
     messages: body.messages,
     model: env.AI_UPSTREAM_MODEL,
@@ -86,9 +92,11 @@ export async function handleAiChat(request, env, userId) {
   try {
     upResp = await callUpstream(upReq, env);
   } catch {
+    await refundReservation(userId, reserveAmount, env);
     return errResponse("AI_BUSY", "Clauge AI is busy, retry in a moment", 503);
   }
   if (!upResp.ok || !upResp.body) {
+    await refundReservation(userId, reserveAmount, env);
     return errResponse("AI_BUSY", "Clauge AI is busy, retry in a moment", 503);
   }
 
@@ -114,7 +122,10 @@ export async function handleAiChat(request, env, userId) {
           if (!frame.startsWith("data:")) continue;
           const dataStr = frame.slice(5).trim();
           if (dataStr === "[DONE]") {
-            await writer.write(enc.encode("data: [DONE]\n\n"));
+            // Don't forward upstream's [DONE] yet — the `finally` block
+            // emits `event: balance` and our own [DONE] AFTER credit
+            // settlement so the client sees `balance` before terminating
+            // its SSE parser on `[DONE]`.
             continue;
           }
           try {
@@ -150,32 +161,44 @@ export async function handleAiChat(request, env, userId) {
         charge = Math.max(charge, fallbackCharge);
       }
 
-      // 3. Cap charge to current balance so we always debit something rather
-      //    than refusing CAS and letting the user keep the free response.
-      const balRow = await env.CLAUGE_DB.prepare(
-        "SELECT credits_remaining FROM users WHERE user_id = ?"
-      ).bind(userId).first();
-      const cappedCharge = Math.min(charge, balRow?.credits_remaining ?? 0);
+      // 3. Settle against the reservation. delta>0 = need to debit more;
+      //    delta<0 = over-reserved, refund the difference.
+      const delta = charge - reserveAmount;
+      if (delta > 0) {
+        // Try to debit additional. If balance < delta (rare — only if a
+        // refund happened concurrently), cap to what's there.
+        const balRow = await env.CLAUGE_DB.prepare(
+          "SELECT credits_remaining FROM users WHERE user_id = ?"
+        ).bind(userId).first();
+        const cappedDelta = Math.min(delta, balRow?.credits_remaining ?? 0);
+        if (cappedDelta > 0) {
+          await env.CLAUGE_DB.prepare(
+            `UPDATE users SET
+               credits_remaining = credits_remaining - ?,
+               updated_at = CURRENT_TIMESTAMP
+             WHERE user_id = ? AND credits_remaining >= ?`
+          ).bind(cappedDelta, userId, cappedDelta).run();
+        }
+        charge = reserveAmount + cappedDelta;
+      } else if (delta < 0) {
+        await refundReservation(userId, -delta, env);
+      }
 
-      // 4. Deduct (atomic CAS). With the cap, this should always succeed
-      //    unless balance changed concurrently to 0.
-      // `mode` is sent by the desktop's stream_openai when provider === clauge.
-      // Stored alongside the deduction so the Clauge AI tab can render a
-      // per-mode credits breakdown.
+      // 4. Log the settled usage. UNIQUE on (user_id, request_id) so
+      //    a hypothetical replay race that slipped past the SELECT-replay
+      //    check at request entry doesn't double-log.
+      //    `mode` is sent by the desktop's stream_openai when provider === clauge.
       const mode = typeof body.mode === "string" ? body.mode : null;
-      await deductCredits(
-        userId,
-        {
-          operation,
-          clauge_credits: cappedCharge,
-          cost_usd_micros: finalUsage.cost_usd_micros,
-          request_id: body.request_id,
-          mode,
-        },
-        env
-      );
+      await env.CLAUGE_DB.prepare(
+        `INSERT OR IGNORE INTO credit_usage_log
+           (user_id, operation, clauge_credits, cost_usd_micros, request_id, mode)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(userId, operation, charge, finalUsage.cost_usd_micros, body.request_id, mode).run();
 
       // 5. Emit live balance event so the client updates without polling.
+      //    MUST be written BEFORE [DONE]: SSE clients (incl. our Rust
+      //    `stream_openai`) break their parser loop on `data: [DONE]`,
+      //    so anything after that terminator is dropped on the floor.
       const after = await env.CLAUGE_DB.prepare(
         "SELECT credits_remaining FROM users WHERE user_id = ?"
       ).bind(userId).first();
@@ -183,6 +206,7 @@ export async function handleAiChat(request, env, userId) {
         await writer.write(enc.encode(
           `event: balance\ndata: ${JSON.stringify({ remaining: after?.credits_remaining ?? 0 })}\n\n`
         ));
+        await writer.write(enc.encode("data: [DONE]\n\n"));
       } catch {
         // writer may already be closed if stream errored — swallow
       }
@@ -196,7 +220,6 @@ export async function handleAiChat(request, env, userId) {
 
 export async function handleAiBalance(env, userId) {
   if (!userId) return errResponse("UNAUTHORIZED", "sign in required", 401);
-  await maybeRefillLifetime(userId, env);
   const row = await env.CLAUGE_DB.prepare(
     "SELECT credits_remaining, credit_allowance_per_cycle, current_period_end FROM users WHERE user_id = ?"
   )

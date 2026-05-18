@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:test";
-import { precheckBalance, deductCredits, classifyOperation, computeChargeCredits } from "../src/credits.js";
+import { precheckBalance, deductCredits, classifyOperation, computeChargeCredits, reserveCredits, refundReservation } from "../src/credits.js";
 import { seedUser } from "./setup.js";
 
 describe("classifyOperation", () => {
@@ -115,5 +115,91 @@ describe("deductCredits (compare-and-swap)", () => {
     const row = await env.CLAUGE_DB.prepare("SELECT credits_remaining FROM users WHERE user_id=?")
       .bind(userId).first();
     expect(row.credits_remaining).toBe(95); // only deducted once
+  });
+});
+
+describe("reserveCredits (atomic CAS)", () => {
+  beforeEach(async () => {
+    await env.CLAUGE_DB.prepare("DELETE FROM users").run();
+  });
+
+  it("debits balance on success", async () => {
+    const userId = await seedUser({ slug: "u_res1" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', credits_remaining=10 WHERE user_id=?"
+    ).bind(userId).run();
+    expect(await reserveCredits(userId, 3, env)).toBe(true);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT credits_remaining FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.credits_remaining).toBe(7);
+  });
+
+  it("returns false (no debit) when balance insufficient", async () => {
+    const userId = await seedUser({ slug: "u_res2" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', credits_remaining=2 WHERE user_id=?"
+    ).bind(userId).run();
+    expect(await reserveCredits(userId, 5, env)).toBe(false);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT credits_remaining FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.credits_remaining).toBe(2);
+  });
+
+  it("refuses non-pro users (free tier can't reserve)", async () => {
+    const userId = await seedUser({ slug: "u_res3" });
+    // plan defaults to 'free'
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET credits_remaining=100 WHERE user_id=?"
+    ).bind(userId).run();
+    expect(await reserveCredits(userId, 1, env)).toBe(false);
+  });
+
+  it("two sequential reservations of 1 at balance=1: first wins, second fails", async () => {
+    // Closes the free-response-on-near-zero-balance race. Two concurrent
+    // requests both passing a read-only precheck would each get a free
+    // response; with CAS, only one wins.
+    const userId = await seedUser({ slug: "u_res_race" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', credits_remaining=1 WHERE user_id=?"
+    ).bind(userId).run();
+    expect(await reserveCredits(userId, 1, env)).toBe(true);
+    expect(await reserveCredits(userId, 1, env)).toBe(false);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT credits_remaining FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.credits_remaining).toBe(0);
+  });
+});
+
+describe("refundReservation", () => {
+  beforeEach(async () => {
+    await env.CLAUGE_DB.prepare("DELETE FROM users").run();
+  });
+
+  it("restores the reserved amount", async () => {
+    const userId = await seedUser({ slug: "u_refund1" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', credits_remaining=5 WHERE user_id=?"
+    ).bind(userId).run();
+    await refundReservation(userId, 3, env);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT credits_remaining FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.credits_remaining).toBe(8);
+  });
+
+  it("is a no-op for non-positive amounts", async () => {
+    const userId = await seedUser({ slug: "u_refund2" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', credits_remaining=5 WHERE user_id=?"
+    ).bind(userId).run();
+    await refundReservation(userId, 0, env);
+    await refundReservation(userId, -2, env);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT credits_remaining FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.credits_remaining).toBe(5);
   });
 });

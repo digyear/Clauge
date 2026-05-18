@@ -649,16 +649,19 @@
                                 &mdash; managed AI assistance, no API key setup
                             </li>
                             <li data-show="monthly">
-                                <i class="fa-solid fa-check"></i> 1,000 credits
-                                each month
+                                <i class="fa-solid fa-check"></i>
+                                <span data-credits-key="monthly">1,000</span>
+                                credits each month
                             </li>
                             <li data-show="yearly">
-                                <i class="fa-solid fa-check"></i> 12,000 credits
-                                up front, refilled yearly
+                                <i class="fa-solid fa-check"></i>
+                                <span data-credits-key="yearly">12,000</span>
+                                credits up front, refilled yearly
                             </li>
                             <li data-show="lifetime">
-                                <i class="fa-solid fa-check"></i> 20,000 credits
-                                a year, refilled on every anniversary
+                                <i class="fa-solid fa-check"></i>
+                                <span data-credits-key="lifetime">20,000</span>
+                                credits &mdash; one-time grant
                             </li>
                             <li>
                                 <i class="fa-solid fa-check"></i> Unlimited
@@ -901,6 +904,19 @@
                             if (l.discount)
                                 write("lifetime-strike", "$" + fmt(l.price_usd));
                         }
+
+                        // Per-plan credit grants — single source of truth is
+                        // billing_pricing.credits in the worker's D1. Inline
+                        // numbers above are the fallback for cached / offline.
+                        data.plans.forEach(function (p) {
+                            if (typeof p.credits !== "number") return;
+                            var formatted = p.credits.toLocaleString();
+                            document
+                                .querySelectorAll('[data-credits-key="' + p.id + '"]')
+                                .forEach(function (el) {
+                                    el.textContent = formatted;
+                                });
+                        });
                     })
                     .catch(function () {
                         // Network blip — inline fallbacks stay visible.

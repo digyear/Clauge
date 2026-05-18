@@ -8,13 +8,24 @@ function resolvePolarCustomerId(eventData) {
   return d.customer_id ?? d.customer?.id ?? null;
 }
 
-// Derive billing period length in months from period bounds (~30d ≈ 1 month).
-// Used to scale credit grant: monthly = 1× allowance, yearly = 12× allowance.
-function periodMonthsFromBounds(startIso, endIso) {
-  if (!startIso || !endIso) return 1;
-  const days = (Date.parse(endIso) - Date.parse(startIso)) / 86_400_000;
-  if (!Number.isFinite(days) || days <= 0) return 1;
-  return days >= 60 ? 12 : 1;
+// Polar webhook payloads expose the product id under several shapes depending
+// on event type and expansion. Returns the product id (string) or null.
+function resolveProductId(eventData) {
+  const d = eventData ?? {};
+  return d.product_id ?? d.product?.id ?? d.subscription?.product_id ?? d.order?.product_id ?? null;
+}
+
+// Plan credit allowance lookup — single source of truth is billing_pricing.
+// Operator changes via D1 console; takes effect on the user's NEXT order.paid
+// (renewal). Returns null if the row is missing or has 0 credits configured.
+async function getPlanCredits(planId, env) {
+  if (!planId) return null;
+  const row = await env.CLAUGE_DB.prepare(
+    "SELECT credits FROM billing_pricing WHERE plan_id = ?"
+  ).bind(planId).first();
+  if (!row) return null;
+  const n = Number(row.credits);
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 // Per spec §10b: webhook signature verification ALWAYS comes first.
@@ -113,12 +124,10 @@ async function dispatch(event, userId, env) {
   }
 }
 
-// Per-cycle credit allowance lookup. Today stored per-user (set on
-// subscription.created). Spec §13: tunable via D1, not hardcoded.
-// For initial provisioning, we read from KV `pro:default_allowance`
-// (operator sets), defaulting to 1000 if unset.
-
-async function defaultCreditAllowance(env) {
+// Fallback when product_id can't be resolved to a known plan (env-var drift,
+// new product type without a worker update, etc.). Reads from a KV key the
+// operator can set; defaults to 1000.
+async function fallbackAllowance(env) {
   const raw = await env.CLAUGE_KV.get("pro:default_allowance");
   const n = raw ? Number(raw) : NaN;
   return Number.isInteger(n) && n > 0 ? n : 1000;
@@ -127,6 +136,8 @@ async function defaultCreditAllowance(env) {
 async function handleSubscriptionCreated(event, userId, env) {
   const d = event.data;
   const polarCustomerId = resolvePolarCustomerId(d);
+  const planId = productIdToPlan(resolveProductId(d), env);
+  const allowance = (await getPlanCredits(planId, env)) ?? (await fallbackAllowance(env));
   await env.CLAUGE_DB.prepare(
     `UPDATE users SET
        plan = 'pro',
@@ -148,7 +159,7 @@ async function handleSubscriptionCreated(event, userId, env) {
       d.current_period_end,
       d.id,
       polarCustomerId,
-      await defaultCreditAllowance(env),
+      allowance,
       userId
     )
     .run();
@@ -237,31 +248,40 @@ async function revokeUser(userId, terminalStatus, env) {
     .run();
 }
 
-// Lifetime annual credit allowance — refilled on each purchase anniversary.
-// More generous than yearly (12k) to justify the higher one-time price.
-const LIFETIME_ANNUAL_CREDITS = 20000;
-
 async function handleOrderPaid(event, userId, env) {
   const d = event.data;
-  // Branch on the product id to detect lifetime purchases. Recurring
-  // (monthly/yearly) takes the existing path — period bounds come from
-  // the subscription.created/updated event that fired BEFORE this one.
-  const purchasedPlan = productIdToPlan(d.product_id, env);
+  // Branch on the product id to detect lifetime purchases.
+  const purchasedPlan = productIdToPlan(resolveProductId(d), env);
   if (purchasedPlan === "lifetime") {
     return handleLifetimeOrderPaid(d, userId, env);
   }
 
-  // Existing recurring path: read authoritative period bounds set by the
-  // prior subscription event, then grant credits = allowance × months.
   const current = await env.CLAUGE_DB.prepare(
-    "SELECT credit_allowance_per_cycle, current_period_start, current_period_end FROM users WHERE user_id = ?"
+    "SELECT is_lifetime, credit_allowance_per_cycle, last_granted_order_id FROM users WHERE user_id = ?"
   )
     .bind(userId)
     .first();
   if (!current) return;
-  const allowance = current.credit_allowance_per_cycle || (await defaultCreditAllowance(env));
-  const months = periodMonthsFromBounds(current.current_period_start, current.current_period_end);
-  const grantTotal = allowance * months;
+
+  // Never let the recurring path touch a lifetime user. productIdToPlan
+  // returns null on env-var drift (POLAR_PRODUCT_LIFETIME rotated/typo'd);
+  // without this guard a real lifetime order.paid would fall through here
+  // and overwrite the 20k bucket with a tiny recurring grant.
+  if (current.is_lifetime) return;
+
+  // Order-ID idempotency. Polar retries up to 10× with exponential backoff;
+  // each retry has a fresh webhook-id (which our outer dedup catches) but
+  // legitimate re-deliveries with a NEW webhook-id can still arrive
+  // (operator-triggered resend, recovery after our 5xx, etc.). Match on
+  // the order's own id so we grant exactly once per business event.
+  if (d.id && current.last_granted_order_id === d.id) return;
+
+  // Plan credit allowance comes from billing_pricing (operator-tunable in D1).
+  // Falls back to the per-user cached allowance, then to a KV default — so a
+  // missing/zero row never starves a paying user.
+  const fromDb = await getPlanCredits(purchasedPlan, env);
+  const grantTotal = fromDb ?? (current.credit_allowance_per_cycle || (await fallbackAllowance(env)));
+
   const polarCustomerId = resolvePolarCustomerId(d);
   await env.CLAUGE_DB.prepare(
     `UPDATE users SET
@@ -271,19 +291,42 @@ async function handleOrderPaid(event, userId, env) {
        current_period_start = COALESCE(?, current_period_start),
        current_period_end = COALESCE(?, current_period_end),
        polar_customer_id = COALESCE(?, polar_customer_id),
+       credit_allowance_per_cycle = ?,
        credits_remaining = ?,
+       last_granted_order_id = ?,
        updated_at = CURRENT_TIMESTAMP
      WHERE user_id = ?`
   )
-    .bind(d.current_period_start ?? null, d.current_period_end ?? null, polarCustomerId, grantTotal, userId)
+    .bind(
+      d.current_period_start ?? null,
+      d.current_period_end ?? null,
+      polarCustomerId,
+      grantTotal,
+      grantTotal,
+      d.id ?? null,
+      userId,
+    )
     .run();
 }
 
-// Lifetime is a one-time order — no Polar subscription object exists for
-// it, so we synthesize the period bounds ourselves (now → now+1yr) and
-// the lazy-refill code in ai.js advances them on each anniversary.
-// Credit allowance + initial balance both seeded from LIFETIME_ANNUAL_CREDITS.
+// Lifetime is a one-time order: grant 20k credits, flag is_lifetime=1,
+// stamp purchase date on current_period_start (for "purchased on" display),
+// and leave current_period_end NULL — there's no renewal. When the bucket
+// empties, the user is out of credits until they top-up.
 async function handleLifetimeOrderPaid(orderData, userId, env) {
+  // Same order-ID idempotency as the recurring path. Without this, a
+  // re-delivered order.paid would re-grant lifetime credits on top of
+  // whatever the user has spent — far worse than the recurring case.
+  const existing = await env.CLAUGE_DB.prepare(
+    "SELECT polar_lifetime_order_id FROM users WHERE user_id = ?"
+  ).bind(userId).first();
+  if (existing?.polar_lifetime_order_id === orderData.id) return;
+
+  // Lifetime grant amount comes from billing_pricing (operator-tunable).
+  // Falls back to the KV default if the row is misconfigured — better to
+  // grant a smaller bucket than to leave a paying user at 0.
+  const grant = (await getPlanCredits("lifetime", env)) ?? (await fallbackAllowance(env));
+
   const polarCustomerId = resolvePolarCustomerId(orderData);
   await env.CLAUGE_DB.prepare(
     `UPDATE users SET
@@ -293,7 +336,7 @@ async function handleLifetimeOrderPaid(orderData, userId, env) {
        cancel_at_period_end = 0,
        past_due_started_at = NULL,
        current_period_start = CURRENT_TIMESTAMP,
-       current_period_end = datetime(CURRENT_TIMESTAMP, '+1 year'),
+       current_period_end = NULL,
        credit_allowance_per_cycle = ?,
        credits_remaining = ?,
        polar_customer_id = COALESCE(?, polar_customer_id),
@@ -302,8 +345,8 @@ async function handleLifetimeOrderPaid(orderData, userId, env) {
      WHERE user_id = ?`
   )
     .bind(
-      LIFETIME_ANNUAL_CREDITS,
-      LIFETIME_ANNUAL_CREDITS,
+      grant,
+      grant,
       polarCustomerId,
       orderData.id,
       userId,
@@ -369,7 +412,7 @@ export async function handleCreatePortal(env, userId) {
 export async function handleGetPricing(env) {
   const [pricingResult, discountResult] = await Promise.all([
     env.CLAUGE_DB.prepare(
-      "SELECT plan_id AS id, price_usd FROM billing_pricing ORDER BY price_usd ASC"
+      "SELECT plan_id AS id, price_usd, credits FROM billing_pricing ORDER BY price_usd ASC"
     ).all(),
     env.CLAUGE_DB.prepare(
       "SELECT plan_id, percent, code FROM billing_discount"
@@ -384,6 +427,7 @@ export async function handleGetPricing(env) {
   const plans = pricingResult.results.map((p) => ({
     id: p.id,
     price_usd: p.price_usd,
+    credits: p.credits,
     discount: discountsByPlan.get(p.id) ?? null,
   }));
 
@@ -416,11 +460,19 @@ export async function handleCreateCheckout(request, env, userId) {
     .bind(userId)
     .first();
 
+  // success_url carries `plan` so the desktop deep-link handler can show the
+  // right "Welcome to Pro Monthly/Yearly/Lifetime" title immediately, even
+  // if the Polar `order.paid` webhook hasn't reached D1 yet by the time the
+  // user returns. Falls back to live cloudSub once /api/auth/me catches up.
   const req = {
     products: [productId],
     external_customer_id: String(userId),
     customer_email: userRow?.primary_email ?? undefined,
-    success_url: "https://clauge.in/upgrade-success?ref=" + encodeURIComponent(String(userId)),
+    success_url:
+      "https://clauge.in/upgrade-success?ref=" +
+      encodeURIComponent(String(userId)) +
+      "&plan=" +
+      encodeURIComponent(body.plan),
   };
   const apiBase = env.POLAR_API_BASE ?? "https://api.polar.sh";
   const resp = await fetch(`${apiBase}/v1/checkouts/`, {

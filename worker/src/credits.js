@@ -3,38 +3,6 @@
 //   - Per-(user_id, request_id) idempotency (DB UNIQUE constraint)
 //   - DB CHECK (credits_remaining >= 0) is the last line of defense
 
-// Lifetime users have no recurring billing event to drive credit refills,
-// so we refill lazily — every /api/ai/{balance,chat} call checks if the
-// purchase anniversary has passed and, if so, advances the period bounds
-// and resets credits_remaining to the allowance. No-op for non-lifetime
-// users (subscription.created + order.paid webhooks do the work for them).
-export async function maybeRefillLifetime(userId, env) {
-  const row = await env.CLAUGE_DB.prepare(
-    `SELECT is_lifetime, current_period_end, credit_allowance_per_cycle
-       FROM users WHERE user_id = ?`
-  )
-    .bind(userId)
-    .first();
-  if (!row || !row.is_lifetime) return;
-  if (!row.current_period_end) return;
-  if (Date.parse(row.current_period_end) > Date.now()) return;
-  // The temporal guard (current_period_end <= now) makes this idempotent:
-  // a concurrent request firing in the same window will find the period
-  // already advanced and the UPDATE will no-op — preventing a double refill.
-  await env.CLAUGE_DB.prepare(
-    `UPDATE users SET
-       current_period_start = CURRENT_TIMESTAMP,
-       current_period_end = datetime(CURRENT_TIMESTAMP, '+1 year'),
-       credits_remaining = credit_allowance_per_cycle,
-       updated_at = CURRENT_TIMESTAMP
-     WHERE user_id = ?
-       AND is_lifetime = 1
-       AND current_period_end <= CURRENT_TIMESTAMP`
-  )
-    .bind(userId)
-    .run();
-}
-
 export function classifyOperation(reqBody) {
   if (Array.isArray(reqBody?.tools) && reqBody.tools.length > 0) {
     return "tool_call_round";
@@ -63,6 +31,39 @@ export async function precheckBalance(userId, estimate, env) {
     .first();
   if (!row) return false;
   return row.credits_remaining >= estimate;
+}
+
+// Atomic compare-and-swap reservation. Used BEFORE streaming so two
+// concurrent requests can't both pass a read-only precheck and then
+// each stream a paid-for response with the same credits. On success,
+// the user's balance is debited by `amount`; the caller must settle
+// the actual charge in `finally` (debit any delta, or refund if the
+// reservation was over-estimated).
+export async function reserveCredits(userId, amount, env) {
+  const upd = await env.CLAUGE_DB.prepare(
+    `UPDATE users SET
+       credits_remaining = credits_remaining - ?,
+       updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = ? AND plan = 'pro' AND credits_remaining >= ?`
+  )
+    .bind(amount, userId, amount)
+    .run();
+  return (upd.meta?.changes ?? 0) > 0;
+}
+
+// Refund a previously-reserved (but not yet settled) amount. Used when a
+// pre-stream step fails after reservation (burst limit, upstream 5xx, etc.)
+// or when settle-time charge ends up below the reservation.
+export async function refundReservation(userId, amount, env) {
+  if (amount <= 0) return;
+  await env.CLAUGE_DB.prepare(
+    `UPDATE users SET
+       credits_remaining = credits_remaining + ?,
+       updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = ?`
+  )
+    .bind(amount, userId)
+    .run();
 }
 
 // Returns true on success (deducted or already-deducted-via-idempotency),

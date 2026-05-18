@@ -142,6 +142,118 @@ describe("handleAiChat — live balance SSE event", () => {
   });
 });
 
+describe("handleAiChat — reservation refund on pre-stream failure", () => {
+  it("refunds the reserved credits when upstream returns non-2xx", async () => {
+    const userId = await seedUser({ slug: "u_refund_5xx" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', subscription_status='active', credit_allowance_per_cycle=1000, credits_remaining=50 WHERE user_id=?"
+    ).bind(userId).run();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      return new Response("upstream down", { status: 503 });
+    });
+    try {
+      const r = await handleAiChat(
+        new Request("https://x", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "hi" }],
+            request_id: "55555555-5555-4555-8555-555555555555",
+          }),
+        }),
+        env, userId
+      );
+      expect(r.status).toBe(503);
+      const row = await env.CLAUGE_DB.prepare(
+        "SELECT credits_remaining FROM users WHERE user_id=?"
+      ).bind(userId).first();
+      // Reservation must be refunded — balance unchanged.
+      expect(row.credits_remaining).toBe(50);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("refunds when upstream call throws", async () => {
+    const userId = await seedUser({ slug: "u_refund_throw" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', subscription_status='active', credit_allowance_per_cycle=1000, credits_remaining=25 WHERE user_id=?"
+    ).bind(userId).run();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("network error");
+    });
+    try {
+      const r = await handleAiChat(
+        new Request("https://x", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "hi" }],
+            request_id: "66666666-6666-4666-8666-666666666666",
+          }),
+        }),
+        env, userId
+      );
+      expect(r.status).toBe(503);
+      const row = await env.CLAUGE_DB.prepare(
+        "SELECT credits_remaining FROM users WHERE user_id=?"
+      ).bind(userId).first();
+      expect(row.credits_remaining).toBe(25);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+});
+
+describe("handleAiChat — concurrent depletion (free-response race)", () => {
+  it("second request gets 402 when first reserved the last credit", async () => {
+    const userId = await seedUser({ slug: "u_race" });
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET plan='pro', subscription_status='active', credit_allowance_per_cycle=1000, credits_remaining=1 WHERE user_id=?"
+    ).bind(userId).run();
+    // Mock upstream that hangs forever so the first request stays mid-stream
+    // and the reservation is not yet settled.
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      return new Response(
+        new ReadableStream({ start() { /* never closes */ } }),
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      );
+    });
+    try {
+      // Fire the first request (don't await — it'll hang on the stream).
+      const first = handleAiChat(
+        new Request("https://x", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "a" }],
+            request_id: "77777777-7777-4777-8777-777777777777",
+          }),
+        }),
+        env, userId
+      );
+      // Let the first request reserve its credit.
+      await new Promise((r) => setTimeout(r, 30));
+      // Second request — same user, balance now 0 → must 402, not stream.
+      const second = await handleAiChat(
+        new Request("https://x", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "b" }],
+            request_id: "88888888-8888-4888-8888-888888888888",
+          }),
+        }),
+        env, userId
+      );
+      expect(second.status).toBe(402);
+      // We don't await `first` — the hanging stream is intentional for the test.
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+});
+
 describe("handleAiChat — replay defense", () => {
   it("rejects 409 when request_id was previously used", async () => {
     const userId = await seedUser({ slug: "u_replay" });

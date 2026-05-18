@@ -92,7 +92,7 @@ describe("handleBillingWebhook router", () => {
         current_period_start: new Date().toISOString(),
         current_period_end: new Date(Date.now() + 30 * 86400_000).toISOString(),
         external_customer_id: String(userId),
-        product: { prices: [{ id: env.POLAR_PRODUCT_MONTHLY }] },
+        product_id: env.POLAR_PRODUCT_MONTHLY,
         cancel_at_period_end: false,
       },
     });
@@ -107,7 +107,7 @@ describe("handleBillingWebhook router", () => {
 });
 
 describe("subscription.created handler", () => {
-  it("flips plan to pro, sets period bounds, grants credits", async () => {
+  it("flips plan to pro, sets period bounds, sets monthly allowance from billing_pricing", async () => {
     const userId = await seedUser({ slug: "u_created" });
     const body = JSON.stringify({
       type: "subscription.created",
@@ -118,7 +118,7 @@ describe("subscription.created handler", () => {
         current_period_end: "2026-06-16T00:00:00Z",
         cancel_at_period_end: false,
         external_customer_id: String(userId),
-        product: { prices: [{ id: env.POLAR_PRODUCT_MONTHLY }] },
+        product_id: env.POLAR_PRODUCT_MONTHLY,
       },
     });
     await postWebhook(body);
@@ -130,9 +130,30 @@ describe("subscription.created handler", () => {
     expect(row.plan).toBe("pro");
     expect(row.subscription_status).toBe("active");
     expect(row.polar_subscription_id).toBe("sub_abc");
-    expect(row.credit_allowance_per_cycle).toBeGreaterThan(0);
+    expect(row.credit_allowance_per_cycle).toBe(1000); // monthly seed
     expect(row.credits_remaining).toBe(0);
     expect(row.current_period_end).toBe("2026-06-16T00:00:00Z");
+  });
+
+  it("sets yearly allowance (12000) for a yearly subscription", async () => {
+    const userId = await seedUser({ slug: "u_created_yearly" });
+    const body = JSON.stringify({
+      type: "subscription.created",
+      data: {
+        id: "sub_yearly",
+        status: "active",
+        current_period_start: "2026-05-16T00:00:00Z",
+        current_period_end: "2027-05-16T00:00:00Z",
+        cancel_at_period_end: false,
+        external_customer_id: String(userId),
+        product_id: env.POLAR_PRODUCT_YEARLY,
+      },
+    });
+    await postWebhook(body);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT credit_allowance_per_cycle FROM users WHERE user_id = ?"
+    ).bind(userId).first();
+    expect(row.credit_allowance_per_cycle).toBe(12000);
   });
 });
 
@@ -250,8 +271,8 @@ describe("subscription.updated unpaid handler", () => {
   });
 });
 
-describe("order.paid handler", () => {
-  it("resets credits on a new billing period", async () => {
+describe("order.paid handler — monthly", () => {
+  it("grants billing_pricing.monthly.credits on a new billing period", async () => {
     const userId = await seedUser({ slug: "u_paid" });
     await env.CLAUGE_DB.prepare(
       `UPDATE users SET plan='pro', subscription_status='active',
@@ -269,6 +290,7 @@ describe("order.paid handler", () => {
         id: "ord_p1",
         status: "paid",
         subscription_id: "sub_p1",
+        product_id: env.POLAR_PRODUCT_MONTHLY,
         billing_reason: "subscription_cycle",
         current_period_start: "2026-06-16T00:00:00Z",
         current_period_end: "2026-07-16T00:00:00Z",
@@ -277,25 +299,25 @@ describe("order.paid handler", () => {
     });
     await postWebhook(body);
     const row = await env.CLAUGE_DB.prepare(
-      "SELECT credits_remaining, current_period_start FROM users WHERE user_id=?"
+      "SELECT credits_remaining, credit_allowance_per_cycle, current_period_start FROM users WHERE user_id=?"
     )
       .bind(userId)
       .first();
     expect(row.credits_remaining).toBe(1000);
+    expect(row.credit_allowance_per_cycle).toBe(1000);
     expect(row.current_period_start).toBe("2026-06-16T00:00:00Z");
   });
-
 });
 
-describe("order.paid handler — yearly subscription", () => {
-  it("grants allowance × 12 for yearly billing period", async () => {
+describe("order.paid handler — yearly", () => {
+  it("grants billing_pricing.yearly.credits (12000) when product_id is yearly", async () => {
     const userId = await seedUser({ slug: "u_yearly" });
     await env.CLAUGE_DB.prepare(
       `UPDATE users SET plan='pro', subscription_status='active',
          polar_subscription_id='sub_y1',
          current_period_start='2026-05-16T00:00:00Z',
          current_period_end='2027-05-16T00:00:00Z',
-         credit_allowance_per_cycle=1000, credits_remaining=42
+         credit_allowance_per_cycle=12000, credits_remaining=42
        WHERE user_id=?`
     )
       .bind(userId)
@@ -305,6 +327,7 @@ describe("order.paid handler — yearly subscription", () => {
       data: {
         id: "ord_y1",
         subscription_id: "sub_y1",
+        product_id: env.POLAR_PRODUCT_YEARLY,
         current_period_start: "2027-05-16T00:00:00Z",
         current_period_end: "2028-05-16T00:00:00Z",
         external_customer_id: String(userId),
@@ -312,68 +335,75 @@ describe("order.paid handler — yearly subscription", () => {
     });
     await postWebhook(body);
     const row = await env.CLAUGE_DB.prepare(
-      "SELECT credits_remaining FROM users WHERE user_id=?"
+      "SELECT credits_remaining, credit_allowance_per_cycle FROM users WHERE user_id=?"
     ).bind(userId).first();
     expect(row.credits_remaining).toBe(12000);
+    expect(row.credit_allowance_per_cycle).toBe(12000);
   });
 });
 
-describe("order.paid handler — derives period from user row not payload", () => {
-  it("grants 12x for yearly even when order payload omits period bounds", async () => {
-    const userId = await seedUser({ slug: "u_yearly_no_bounds" });
-    // Simulate state after subscription.created already fired and set bounds:
+describe("order.paid handler — operator-tunable credits", () => {
+  it("reflects an UPDATE billing_pricing change on the next order.paid", async () => {
+    const userId = await seedUser({ slug: "u_tunable" });
     await env.CLAUGE_DB.prepare(
       `UPDATE users SET plan='pro', subscription_status='active',
-         polar_subscription_id='sub_y2',
-         current_period_start='2026-05-16T00:00:00Z',
-         current_period_end='2027-05-16T00:00:00Z',
-         credit_allowance_per_cycle=1000, credits_remaining=42
+         polar_subscription_id='sub_t1', credit_allowance_per_cycle=1000, credits_remaining=0
        WHERE user_id=?`
-    )
-      .bind(userId)
-      .run();
-    // order.paid payload WITHOUT current_period_start/current_period_end:
-    const body = JSON.stringify({
-      type: "order.paid",
-      data: {
-        id: "ord_y2",
-        subscription_id: "sub_y2",
-        external_customer_id: String(userId),
-        // NOTE: no current_period_start or current_period_end here
-      },
-    });
-    await postWebhook(body);
-    const row = await env.CLAUGE_DB.prepare(
-      "SELECT credits_remaining FROM users WHERE user_id=?"
-    ).bind(userId).first();
-    expect(row.credits_remaining).toBe(12000);
-  });
+    ).bind(userId).run();
 
-  it("grants 1x for monthly even when order payload omits period bounds", async () => {
-    const userId = await seedUser({ slug: "u_monthly_no_bounds" });
+    // Operator bumps monthly credits in D1.
     await env.CLAUGE_DB.prepare(
-      `UPDATE users SET plan='pro', subscription_status='active',
-         polar_subscription_id='sub_m2',
-         current_period_start='2026-05-16T00:00:00Z',
-         current_period_end='2026-06-16T00:00:00Z',
-         credit_allowance_per_cycle=1000, credits_remaining=0
-       WHERE user_id=?`
-    )
-      .bind(userId)
-      .run();
+      "UPDATE billing_pricing SET credits = 2500 WHERE plan_id = 'monthly'"
+    ).run();
+
     const body = JSON.stringify({
       type: "order.paid",
       data: {
-        id: "ord_m2",
-        subscription_id: "sub_m2",
+        id: "ord_t1",
+        subscription_id: "sub_t1",
+        product_id: env.POLAR_PRODUCT_MONTHLY,
         external_customer_id: String(userId),
+      },
+    });
+    await postWebhook(body);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT credits_remaining, credit_allowance_per_cycle FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.credits_remaining).toBe(2500);
+    expect(row.credit_allowance_per_cycle).toBe(2500);
+
+    // Reset for other tests.
+    await env.CLAUGE_DB.prepare(
+      "UPDATE billing_pricing SET credits = 1000 WHERE plan_id = 'monthly'"
+    ).run();
+  });
+});
+
+describe("order.paid handler — product_id absent", () => {
+  it("falls back to cached credit_allowance_per_cycle when product_id is missing", async () => {
+    // This shouldn't happen in production (Polar always sends product_id),
+    // but defensive: a misshapen payload must not zero a user out.
+    const userId = await seedUser({ slug: "u_no_product" });
+    await env.CLAUGE_DB.prepare(
+      `UPDATE users SET plan='pro', subscription_status='active',
+         polar_subscription_id='sub_nopr',
+         credit_allowance_per_cycle=12000, credits_remaining=0
+       WHERE user_id=?`
+    ).bind(userId).run();
+    const body = JSON.stringify({
+      type: "order.paid",
+      data: {
+        id: "ord_nopr",
+        subscription_id: "sub_nopr",
+        external_customer_id: String(userId),
+        // product_id missing
       },
     });
     await postWebhook(body);
     const row = await env.CLAUGE_DB.prepare(
       "SELECT credits_remaining FROM users WHERE user_id=?"
     ).bind(userId).first();
-    expect(row.credits_remaining).toBe(1000);
+    expect(row.credits_remaining).toBe(12000); // from cached allowance
   });
 });
 
@@ -381,7 +411,7 @@ describe("initial purchase flow (sub.created + order.paid)", () => {
   it("grants credits exactly once across both events", async () => {
     const userId = await seedUser({ slug: "u_initial" });
 
-    // 1. subscription.created fires (no credits granted)
+    // 1. subscription.created fires (no credits granted, but allowance is set)
     const subBody = JSON.stringify({
       type: "subscription.created",
       data: {
@@ -391,7 +421,7 @@ describe("initial purchase flow (sub.created + order.paid)", () => {
         current_period_start: "2026-05-16T00:00:00Z",
         current_period_end: "2026-06-16T00:00:00Z",
         external_customer_id: String(userId),
-        product: { prices: [{ id: env.POLAR_PRODUCT_MONTHLY }] },
+        product_id: env.POLAR_PRODUCT_MONTHLY,
       },
     });
     await postWebhook(subBody);
@@ -402,12 +432,13 @@ describe("initial purchase flow (sub.created + order.paid)", () => {
     expect(row.credit_allowance_per_cycle).toBe(1000);
     expect(row.credits_remaining).toBe(0); // not yet granted
 
-    // 2. order.paid fires (grants 1× allowance for monthly)
+    // 2. order.paid fires (grants monthly credits)
     const ordBody = JSON.stringify({
       type: "order.paid",
       data: {
         id: "ord_init",
         subscription_id: "sub_init",
+        product_id: env.POLAR_PRODUCT_MONTHLY,
         current_period_start: "2026-05-16T00:00:00Z",
         current_period_end: "2026-06-16T00:00:00Z",
         external_customer_id: String(userId),
@@ -507,18 +538,20 @@ describe("GET /api/billing/pricing", () => {
     await env.CLAUGE_DB.prepare("DELETE FROM billing_discount").run();
   });
 
-  it("returns schema_version=1 and seeded plans with discount=null", async () => {
+  it("returns schema_version=1 and seeded plans with credits + discount=null", async () => {
     const { handleGetPricing } = await import("../src/billing.js");
     const r = await handleGetPricing(env);
     expect(r.status).toBe(200);
     expect(r.headers.get("cache-control")).toContain("max-age=300");
     const body = await r.json();
     expect(body.schema_version).toBe(1);
-    expect(body.plans.map((p) => p.id).sort()).toEqual(["monthly", "yearly"]);
-    const monthly = body.plans.find((p) => p.id === "monthly");
-    const yearly  = body.plans.find((p) => p.id === "yearly");
-    expect(monthly).toEqual({ id: "monthly", price_usd: 15, discount: null });
-    expect(yearly).toEqual({ id: "yearly", price_usd: 150, discount: null });
+    expect(body.plans.map((p) => p.id).sort()).toEqual(["lifetime", "monthly", "yearly"]);
+    const monthly  = body.plans.find((p) => p.id === "monthly");
+    const yearly   = body.plans.find((p) => p.id === "yearly");
+    const lifetime = body.plans.find((p) => p.id === "lifetime");
+    expect(monthly).toEqual({ id: "monthly", price_usd: 12, credits: 1000, discount: null });
+    expect(yearly).toEqual({ id: "yearly", price_usd: 100, credits: 12000, discount: null });
+    expect(lifetime).toEqual({ id: "lifetime", price_usd: 299, credits: 20000, discount: null });
   });
 
   it("attaches per-plan discount when row exists", async () => {
@@ -627,7 +660,7 @@ describe("polar_customer_id capture", () => {
         current_period_end: "2026-06-16T00:00:00Z",
         external_customer_id: String(userId),
         customer_id: "cust_polar_xyz",
-        product: { prices: [{ id: env.POLAR_PRODUCT_MONTHLY }] },
+        product_id: env.POLAR_PRODUCT_MONTHLY,
       },
     });
     await postWebhook(body);
@@ -704,6 +737,174 @@ describe("subscription.active dispatch", () => {
     ).bind(userId).first();
     expect(row.subscription_status).toBe("active");
     expect(row.past_due_started_at).toBeNull();
+  });
+});
+
+describe("order.paid handler — order-id idempotency", () => {
+  it("does not regrant credits when the same order.id is delivered twice with different webhook-ids", async () => {
+    const userId = await seedUser({ slug: "u_order_dup" });
+    await env.CLAUGE_DB.prepare(
+      `UPDATE users SET plan='pro', subscription_status='active',
+         polar_subscription_id='sub_d1',
+         current_period_start='2026-05-16T00:00:00Z',
+         current_period_end='2026-06-16T00:00:00Z',
+         credit_allowance_per_cycle=1000, credits_remaining=0
+       WHERE user_id=?`
+    ).bind(userId).run();
+    const body = JSON.stringify({
+      type: "order.paid",
+      data: {
+        id: "ord_dup_same",
+        subscription_id: "sub_d1",
+        product_id: env.POLAR_PRODUCT_MONTHLY,
+        external_customer_id: String(userId),
+      },
+    });
+    // First delivery — grants 1000.
+    await postWebhook(body, { id: "msg_first" });
+    // Burn some credits to detect a wrongful regrant.
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET credits_remaining = 100 WHERE user_id=?"
+    ).bind(userId).run();
+    // Second delivery, same order.id, fresh webhook-id — must be a no-op.
+    await postWebhook(body, { id: "msg_second" });
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT credits_remaining, last_granted_order_id FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.credits_remaining).toBe(100); // not reset to 1000
+    expect(row.last_granted_order_id).toBe("ord_dup_same");
+  });
+
+  it("DOES grant for a new order.id (next billing cycle's order)", async () => {
+    const userId = await seedUser({ slug: "u_next_cycle" });
+    await env.CLAUGE_DB.prepare(
+      `UPDATE users SET plan='pro', subscription_status='active',
+         polar_subscription_id='sub_nc',
+         current_period_start='2026-05-16T00:00:00Z',
+         current_period_end='2026-06-16T00:00:00Z',
+         credit_allowance_per_cycle=1000, credits_remaining=0,
+         last_granted_order_id='ord_prev'
+       WHERE user_id=?`
+    ).bind(userId).run();
+    const body = JSON.stringify({
+      type: "order.paid",
+      data: {
+        id: "ord_new_cycle",
+        subscription_id: "sub_nc",
+        product_id: env.POLAR_PRODUCT_MONTHLY,
+        external_customer_id: String(userId),
+      },
+    });
+    await postWebhook(body);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT credits_remaining, last_granted_order_id FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.credits_remaining).toBe(1000);
+    expect(row.last_granted_order_id).toBe("ord_new_cycle");
+  });
+});
+
+describe("order.paid handler — lifetime user safety", () => {
+  it("recurring fallback no-ops against a lifetime user (env-var drift defense)", async () => {
+    const userId = await seedUser({ slug: "u_lifetime_recurring" });
+    // Seed a lifetime user with their 20k bucket and some spend.
+    await env.CLAUGE_DB.prepare(
+      `UPDATE users SET plan='pro', is_lifetime=1, subscription_status='active',
+         polar_lifetime_order_id='ord_lifetime_orig',
+         credit_allowance_per_cycle=20000, credits_remaining=18500,
+         current_period_start=CURRENT_TIMESTAMP, current_period_end=NULL
+       WHERE user_id=?`
+    ).bind(userId).run();
+    // An order.paid arrives where product_id doesn't match any configured product
+    // (productIdToPlan → null). Without the is_lifetime guard the recurring path
+    // would overwrite credits to allowance × months.
+    const body = JSON.stringify({
+      type: "order.paid",
+      data: {
+        id: "ord_drift",
+        product_id: "prod_unknown_drift",
+        external_customer_id: String(userId),
+      },
+    });
+    await postWebhook(body);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT is_lifetime, credits_remaining FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.is_lifetime).toBe(1);
+    expect(row.credits_remaining).toBe(18500); // untouched
+  });
+});
+
+describe("lifetime purchase — handleLifetimeOrderPaid", () => {
+  it("grants 20,000 credits exactly once, sets is_lifetime=1 and current_period_end=NULL", async () => {
+    const userId = await seedUser({ slug: "u_lifetime_buy" });
+    const body = JSON.stringify({
+      type: "order.paid",
+      data: {
+        id: "ord_lifetime_1",
+        product_id: env.POLAR_PRODUCT_LIFETIME,
+        external_customer_id: String(userId),
+        customer_id: "cust_lifetime_1",
+      },
+    });
+    await postWebhook(body);
+    const row = await env.CLAUGE_DB.prepare(
+      `SELECT plan, is_lifetime, subscription_status, credits_remaining,
+              credit_allowance_per_cycle, current_period_end,
+              polar_lifetime_order_id, polar_customer_id
+         FROM users WHERE user_id = ?`
+    ).bind(userId).first();
+    expect(row.plan).toBe("pro");
+    expect(row.is_lifetime).toBe(1);
+    expect(row.subscription_status).toBe("active");
+    expect(row.credits_remaining).toBe(20000);
+    expect(row.credit_allowance_per_cycle).toBe(20000);
+    expect(row.current_period_end).toBeNull();
+    expect(row.polar_lifetime_order_id).toBe("ord_lifetime_1");
+    expect(row.polar_customer_id).toBe("cust_lifetime_1");
+  });
+
+  it("does not regrant on duplicate order.paid with same order id", async () => {
+    const userId = await seedUser({ slug: "u_lifetime_dup" });
+    const body = JSON.stringify({
+      type: "order.paid",
+      data: {
+        id: "ord_lifetime_dup",
+        product_id: env.POLAR_PRODUCT_LIFETIME,
+        external_customer_id: String(userId),
+      },
+    });
+    await postWebhook(body, { id: "msg_lt_1" });
+    // Burn credits so a regrant would be visible.
+    await env.CLAUGE_DB.prepare(
+      "UPDATE users SET credits_remaining=100 WHERE user_id=?"
+    ).bind(userId).run();
+    await postWebhook(body, { id: "msg_lt_2" });
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT credits_remaining FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.credits_remaining).toBe(100); // not refilled to 20000
+  });
+
+  it("order.refunded on a lifetime user clears is_lifetime and revokes Pro", async () => {
+    const userId = await seedUser({ slug: "u_lifetime_refund" });
+    await env.CLAUGE_DB.prepare(
+      `UPDATE users SET plan='pro', is_lifetime=1, subscription_status='active',
+         polar_lifetime_order_id='ord_lt_refund',
+         credits_remaining=15000
+       WHERE user_id = ?`
+    ).bind(userId).run();
+    const body = JSON.stringify({
+      type: "order.refunded",
+      data: { id: "ord_lt_refund", external_customer_id: String(userId) },
+    });
+    await postWebhook(body);
+    const row = await env.CLAUGE_DB.prepare(
+      "SELECT plan, is_lifetime, credits_remaining FROM users WHERE user_id=?"
+    ).bind(userId).first();
+    expect(row.plan).toBe("free");
+    expect(row.is_lifetime).toBe(0);
+    expect(row.credits_remaining).toBe(0);
   });
 });
 

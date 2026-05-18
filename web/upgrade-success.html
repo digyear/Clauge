@@ -1,183 +1,173 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Welcome to Clauge Pro</title>
-        <meta
-            name="description"
-            content="Your Clauge Pro subscription is active. Return to the app to continue."
-        />
-        <meta
-            name="theme-color"
-            content="#07070b"
-            media="(prefers-color-scheme: dark)"
-        />
-        <meta
-            name="theme-color"
-            content="#ffffff"
-            media="(prefers-color-scheme: light)"
-        />
-        <meta name="color-scheme" content="dark light" />
-        <meta name="robots" content="noindex, nofollow" />
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Welcome to Clauge Pro</title>
+<meta name="description" content="Your Clauge Pro subscription is active. Return to the app to continue.">
+<meta name="theme-color" content="#07070b">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/svg+xml" href="clauge-mark.svg">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #07070b;
+    color: rgba(255,255,255,0.94);
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh;
+    overflow: hidden;
+    position: relative;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  .bg-field { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+  .bg-field::before {
+    content: ""; position: absolute; inset: 0;
+    background:
+      radial-gradient(900px 600px at 12% -8%, rgba(210, 168, 255, 0.14), transparent 60%),
+      radial-gradient(700px 500px at 92% 8%, rgba(86, 212, 221, 0.10), transparent 60%),
+      radial-gradient(600px 500px at 50% 110%, rgba(210, 168, 255, 0.08), transparent 65%);
+  }
+  .bg-field::after {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, #000 30%, transparent 80%);
+  }
+  .card {
+    text-align: center; max-width: 440px; padding: 40px;
+    position: relative; z-index: 1;
+  }
+  .logo {
+    width: 64px; height: 64px;
+    margin: 0 auto 22px;
+    display: block;
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    margin-bottom: 16px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #3fb950;
+    background: rgba(63, 185, 80, 0.12);
+    border: 1px solid rgba(63, 185, 80, 0.28);
+    border-radius: 999px;
+  }
+  .eyebrow svg { display: block; }
+  h1 {
+    font-size: 26px; font-weight: 700;
+    margin-bottom: 10px;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+  }
+  h1 .grad {
+    background: linear-gradient(120deg, #ffffff 0%, #d2a8ff 60%, #56d4dd 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  p {
+    font-size: 14px;
+    color: rgba(255,255,255,0.6);
+    line-height: 1.6;
+    margin-bottom: 26px;
+  }
+  .actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 11px 20px;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: transparent;
+    color: rgba(255,255,255,0.92);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+  }
+  .btn:hover {
+    background: rgba(255,255,255,0.05);
+    border-color: rgba(255,255,255,0.22);
+  }
+  .btn.primary {
+    background: linear-gradient(120deg, #d2a8ff, #56d4dd);
+    border-color: transparent;
+    color: #07070b;
+  }
+  .btn.primary:hover {
+    transform: translateY(-1px);
+    opacity: 0.94;
+  }
+  .btn svg { display: block; }
+</style>
+</head>
+<body>
+<div class="bg-field" aria-hidden="true"></div>
+<div class="card">
+  <img class="logo" src="clauge-mark.svg" alt="Clauge" />
 
-        <link rel="icon" type="image/svg+xml" href="clauge-mark.svg" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-        <link
-            rel="stylesheet"
-            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
-            referrerpolicy="no-referrer"
-        />
-        <script src="config.js"></script>
-        <link rel="stylesheet" href="style.css" />
+  <span class="eyebrow">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+    Payment received
+  </span>
 
-        <style>
-            .us-hero {
-                padding: 120px 0 96px;
-                text-align: center;
-            }
-            .us-hero .eyebrow {
-                margin-bottom: 22px;
-            }
-            .us-hero h1 {
-                font-family: var(--font-display);
-                font-size: clamp(38px, 5vw, 60px);
-                letter-spacing: -0.025em;
-                line-height: 1.06;
-                margin: 0 0 18px;
-            }
-            .us-hero h1 .grad {
-                background: linear-gradient(
-                    120deg,
-                    #ffffff 0%,
-                    var(--purple) 45%,
-                    var(--ssh) 100%
-                );
-                -webkit-background-clip: text;
-                background-clip: text;
-                color: transparent;
-            }
-            .us-hero p {
-                color: var(--text-muted);
-                max-width: 560px;
-                margin: 0 auto 36px;
-                font-size: 17px;
-                line-height: 1.6;
-            }
-            .us-actions {
-                display: inline-flex;
-                flex-wrap: wrap;
-                gap: 12px;
-                justify-content: center;
-            }
-            .us-btn {
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                padding: 13px 24px;
-                border-radius: 10px;
-                font-family: var(--font-body, system-ui);
-                font-size: 14px;
-                font-weight: 600;
-                text-decoration: none;
-                border: 1px solid var(--border);
-                background: transparent;
-                color: var(--text);
-                cursor: pointer;
-                transition:
-                    background 0.15s,
-                    border-color 0.15s,
-                    opacity 0.15s,
-                    transform 0.15s;
-            }
-            .us-btn:hover {
-                background: rgba(255, 255, 255, 0.05);
-                border-color: var(--text-muted);
-            }
-            .us-btn.is-primary {
-                background: linear-gradient(120deg, var(--purple), var(--ssh));
-                border-color: transparent;
-                color: #fff;
-            }
-            .us-btn.is-primary:hover {
-                opacity: 0.92;
-                transform: translateY(-1px);
-            }
-            .us-hint {
-                color: var(--text-dim, var(--text-muted));
-                font-size: 13px;
-                margin: 22px 0 0;
-            }
-            .us-hint a {
-                color: var(--purple);
-                text-decoration: underline;
-                text-underline-offset: 3px;
-            }
-        </style>
-    </head>
-    <body>
-        <a class="skip-link" href="#main">Skip to content</a>
+  <h1>Welcome to <span class="grad">Clauge Pro</span></h1>
+  <p>Your subscription is active. Return to the app to continue where you left off.</p>
 
-        <main id="main">
-            <section class="us-hero">
-                <div class="container">
-                    <span class="eyebrow">
-                        <i class="fa-solid fa-check" aria-hidden="true"></i>
-                        Payment received
-                    </span>
-                    <h1>
-                        Welcome to <span class="grad">Clauge Pro</span>.
-                    </h1>
-                    <p>
-                        Your subscription is active. Head back to the app to
-                        continue where you left off.
-                    </p>
-                    <div class="us-actions">
-                        <button
-                            type="button"
-                            class="us-btn is-primary"
-                            id="us-open-btn"
-                        >
-                            <i
-                                class="fa-solid fa-arrow-up-right-from-square"
-                                aria-hidden="true"
-                            ></i>
-                            Open Clauge
-                        </button>
-                        <a class="us-btn" href="/pricing.html">View pricing</a>
-                    </div>
-                    <p class="us-hint">
-                        Don't have Clauge installed?
-                        <a
-                            href="https://github.com/ansxuman/Clauge/releases"
-                            >Download the latest release</a
-                        >.
-                    </p>
-                </div>
-            </section>
-        </main>
+  <div class="actions">
+    <button type="button" class="btn primary" id="open-btn">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12h14"/><path d="M12 5l7 7-7 7"/>
+      </svg>
+      Open Clauge
+    </button>
+    <a class="btn" href="/">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12l9-9 9 9"/><path d="M5 10v10h14V10"/>
+      </svg>
+      Home
+    </a>
+  </div>
+</div>
 
-        <script>
-            (function () {
-                // Build the deep link from the current query string. Polar
-                // appends ?ref=<user_id>&customer_session_token=<...>. The
-                // desktop app's deep-link handler reads those off the URL.
-                var qs = window.location.search || "";
-                var deepLink = "clauge://checkout-success" + qs;
+<script>
+(() => {
+  // Build the deep link from the current query string. Polar appends
+  // ?ref=<user_id>&plan=<monthly|yearly|lifetime>&customer_session_token=<...>.
+  // The desktop app's deep-link handler reads those off the URL.
+  const qs = window.location.search || '';
+  const deepLink = 'clauge://checkout-success' + qs;
 
-                function openInApp() {
-                    window.location.href = deepLink;
-                }
+  function openInApp() { window.location.href = deepLink; }
 
-                // Best-effort auto-open on first paint so users with Clauge
-                // installed land back in the app without clicking.
-                setTimeout(openInApp, 400);
+  // Best-effort auto-open on first paint so users with Clauge installed
+  // land back in the app without clicking. Manual button is the fallback
+  // for cases where the browser suppresses the auto-navigation.
+  setTimeout(openInApp, 400);
 
-                document
-                    .getElementById("us-open-btn")
-                    .addEventListener("click", openInApp);
-            })();
-        </script>
-    </body>
+  document.getElementById('open-btn').addEventListener('click', openInApp);
+})();
+</script>
+</body>
 </html>
