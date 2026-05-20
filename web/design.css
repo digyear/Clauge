@@ -134,16 +134,16 @@ img, svg, video { display: block; max-width: 100%; }
   display: flex; align-items: center; justify-content: space-between;
   height: 60px;
 }
-/* user's brand — Clauge SVG + Syne wordmark, preserved as requested */
+/* user's brand — Clauge SVG + Syne wordmark, matches original .brand exactly */
 .cl-brand {
-  display: inline-flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px;
   font-family: var(--f-brand);
   font-weight: 700;
-  font-size: 18px;
   letter-spacing: -0.01em;
   color: var(--ink);
 }
-.cl-brand img { width: 22px; height: 22px; }
+.cl-brand img { width: 28px; height: 28px; }
+.cl-brand span { font-size: 17px; }
 
 .cl-nav {
   display: flex; gap: 0; align-items: stretch;
