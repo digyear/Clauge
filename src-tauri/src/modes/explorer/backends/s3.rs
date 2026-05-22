@@ -30,6 +30,13 @@ pub struct S3Backend {
     creds: Credentials,
     http: reqwest::Client,
     bucket_name: String,
+    /// When false, `list()` skips the per-subfolder `prefix_size_bytes`
+    /// recursive walk. Folder rows still appear with `size: None` (UI
+    /// renders as "—"). Eliminates O(N×pages) extra round-trips per
+    /// listing, the main cause of slow folder navigation on large
+    /// buckets. Toggled via the `explorer_show_folder_sizes` setting;
+    /// requires a fresh session to take effect.
+    compute_folder_sizes: bool,
 }
 
 impl S3Backend {
@@ -41,6 +48,7 @@ impl S3Backend {
         secret_key: &str,
         path_style: bool,
         http: reqwest::Client,
+        compute_folder_sizes: bool,
     ) -> Result<Self, FsError> {
         if bucket.is_empty() {
             return Err(FsError::Other {
@@ -70,6 +78,7 @@ impl S3Backend {
             creds,
             http,
             bucket_name: bucket.to_string(),
+            compute_folder_sizes,
         })
     }
 
@@ -235,16 +244,22 @@ impl RemoteFs for S3Backend {
         // pages so a pathological folder doesn't stall the listing. Run them
         // concurrently with a small fan-out so a directory with many
         // subfolders doesn't serialize the round-trips.
-        let size_futures = dir_prefixes
-            .into_iter()
-            .map(|(idx, p)| async move { (idx, self.prefix_size_bytes(&p).await) });
-        let size_results: Vec<(usize, Result<u64, FsError>)> = stream::iter(size_futures)
-            .buffer_unordered(8)
-            .collect()
-            .await;
-        for (idx, result) in size_results {
-            if let Ok(total) = result {
-                entries[idx].size = Some(total);
+        //
+        // Skipped entirely when `compute_folder_sizes` is false — the size
+        // walk is by far the dominant latency cost on large buckets, so
+        // making it opt-in turns "5-second folder open" into a single LIST.
+        if self.compute_folder_sizes {
+            let size_futures = dir_prefixes
+                .into_iter()
+                .map(|(idx, p)| async move { (idx, self.prefix_size_bytes(&p).await) });
+            let size_results: Vec<(usize, Result<u64, FsError>)> = stream::iter(size_futures)
+                .buffer_unordered(8)
+                .collect()
+                .await;
+            for (idx, result) in size_results {
+                if let Ok(total) = result {
+                    entries[idx].size = Some(total);
+                }
             }
         }
         Ok(entries)

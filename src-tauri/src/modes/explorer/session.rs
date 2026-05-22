@@ -135,6 +135,12 @@ async fn open_backend(
                 .map_err(|e| format!("secret_key lookup: {}", e))?
                 .ok_or("missing S3 secret key")?;
             let http = build_app_http_client(pool).await?;
+            let compute_folder_sizes = crate::shared::repos::settings::get_bool_or(
+                pool,
+                "explorer_show_folder_sizes",
+                false,
+            )
+            .await;
             let backend = S3Backend::new(
                 endpoint,
                 region,
@@ -143,6 +149,7 @@ async fn open_backend(
                 &secret_key,
                 conn.s3_path_style != 0,
                 http,
+                compute_folder_sizes,
             )
             .map_err(map_fs_err)?;
             Ok(Arc::new(backend))
@@ -191,7 +198,14 @@ async fn open_backend(
                 }
                 other => return Err(format!("unknown Azure auth kind: {}", other)),
             };
-            let backend = AzureBlobBackend::new(auth, container).map_err(map_fs_err)?;
+            let compute_folder_sizes = crate::shared::repos::settings::get_bool_or(
+                pool,
+                "explorer_show_folder_sizes",
+                false,
+            )
+            .await;
+            let backend = AzureBlobBackend::new(auth, container, compute_folder_sizes)
+                .map_err(map_fs_err)?;
             Ok(Arc::new(backend))
         }
         other => Err(format!("unknown explorer kind: {}", other)),

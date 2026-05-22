@@ -42,3 +42,16 @@ pub async fn get_i64_or(pool: &SqlitePool, key: &str, default: i64) -> i64 {
         _ => default,
     }
 }
+
+/// Boolean settings are stored as the strings "true"/"false" or "1"/"0".
+/// Anything unrecognised falls back to `default`.
+pub async fn get_bool_or(pool: &SqlitePool, key: &str, default: bool) -> bool {
+    match get_by_key(pool, key).await {
+        Ok(Some(s)) => match s.value.as_str() {
+            "true" | "1" => true,
+            "false" | "0" => false,
+            _ => default,
+        },
+        _ => default,
+    }
+}

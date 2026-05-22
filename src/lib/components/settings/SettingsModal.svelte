@@ -108,6 +108,7 @@
         | "workspace"
         | "sql"
         | "nosql"
+        | "explorer"
         | "about";
 
     let activeTab = $state<SettingsTab>("general");
@@ -208,6 +209,16 @@
     );
     let nosqlMaxFindLimit = $derived(
         Number($settings["nosql_max_find_limit"] ?? "100"),
+    );
+
+    // --- Explorer ---
+    // S3/Azure folder listings can recursively walk every subfolder to
+    // compute aggregate folder sizes. On large buckets this slows
+    // navigation from sub-second to multi-second. Default OFF; the user
+    // opts in when accurate sizes matter more than latency. Backend
+    // reads on session open, so changes apply on next reconnect.
+    let explorerShowFolderSizes = $derived(
+        ($settings["explorer_show_folder_sizes"] ?? "false") === "true",
     );
 
     // --- Editor ---
@@ -726,6 +737,13 @@
             label: "NoSQL",
             // Curly braces — matches NoSQL identity in Topbar.
             icon: '<path d="M8 3a2 2 0 00-2 2v4a2 2 0 01-2 2H3a1 1 0 000 2h1a2 2 0 012 2v4a2 2 0 002 2"/><path d="M16 3a2 2 0 012 2v4a2 2 0 002 2h1a1 1 0 010 2h-1a2 2 0 00-2 2v4a2 2 0 01-2 2"/>',
+        },
+        {
+            kind: "tab",
+            key: "explorer",
+            label: "Explorer",
+            // Folder — matches Explorer identity in Topbar.
+            icon: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>',
         },
         {
             kind: "tab",
@@ -4842,6 +4860,62 @@
                                                 e.currentTarget.value,
                                             )}
                                     />
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                {:else if activeTab === "explorer"}
+                    <div class="stg-card-stack">
+                        <section class="stg-card">
+                            <header class="stg-card-hd">
+                                <span class="stg-card-icon" aria-hidden="true">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        width="14"
+                                        height="14"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        ><path
+                                            d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"
+                                        /></svg
+                                    >
+                                </span>
+                                <div class="stg-card-titles">
+                                    <h3 class="stg-card-title">Listing</h3>
+                                    <p class="stg-card-sub">
+                                        Defaults for the Explorer file browser.
+                                        Folder-size aggregation walks every
+                                        object under each subfolder — accurate,
+                                        but adds N×pages extra round-trips per
+                                        listing on object stores (S3, Azure).
+                                        Off keeps folder navigation snappy on
+                                        large buckets. Change takes effect on
+                                        the next connection.
+                                    </p>
+                                </div>
+                            </header>
+                            <div class="stg-card-body">
+                                <div class="stg-card-row">
+                                    <label class="stg-card-row-label"
+                                        >Show folder sizes (S3, Azure)</label
+                                    >
+                                    <label class="stg-toggle">
+                                        <input
+                                            type="checkbox"
+                                            checked={explorerShowFolderSizes}
+                                            onchange={(e) =>
+                                                handleSettingChange(
+                                                    "explorer_show_folder_sizes",
+                                                    String(
+                                                        e.currentTarget.checked,
+                                                    ),
+                                                )}
+                                        />
+                                        <span class="stg-toggle-slider"></span>
+                                    </label>
                                 </div>
                             </div>
                         </section>

@@ -27,6 +27,10 @@ use crate::modes::explorer::models::{DirEntry, FsError, Stat};
 pub struct AzureBlobBackend {
     container_client: ContainerClient,
     container_name: String,
+    /// Mirrors S3's flag. False → `list()` skips per-subfolder
+    /// `prefix_size_bytes` walks; folders render with `size: None`. The
+    /// walk is the main latency cost on large containers.
+    compute_folder_sizes: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -37,7 +41,7 @@ pub enum AzureAuth {
 }
 
 impl AzureBlobBackend {
-    pub fn new(auth: AzureAuth, container: &str) -> Result<Self, FsError> {
+    pub fn new(auth: AzureAuth, container: &str, compute_folder_sizes: bool) -> Result<Self, FsError> {
         let (account, creds) = match auth {
             AzureAuth::SharedKey { account, key } => {
                 let creds = StorageCredentials::access_key(account.clone(), key);
@@ -85,6 +89,7 @@ impl AzureBlobBackend {
         Ok(Self {
             container_client,
             container_name: container.to_string(),
+            compute_folder_sizes,
         })
     }
 
@@ -198,17 +203,21 @@ impl RemoteFs for AzureBlobBackend {
         }
 
         // Per-subfolder size aggregation (see s3.rs::prefix_size_bytes for
-        // the same pattern + cap rationale).
-        let size_futures = dir_prefixes
-            .into_iter()
-            .map(|(idx, p)| async move { (idx, self.prefix_size_bytes(&p).await) });
-        let size_results: Vec<(usize, Result<u64, FsError>)> = stream::iter(size_futures)
-            .buffer_unordered(8)
-            .collect()
-            .await;
-        for (idx, result) in size_results {
-            if let Ok(total) = result {
-                entries[idx].size = Some(total);
+        // the same pattern + cap rationale). Gated by compute_folder_sizes
+        // — when off, folders ship with size: None and the listing is just
+        // the initial container list.
+        if self.compute_folder_sizes {
+            let size_futures = dir_prefixes
+                .into_iter()
+                .map(|(idx, p)| async move { (idx, self.prefix_size_bytes(&p).await) });
+            let size_results: Vec<(usize, Result<u64, FsError>)> = stream::iter(size_futures)
+                .buffer_unordered(8)
+                .collect()
+                .await;
+            for (idx, result) in size_results {
+                if let Ok(total) = result {
+                    entries[idx].size = Some(total);
+                }
             }
         }
         Ok(entries)
