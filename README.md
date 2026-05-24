@@ -49,8 +49,6 @@ You've been flipping between multiple apps to do one job. Clauge runs all of the
 
 Plus a cross-mode **History** layer — a queryable log of every session, request, query, and command across modes.
 
-Switch the modes using  `⌘1`–`⌘7`;
-
 ---
 
 ## Inside each mode
