@@ -192,16 +192,97 @@ export async function handleUpdateProfile(request, env) {
   return await buildMeResponse(env, ctx.userId);
 }
 
+/**
+ * Cancel the caller's Polar subscription via Polar's Revoke endpoint
+ * BEFORE deleting their D1 user row. Without this, recurring Pro users
+ * (monthly/yearly) would keep getting charged forever after their account
+ * is deleted — their card on file at Polar has no idea their Clauge
+ * account is gone. CRITICAL money-leak fix.
+ *
+ *   - Lifetime users: no recurring subscription to cancel; skip.
+ *   - No `polar_subscription_id` recorded: nothing to cancel; skip.
+ *   - Subscription already cancelled (status not in {active, past_due}):
+ *     skip (Polar would 404/409 anyway; treat as idempotent success).
+ *   - Polar returns 200: success, proceed with user delete.
+ *   - Polar returns 404/409: already gone/cancelled; idempotent success.
+ *   - Polar returns 403/422/5xx or network error: ABORT — do NOT delete
+ *     the user row. Surface a clear error so the user can retry or
+ *     cancel manually from Polar's customer portal first.
+ *
+ * `fetchImpl` is injectable for test mocking. Returns
+ *   { ok: true,  skipped?: string }  on success (or no-op),
+ *   { ok: false, status?: number, error: string }  on failure.
+ */
+export async function cancelPolarSubscriptionIfNeeded(env, user, fetchImpl = fetch) {
+  if (!user) return { ok: true, skipped: 'no-user' };
+  if (user.is_lifetime) return { ok: true, skipped: 'lifetime' };
+  if (!user.polar_subscription_id) return { ok: true, skipped: 'no-subscription' };
+  const status = user.subscription_status;
+  if (status !== 'active' && status !== 'past_due') {
+    return { ok: true, skipped: `status=${status}` };
+  }
+
+  const apiBase = env.POLAR_API_BASE ?? 'https://api.polar.sh';
+  const url = `${apiBase}/v1/subscriptions/${user.polar_subscription_id}`;
+
+  let resp;
+  try {
+    resp = await fetchImpl(url, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${env.POLAR_API_KEY}` },
+    });
+  } catch (e) {
+    return { ok: false, error: `network: ${(e && e.message) || String(e)}` };
+  }
+
+  if (resp.ok) return { ok: true };
+  // 404 = subscription doesn't exist (already revoked out-of-band, or
+  // never existed). 409 = conflict, typically "already canceled". Both
+  // are effectively the post-condition we want, so treat as success.
+  if (resp.status === 404 || resp.status === 409) {
+    return { ok: true, skipped: `polar-${resp.status}` };
+  }
+
+  const detail = await resp.text().catch(() => '');
+  return {
+    ok: false,
+    status: resp.status,
+    error: `Polar HTTP ${resp.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`,
+  };
+}
+
 /** DELETE /api/auth/me  Headers: X-Confirm: <slug>  → 200 on success */
 export async function handleDeleteAccount(request, env) {
   const ctx = await authenticate(request, env);
   if (!ctx) return err(env, 401, 'Not authenticated');
   const confirm = request.headers.get('X-Confirm') || '';
 
-  const user = await getUserById(env, ctx.userId);
+  // Fetch the columns we need both for the slug check AND the Polar
+  // cancellation logic. `getUserById` doesn't return billing fields, so
+  // we do an explicit SELECT here.
+  const user = await env.CLAUGE_DB.prepare(
+    `SELECT user_id, slug, is_lifetime, polar_subscription_id, subscription_status
+       FROM users WHERE user_id = ?`
+  ).bind(ctx.userId).first();
   if (!user) return err(env, 404, 'User not found');
   if (confirm !== user.slug) {
     return err(env, 400, 'X-Confirm header must match your slug');
+  }
+
+  // Cancel Polar subscription FIRST. If this fails (other than the
+  // idempotent already-gone cases), we abort BEFORE deleting the user
+  // row so the user can retry. Order matters — deleting the user first
+  // and then failing the Polar cancel would orphan the subscription
+  // with no way to clean it up programmatically.
+  const cancelResult = await cancelPolarSubscriptionIfNeeded(env, user);
+  if (!cancelResult.ok) {
+    return err(
+      env,
+      502,
+      `Could not cancel your Polar subscription (${cancelResult.error}). ` +
+      `Your account was NOT deleted. Please try again, or cancel manually ` +
+      `from "Manage subscription" first, then retry the delete.`,
+    );
   }
 
   await deleteUser(env, ctx.userId);
@@ -407,19 +488,27 @@ function splitName(fullName) {
   return { first: parts[0], last: parts.slice(1).join(' ') };
 }
 
-async function buildAuthSuccess(env, userId, tokens) {
-  const user = await getUserById(env, userId);
-  const providers = await getProvidersForUser(env, userId);
-  return json(env, {
-    ...tokens,
-    user:        serializeUser(user),
-    providers:   providers.map(serializeProvider),
-    plan:        user.plan,
-    entitlements: entitlementsForPlan(user.plan),
-  });
-}
-
-async function buildMeResponse(env, userId) {
+/**
+ * Single source of truth for the authoritative user snapshot returned by
+ * /api/auth/me AND the /api/auth/{provider}/exchange endpoints. Returns
+ * the plain body object (or `null` if the user row is missing).
+ *
+ * Extracted from the old `buildMeResponse` so both me + exchange paths
+ * return the SAME enriched payload. Previously exchange returned only
+ * `entitlements: { plan }` (via `entitlementsForPlan`), so the Rust
+ * client's `apply_from_entitlements` populated `credits: None,
+ * subscription: None` after login. The next `/api/ai/balance` event then
+ * created `{remaining, allowance: 0, resets_at: null}` and the Account
+ * tab rendered "700 / 0 remaining / Pro / no renewal date" for the
+ * ~30-90 seconds until the user clicked Sync / navigated away+back
+ * (which triggered a separate /api/auth/me fetch).
+ *
+ * With exchange now returning the full body, `apply_from_entitlements`
+ * sees `Some(credits)` + `Some(subscription)` immediately; the later
+ * balance event takes the `if let Some(c) = new.credits.as_mut()` branch
+ * in `patch_credits_remaining` and preserves allowance + resets_at.
+ */
+async function buildMeBody(env, userId) {
   const user = await env.CLAUGE_DB.prepare(
     `SELECT user_id, primary_email, display_name, first_name, last_name, avatar_url, slug,
             created_at,
@@ -428,7 +517,7 @@ async function buildMeResponse(env, userId) {
             credit_allowance_per_cycle, credits_remaining
        FROM users WHERE user_id = ?`
   ).bind(userId).first();
-  if (!user) return err(env, 404, 'User not found');
+  if (!user) return null;
 
   const providers = await getProvidersForUser(env, userId);
   const ent = entitlementsForPlan(user.plan);
@@ -475,12 +564,28 @@ async function buildMeResponse(env, userId) {
     price_usd:            priceUsd,
   };
 
-  return json(env, {
+  return {
     user:         serializeUser(user),
     providers:    providers.map(serializeProvider),
     plan:         user.plan,
     entitlements: ent,
-  });
+  };
+}
+
+async function buildAuthSuccess(env, userId, tokens) {
+  const body = await buildMeBody(env, userId);
+  // Defensive: matches the previous behaviour of buildAuthSuccess (which
+  // would have crashed if the user row vanished mid-exchange). A 404 is
+  // the right surface here — the upsert succeeded but then something
+  // deleted the row, which is impossible under normal flow.
+  if (!body) return err(env, 404, 'User not found');
+  return json(env, { ...tokens, ...body });
+}
+
+async function buildMeResponse(env, userId) {
+  const body = await buildMeBody(env, userId);
+  if (!body) return err(env, 404, 'User not found');
+  return json(env, body);
 }
 
 function serializeUser(u) {
@@ -519,4 +624,4 @@ async function safeJson(request) {
   }
 }
 
-export { entitlementsForPlan, buildMeResponse };
+export { entitlementsForPlan, buildMeResponse, buildAuthSuccess };
