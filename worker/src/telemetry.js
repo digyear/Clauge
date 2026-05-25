@@ -23,8 +23,10 @@ const ALLOWED_ARCH  = new Set(['aarch64', 'x86_64']);
 const ALLOWED_BUCKETS = new Set(['0', '1-10', '11-100', '101-1k', '1k+']);
 const DEVICE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Rate-limit key TTL = 24h + slack. KV evicts on its own afterwards.
-const RATE_TTL_SECONDS = 24 * 60 * 60 + 60;
+// Rate limit: max 2 accepted heartbeats per device per 24h. Enforced via
+// a D1 SELECT against received_at instead of a KV counter because KV's
+// 1k writes/day free quota is wildly too tight for per-device pings.
+// D1 reads are 5M/day on the same tier, so the cost is effectively zero.
 const RATE_LIMIT_PER_24H = 2;
 
 /**
@@ -86,7 +88,10 @@ export async function handleTelemetryHeartbeat(request, env) {
   const osVersion   = sanitiseShort(payload.os_version, 16);
   const locale      = sanitiseShort(payload.locale, 12);
   const theme       = sanitiseShort(payload.theme, 8);
-  const modesActive = sanitiseShort(payload.modes_active, 64);
+  // `modes_active` is NOT NULL in the schema — `sanitiseShort` returns
+  // null for an empty string, which would override the column's DEFAULT
+  // '' and trip the constraint. Coerce back to '' here.
+  const modesActive = sanitiseShort(payload.modes_active, 64) ?? '';
 
   // ── Bucketed maps — all values must be in the allowed bucket set ──
   const features   = sanitiseBucketMap(payload.features);
@@ -107,17 +112,28 @@ export async function handleTelemetryHeartbeat(request, env) {
   }
   const hasAccount = userId == null ? 0 : 1;
 
-  // ── Per-device rate limit (KV, 24h window) ─────────────────────────
-  const rlKey = `rl:tel:${deviceId}`;
-  const current = Number((await env.CLAUGE_KV.get(rlKey)) ?? 0);
-  if (current >= RATE_LIMIT_PER_24H) {
-    // Silently drop with 204 — client doesn't need to know it was
-    // rate-limited; it just keeps trying on its 24h cadence.
-    return new Response(null, { status: 204 });
+  // ── Per-device rate limit (D1 SELECT against received_at) ─────────
+  // Counts how many rows this device has produced in the last 24h.
+  // SELECTs against D1 are free at our scale (5M/day budget); KV
+  // writes were not — that was the whole reason this needed rewriting.
+  // A unique index on (device_id, received_at DESC) makes this O(log n).
+  try {
+    const recent = await env.CLAUGE_DB.prepare(
+      `SELECT COUNT(*) AS n FROM telemetry_pings
+        WHERE device_id = ?
+          AND received_at > datetime('now','-24 hours')`,
+    )
+      .bind(deviceId)
+      .first();
+    if (recent && Number(recent.n) >= RATE_LIMIT_PER_24H) {
+      // Silently drop — client retries on its own 24h schedule.
+      return new Response(null, { status: 204 });
+    }
+  } catch (e) {
+    // If the lookup fails, fall through to the INSERT — we'd rather
+    // double-count than lose the signal entirely on a transient D1 hiccup.
+    console.warn('[telemetry] rate-limit lookup failed:', e && e.stack ? e.stack : e);
   }
-  await env.CLAUGE_KV.put(rlKey, String(current + 1), {
-    expirationTtl: RATE_TTL_SECONDS,
-  });
 
   // ── Insert ────────────────────────────────────────────────────────
   try {
