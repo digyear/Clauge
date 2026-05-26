@@ -1,8 +1,10 @@
 use crate::modes::agent::models::{TerminalEntry, TerminalOutputPayload, TerminalState};
+use crate::shared::repos::settings as settings_repo;
 use crate::shared::cli::{registry::runner_for, runner::{CliRunner, SpawnOpts}};
 use crate::shared::platform::shell::default_user_shell;
 use base64::Engine;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use sqlx::SqlitePool;
 use std::io::{Read, Write};
 use tauri::ipc::Channel;
 use tauri::State;
@@ -25,8 +27,9 @@ fn apply_windows_env(cmd: &mut CommandBuilder) {
 fn apply_windows_env(_cmd: &mut CommandBuilder) {}
 
 #[tauri::command]
-pub fn agent_spawn_terminal(
+pub async fn agent_spawn_terminal(
     state: State<'_, TerminalState>,
+    pool: State<'_, SqlitePool>,
     session_id: Option<String>,
     project_path: String,
     context_prompt: Option<String>,
@@ -39,12 +42,9 @@ pub fn agent_spawn_terminal(
     // `build_spawn_command` substitutes it (shell-quoted) in place of
     // the bare binary name. `None`/empty = default $PATH lookup.
     binary_path: Option<String>,
-    // Workspace MCP bearer token. Only used when `provider == "codex"`
-    // — injected into the spawned shell's env as
-    // `CLAUGE_WORKSPACE_TOKEN`, which codex reads via the
-    // `--bearer-token-env-var` flag we set at registration time. The
-    // frontend reads this off the workspace store; pass `None` when
-    // MCP isn't enabled (codex still works for non-MCP turns).
+    // Legacy frontend-supplied fallback. The backend now reads the
+    // persisted workspace MCP token directly from settings so token
+    // injection can't be skipped by stale frontend state.
     workspace_mcp_token: Option<String>,
     on_output: Channel<TerminalOutputPayload>,
 ) -> Result<String, String> {
@@ -91,12 +91,31 @@ pub fn agent_spawn_terminal(
     // exactly when we're spawning codex, so codex can authenticate
     // without the token ever touching ~/.codex/config.toml.
     if provider == "codex" {
-        if let Some(token) = workspace_mcp_token.as_ref().filter(|t| !t.is_empty()) {
+        let persisted_token = match settings_repo::get_by_key(pool.inner(), "workspace_mcp_token").await {
+            Ok(Some(s)) => Some(s.value),
+            Ok(None) => None,
+            Err(e) => {
+                log::warn!(target: "agent::terminal", "failed to read workspace MCP token for codex spawn: {e}");
+                None
+            }
+        };
+        let token = persisted_token
+            .as_deref()
+            .filter(|t| !t.is_empty())
+            .or_else(|| workspace_mcp_token.as_deref().filter(|t| !t.is_empty()));
+        log::info!(
+            target: "agent::terminal",
+            "codex spawn workspace MCP token present: {}",
+            token.is_some()
+        );
+        if let Some(token) = token {
             cmd.env(
                 crate::modes::workspace::commands::CODEX_BEARER_ENV,
                 token,
             );
         }
+    } else {
+        log::debug!(target: "agent::terminal", "agent spawn provider={provider}; codex MCP token injection skipped");
     }
 
     let child = pty_pair.slave.spawn_command(cmd).map_err(|e| format!("Failed to spawn {}: {}", cli.id(), e))?;

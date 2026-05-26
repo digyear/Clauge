@@ -15,7 +15,7 @@ use tokio::sync::oneshot;
 
 use super::{actor::actor_from_request, dispatch::dispatch_tool, tools::tool_descriptors};
 
-const PROTOCOL_VERSION: &str = "2024-11-05";
+const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// How many sequential ports `start` will try if the requested one is
 /// already in use. Six attempts (requested + 5) covers the common
@@ -76,7 +76,10 @@ pub async fn start(
                         })
                         .await;
                 });
-                return Ok(McpHandle { port, shutdown: Some(tx) });
+                return Ok(McpHandle {
+                    port,
+                    shutdown: Some(tx),
+                });
             }
             Err(e) => {
                 last_err = Some(format!("{}: {}", addr, e));
@@ -116,8 +119,33 @@ async fn handle_mcp(
     }
 
     let method = body.get("method").and_then(|v| v.as_str()).unwrap_or("");
-    let id = body.get("id").cloned().unwrap_or(Value::Null);
     let params = body.get("params").cloned().unwrap_or(json!({}));
+    let has_id = body
+        .as_object()
+        .map(|m| m.contains_key("id"))
+        .unwrap_or(false);
+    let is_client_response =
+        method.is_empty() && (body.get("result").is_some() || body.get("error").is_some());
+
+    // Streamable HTTP requires JSON-RPC notifications and client
+    // responses to return 202 Accepted with no body.
+    // Returning a JSON-RPC response here makes stricter clients
+    // (Codex/rmcp) close the transport during the initialized
+    // notification.
+    if !has_id || is_client_response {
+        match method {
+            "notifications/initialized" => {}
+            other => {
+                log::debug!(
+                    target: "workspace::mcp",
+                    "accepted MCP notification without response: {other}"
+                );
+            }
+        }
+        return StatusCode::ACCEPTED.into_response();
+    }
+
+    let id = body.get("id").cloned().unwrap_or(Value::Null);
 
     // Resolve the actor for THIS request. Mutating tools route this
     // string straight into `updated_by`, so attribution + Inbox work
@@ -130,7 +158,6 @@ async fn handle_mcp(
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "clauge-workspace", "version": "1.0.0" }
         })),
-        "notifications/initialized" => Ok(Value::Null),
         "tools/list" => Ok(json!({ "tools": tool_descriptors() })),
         "tools/call" => dispatch_tool(&state.pool, state.app.as_ref(), params, &actor).await,
         "ping" => Ok(json!({})),

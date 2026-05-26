@@ -1170,14 +1170,8 @@
         // shell-quoted path in place of the bare binary name. NULL /
         // empty = standard $PATH lookup.
         binaryPath: session.binaryPath || undefined,
-        // Codex authenticates to the workspace MCP via an env-var
-        // bearer (--bearer-token-env-var CLAUGE_WORKSPACE_TOKEN); pass
-        // the persisted token (read from app settings) so it lands in
-        // the spawned shell's env. No-op for non-codex providers — the
-        // backend gates on `provider == 'codex'`.
-        workspaceMcpToken: (session.provider === 'codex'
-          ? (await getSetting('workspace_mcp_token')) ?? undefined
-          : undefined),
+        // Codex workspace MCP token injection is backend-owned so the
+        // token doesn't have to flow through frontend IPC.
         onOutput,
       });
       console.log(`[TERM] Spawn complete: termId=${termId}, gen=${myGeneration}`);

@@ -74,10 +74,6 @@ export const agentSpawnTerminal = (params: {
   /** Absolute binary path override for this session. Omit / empty
    *  string = use the standard $PATH lookup. */
   binaryPath?: string;
-  /** Workspace MCP bearer token; only consumed when provider === 'codex'.
-   *  Lets codex authenticate to the workspace MCP without writing the
-   *  token to ~/.codex/config.toml. Pass undefined when MCP is off. */
-  workspaceMcpToken?: string;
   onOutput: any;
 }) => invoke<string>('agent_spawn_terminal', params);
 export const agentSpawnShell = (projectPath: string, onOutput: any) => invoke<string>('agent_spawn_shell', { projectPath, onOutput });
