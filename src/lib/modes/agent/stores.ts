@@ -32,10 +32,6 @@ export const agentContexts = writable<AgentContext[]>([]);
 // Session activity tracking
 export const agentSessionActivity = writable<Map<string, 'running' | 'done'>>(new Map());
 
-// Sessions whose claude PTY has exited. Reopening such a session shows the
-// preserved scrollback (read-only) instead of auto-spawning a fresh claude.
-export const agentSessionExited = writable<Map<string, boolean>>(new Map());
-
 // Notification preferences (loaded from settings)
 export const agentSoundEnabled = writable<boolean>(true);
 export const agentDockBounceEnabled = writable<boolean>(true);

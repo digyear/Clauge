@@ -15,7 +15,6 @@
     agentShellIds,
     agentShellOpen,
     agentSessionActivity,
-    agentSessionExited,
     agentSessions,
     agentSoundEnabled,
     agentDockBounceEnabled,
@@ -256,8 +255,14 @@
   // Context usage polling interval
   let contextUsageInterval: ReturnType<typeof setInterval> | null = null;
 
-  // Suppress auto-switch on exit (set by reset/close actions)
-  let _suppressExit = false;
+  // Terminal IDs whose PTY exit was initiated by Clauge (reset / relaunch /
+  // close-tab / delete-session). The exit handler removes the id from this
+  // set when the exit event arrives and routes through the suppressed-path
+  // cleanup instead of the natural-exit path. Per-terminal scoping (vs a
+  // single boolean flag) eliminates the async-race window — each kill is
+  // paired 1:1 with its own exit. Termids are unique per spawn, so a stale
+  // entry (exit event that never arrives) has no collision risk.
+  const _suppressedTerminalIds = new Set<string>();
 
   let showClaudeNotInstalled = $state(false);
   let showCodexNotInstalled = $state(false);
@@ -406,11 +411,16 @@
       const termId = tIds.get(sessionId);
       if (termId) {
         agentWriteToTerminal(termId, data).catch(() => {
-          // PTY dead (I/O error) — treat as session exit. Preserve the xterm
-          // entry (scrollback) so reopen shows prior output instead of respawn.
+          // PTY dead (I/O error) — treat as session exit. Mirror the
+          // natural-exit path: clear the live termId, mark activity done,
+          // and close the tab so the user isn't stuck typing into a
+          // frozen terminal. Re-opening from the sidebar will auto-spawn
+          // a fresh CLI (with --resume).
           agentTerminalIds.update(m => { m.delete(sessionId); return new Map(m); });
           agentSessionActivity.update(m => { m.set(sessionId, 'done'); return new Map(m); });
-          agentSessionExited.update(m => { m.set(sessionId, true); return new Map(m); });
+          const allTabs = get(tabsStore);
+          const exitedTab = allTabs.find(t => t.mode === 'agent' && t.key === sessionId);
+          if (exitedTab) closeTab(exitedTab.id);
           const currentActive = get(activeAgentSession);
           if (currentActive?.id === sessionId) {
             const activity = get(agentSessionActivity);
@@ -701,24 +711,6 @@
   // worktrees give unique spawnPaths so this is a no-op for them.
   const _pendingCaptureByPath = new Map<string, Promise<void>>();
 
-  // User-initiated re-spawn for an exited session. Disposes the preserved
-  // scrollback xterm and starts a fresh claude PTY via the normal spawn path.
-  async function startNewForActiveSession() {
-    const session = get(activeAgentSession);
-    if (!session) return;
-    const tMap = get(agentTerminalMap);
-    const exitedEntry = tMap.get(session.id);
-    if (exitedEntry) {
-      try { exitedEntry.container.remove(); } catch (_) {}
-      try { exitedEntry.term.dispose(); } catch (_) {}
-      agentTerminalMap.update(m => { m.delete(session.id); return new Map(m); });
-    }
-    if (activeTermEntry === exitedEntry) activeTermEntry = null;
-    agentSessionExited.update(m => { m.delete(session.id); return new Map(m); });
-    currentSessionId = null;
-    selectSession(session);
-  }
-
   async function selectSession(session: any) {
     console.log(`[TERM] selectSession called: id=${session?.id}, title=${session?.title}`);
     if (!session || !terminalEl) { console.log('[TERM] SKIP: no session or terminalEl'); return; }
@@ -748,20 +740,6 @@
         }
         spawnShellForSession(session);
       }
-      refreshAgentGitStatus();
-      return;
-    }
-
-    // Reopened an exited session — show preserved scrollback, do NOT auto-spawn.
-    // User must explicitly click "Start new" to spawn a fresh claude.
-    if (entry && get(agentSessionExited).get(session.id)) {
-      if (entry.container.parentElement !== terminalEl) {
-        terminalEl.appendChild(entry.container);
-      }
-      console.log('[TERM] EARLY RETURN: showing exited session scrollback (no respawn)');
-      termReady = true;
-      spawning = false;
-      showTermEntry(entry);
       refreshAgentGitStatus();
       return;
     }
@@ -953,15 +931,17 @@
         // child process dies. This is the authoritative exit signal — no text matching
         // needed. Triggered when user types "exit" + Enter and Claude Code exits.
         if (payload.exit === true) {
-          console.log(`[TERM] EXIT signaled by PTY close for session ${sessionId}, gen=${myGeneration}, suppress=${_suppressExit}`);
+          // Suppression is keyed per-terminal-id. If Clauge initiated this
+          // kill (reset/relaunch/close-tab/delete), the termId was added
+          // to the set before the kill. .delete returns true iff it was
+          // present — single-shot consume. No timer, no global flag, no
+          // race window with concurrent kills of other sessions.
+          const thisTermId = entry?.terminalId ?? null;
+          const wasSuppressed = thisTermId ? _suppressedTerminalIds.delete(thisTermId) : false;
+          console.log(`[TERM] EXIT signaled by PTY close for session ${sessionId}, gen=${myGeneration}, suppressed=${wasSuppressed}`);
           agentTerminalIds.update(m => { m.delete(sessionId); return new Map(m); });
           const tMapNow = get(agentTerminalMap);
           const exitedEntry = tMapNow.get(sessionId);
-          // Preserve the xterm entry so reopening the session shows the prior
-          // scrollback instead of auto-spawning a fresh claude. The PTY id has
-          // already been cleared above; reset on user-initiated "Start new".
-          // _suppressExit is set by reset/relaunch/close-tab handlers which
-          // dispose the entry themselves — don't duplicate that here.
           // Capture session ID from buffered "claude --resume <id>" if available
           if (entry && entry._exitBuffer && !session.claudeSessionId) {
             const resumeMatch = entry._exitBuffer.match(/claude --resume ([a-f0-9-]+)/);
@@ -972,10 +952,11 @@
           }
           if (entry) entry._exitBuffer = '';
           agentSessionActivity.update(m => { m.set(sessionId, 'done'); return new Map(m); });
-          if (!_suppressExit) {
-            agentSessionExited.update(m => { m.set(sessionId, true); return new Map(m); });
-          } else if (exitedEntry) {
-            // Reset/relaunch/close-tab path — caller disposes; mirror legacy cleanup.
+          // Always dispose the xterm entry on exit. Re-opening the session
+          // from the sidebar will auto-spawn a fresh CLI (with --resume if
+          // claudeSessionId is set), so preserving scrollback in a dead
+          // xterm just to overlay a "Session ended" banner is dead weight.
+          if (exitedEntry) {
             try { exitedEntry.container.remove(); } catch (_) {}
             try { exitedEntry.term.dispose(); } catch (_) {}
             agentTerminalMap.update(m => { m.delete(sessionId); return new Map(m); });
@@ -986,7 +967,7 @@
           // two terminals visible (cross-session leak).
           if (activeTermEntry === exitedEntry) activeTermEntry = null;
           if (currentSessionId === sessionId) currentSessionId = null;
-          if (!_suppressExit) {
+          if (!wasSuppressed) {
             const allTabs = get(tabsStore);
             const exitedTab = allTabs.find(t => t.mode === 'agent' && t.key === sessionId);
             if (exitedTab) {
@@ -1008,7 +989,6 @@
               if (currentActive?.id === sessionId) activeAgentSession.set(null);
             }
           }
-          _suppressExit = false;
           return;
         }
 
@@ -1039,8 +1019,10 @@
 
         // Track activity — only mark 'running' if sustained output (not just echo/redraw)
         // Count bytes in a rolling 500ms window. Claude Code generating output produces
-        // hundreds of bytes/sec. Echo/redraws are < 50 bytes total.
-        if (!_suppressExit) {
+        // hundreds of bytes/sec. Echo/redraws are < 50 bytes total. Skip for terminals
+        // being killed by Clauge so a final output burst before death doesn't flip the
+        // activity indicator back to 'running'.
+        if (!entry?.terminalId || !_suppressedTerminalIds.has(entry.terminalId)) {
           const payloadSize = payload.data?.length || 0;
           activityBytes += payloadSize;
 
@@ -1175,6 +1157,11 @@
         onOutput,
       });
       console.log(`[TERM] Spawn complete: termId=${termId}, gen=${myGeneration}`);
+      // Stamp termId onto the entry so the exit handler (which runs in
+      // the onmessage closure of this spawn) can match against
+      // _suppressedTerminalIds. The store map is the network of record;
+      // entry.terminalId is the per-handler shortcut.
+      if (entry) entry.terminalId = termId;
       agentTerminalIds.update(m => { m.set(session.id, termId); return new Map(m); });
 
       // Start context usage polling (Feature 2)
@@ -1298,17 +1285,24 @@
     const detail = (e as CustomEvent).detail;
     if (!detail?.session) return;
     const session = detail.session;
-    _suppressExit = true;
 
-    // Kill terminal
+    // Kill terminal — register termId in the suppression set BEFORE the
+    // kill so the async exit event routes through the suppressed path
+    // (caller-managed cleanup, no tab close).
     const tIds = get(agentTerminalIds);
     const termId = tIds.get(session.id);
-    if (termId) agentKillTerminal(termId).catch(() => {});
+    if (termId) {
+      _suppressedTerminalIds.add(termId);
+      agentKillTerminal(termId).catch(() => {});
+    }
 
     // Kill shell
     const sIds = get(agentShellIds);
     const shellId = sIds.get(session.id);
-    if (shellId) agentKillTerminal(shellId).catch(() => {});
+    if (shellId) {
+      _suppressedTerminalIds.add(shellId);
+      agentKillTerminal(shellId).catch(() => {});
+    }
 
     // Clear session ID. With the disk-rehydrate path removed, the next
     // spawn sees `claudeSessionId=null` and goes straight to a fresh
@@ -1319,7 +1313,6 @@
     // Remove from maps
     agentTerminalIds.update(m => { m.delete(session.id); return new Map(m); });
     agentShellIds.update(m => { m.delete(session.id); return new Map(m); });
-    agentSessionExited.update(m => { m.delete(session.id); return new Map(m); });
 
     // Remove terminal entry so selectSession creates fresh one
     const tMap = get(agentTerminalMap);
@@ -1343,16 +1336,6 @@
     currentSessionId = null;
     activeTermEntry = null;
     activeShellEntry = null;
-    // DO NOT clear _suppressExit synchronously — the PTY kill above
-    // is async, so the exit event arrives later. Clearing _suppressExit
-    // here would let the exit handler run with suppression off, set
-    // agentSessionExited[id]=true, close the tab, and surface the
-    // "Session ended" banner on re-open. The exit handler clears
-    // _suppressExit itself once it fires (lines 927 / 1022). Safety
-    // net: a setTimeout clears it after 2s in case the exit event
-    // never arrives (rare PTY edge case) so a future natural exit
-    // isn't incorrectly suppressed.
-    setTimeout(() => { _suppressExit = false; }, 2000);
 
     loadAgentSessions().then(() => {
       selectSession(session);
@@ -1364,22 +1347,26 @@
     const detail = (e as CustomEvent).detail;
     if (!detail?.session) return;
     const session = detail.session;
-    _suppressExit = true;
 
-    // Kill terminal
+    // Kill terminal — add termId to the suppression set before the async kill.
     const tIds = get(agentTerminalIds);
     const termId = tIds.get(session.id);
-    if (termId) agentKillTerminal(termId).catch(() => {});
+    if (termId) {
+      _suppressedTerminalIds.add(termId);
+      agentKillTerminal(termId).catch(() => {});
+    }
 
     // Kill shell
     const sIds = get(agentShellIds);
     const shellId = sIds.get(session.id);
-    if (shellId) agentKillTerminal(shellId).catch(() => {});
+    if (shellId) {
+      _suppressedTerminalIds.add(shellId);
+      agentKillTerminal(shellId).catch(() => {});
+    }
 
     // Remove from maps (keep claudeSessionId for --resume)
     agentTerminalIds.update(m => { m.delete(session.id); return new Map(m); });
     agentShellIds.update(m => { m.delete(session.id); return new Map(m); });
-    agentSessionExited.update(m => { m.delete(session.id); return new Map(m); });
 
     const tMap = get(agentTerminalMap);
     const entry = tMap.get(session.id);
@@ -1400,19 +1387,28 @@
     currentSessionId = null;
     activeTermEntry = null;
     activeShellEntry = null;
-    _suppressExit = false; // Reset — killed PTY won't trigger exit detection to clear it
 
     // Relaunch with updated session data (prompt changes picked up from activeAgentSession)
     requestAnimationFrame(() => selectSession(session));
   }
 
-  // Event handler for tab close — kills terminal without deleting session from DB
+  // Event handler for tab close — disposes UI state but does NOT kill the PTY
+  // (the session stays alive in the background; user can reopen from sidebar).
   function handleCloseTabSession(e: Event) {
     const detail = (e as CustomEvent).detail;
     const sessionId = detail?.sessionId;
     if (!sessionId) return;
 
-    _suppressExit = true;
+    // Defensive: in case the PTY happens to exit while the tab is closed,
+    // add its termId so the exit handler doesn't try to close an already-
+    // closed tab. Termids are unique per spawn so a stale set entry never
+    // collides with a future PTY.
+    const tIds0 = get(agentTerminalIds);
+    const termId0 = tIds0.get(sessionId);
+    if (termId0) _suppressedTerminalIds.add(termId0);
+    const sIds0 = get(agentShellIds);
+    const shellId0 = sIds0.get(sessionId);
+    if (shellId0) _suppressedTerminalIds.add(shellId0);
 
     // Cleanup terminal entry
     const tMap = get(agentTerminalMap);
@@ -1434,7 +1430,6 @@
 
     agentTerminalIds.update(m => { m.delete(sessionId); return new Map(m); });
     agentShellIds.update(m => { m.delete(sessionId); return new Map(m); });
-    agentSessionExited.update(m => { m.delete(sessionId); return new Map(m); });
 
     if (activeTermEntry === entry) activeTermEntry = null;
     if (activeShellEntry === sEntry) activeShellEntry = null;
@@ -1447,17 +1442,21 @@
     if (!detail?.session) return;
     const session = detail.session;
 
-    _suppressExit = true;
-
     // Kill terminal
     const tIds = get(agentTerminalIds);
     const termId = tIds.get(session.id);
-    if (termId) await agentKillTerminal(termId).catch(() => {});
+    if (termId) {
+      _suppressedTerminalIds.add(termId);
+      await agentKillTerminal(termId).catch(() => {});
+    }
 
     // Kill shell
     const sIds = get(agentShellIds);
     const shellId = sIds.get(session.id);
-    if (shellId) await agentKillTerminal(shellId).catch(() => {});
+    if (shellId) {
+      _suppressedTerminalIds.add(shellId);
+      await agentKillTerminal(shellId).catch(() => {});
+    }
 
     // Cleanup terminal entry
     const tMap = get(agentTerminalMap);
@@ -1479,7 +1478,6 @@
 
     agentTerminalIds.update(m => { m.delete(session.id); return new Map(m); });
     agentShellIds.update(m => { m.delete(session.id); return new Map(m); });
-    agentSessionExited.update(m => { m.delete(session.id); return new Map(m); });
 
     // Remove worktree if exists. Surface failures via toast — silently
     // swallowing leaves an orphan directory on disk after the DB row is
@@ -1589,8 +1587,6 @@
 <OpenCodeNotInstalledModal bind:show={showOpenCodeNotInstalled} />
 
 {#if $activeAgentSession}
-  {@const _activeId = $activeAgentSession.id}
-  {@const _isExited = $agentSessionExited.get(_activeId) === true}
   <div class="agent-panel" bind:this={wrapperEl}>
     <div class="agent-terminal-main" style="width:{$agentShellOpen ? mainWidth + '%' : '100%'}">
       {#if spawning}
@@ -1609,13 +1605,6 @@
             <span class="loading-title">Starting {_name}</span>
             <span class="loading-sub">Setting up terminal session<span class="loading-dots"></span></span>
           </div>
-        </div>
-      {/if}
-      {#if _isExited && !spawning}
-        <div class="agent-ended-banner">
-          <span class="ended-dot"></span>
-          <span class="ended-text">Session ended</span>
-          <button class="ended-btn" type="button" onclick={startNewForActiveSession}>Start new</button>
         </div>
       {/if}
       {#if termFindOpen}
@@ -1843,51 +1832,6 @@
   @keyframes loadFadeIn {
     from { opacity: 0; transform: scale(0.97); }
     to { opacity: 1; transform: scale(1); }
-  }
-
-  .agent-ended-banner {
-    position: absolute;
-    top: 8px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 10px 6px 12px;
-    border-radius: 999px;
-    background: var(--b1);
-    border: 1px solid var(--b1);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-    font-family: var(--ui);
-    font-size: 12px;
-    color: var(--t2);
-    z-index: 3;
-  }
-  .ended-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--t4);
-    flex-shrink: 0;
-  }
-  .ended-text {
-    color: var(--t3);
-  }
-  .ended-btn {
-    appearance: none;
-    border: none;
-    background: var(--acc);
-    color: #fff;
-    font-family: var(--ui);
-    font-size: 12px;
-    font-weight: 500;
-    padding: 4px 10px;
-    border-radius: 999px;
-    cursor: pointer;
-    transition: opacity 0.15s ease;
-  }
-  .ended-btn:hover {
-    opacity: 0.85;
   }
 
   .agent-shell-panel {
