@@ -1,7 +1,7 @@
 import { writable, get } from 'svelte/store';
 import type { KVInput } from '$lib/types';
 
-export type TabMode = 'rest' | 'sql' | 'nosql' | 'agent' | 'ssh' | 'explorer' | 'history' | 'workspace' | 'settings';
+export type TabMode = 'rest' | 'sql' | 'nosql' | 'agent' | 'canvas' | 'ssh' | 'explorer' | 'history' | 'workspace' | 'settings';
 
 export interface Tab {
   id: number;

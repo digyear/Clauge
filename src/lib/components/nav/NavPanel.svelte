@@ -40,7 +40,7 @@
     mode.set('workspace');
   }
 
-  let searchPerMode = $state<Record<string, string>>({ rest: '', sql: '', nosql: '', agent: '', ssh: '', workspace: '' });
+  let searchPerMode = $state<Record<string, string>>({ rest: '', sql: '', nosql: '', agent: '', canvas: '', ssh: '', workspace: '' });
   let searchQuery = $derived(searchPerMode[$mode] ?? '');
   let restNavRef: ReturnType<typeof RestNav> | undefined = $state();
   let sqlNavRef: ReturnType<typeof SqlNav> | undefined = $state();
@@ -96,6 +96,7 @@
     sql: 'Search connections…',
     nosql: 'Search connections…',
     agent: 'Search sessions…',
+    canvas: 'Search canvas…',
     ssh: 'Search SSH profiles…',
     explorer: 'Search connections…',
     history: 'Search history…',
@@ -313,7 +314,7 @@
         />
       </div>
       {#if $mode !== 'history'}
-        <button class="nav-action nav-add" title={addLabels[$mode]} onclick={handleAddClick}>
+        <button class="nav-action nav-add" title={addLabels[$mode as keyof typeof addLabels] ?? 'Add'} onclick={handleAddClick}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 5v14M5 12h14"/>
           </svg>
