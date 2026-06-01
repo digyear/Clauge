@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { sshTerminalIds, sshTerminalMap, sshProfiles } from '$lib/modes/ssh/stores';
+import { sshTerminalMap, sshProfiles } from '$lib/modes/ssh/stores';
 import { profileIdFromTabKey } from '$lib/modes/ssh/tabkey';
 
 /**
@@ -40,11 +40,16 @@ export function detachSshTerminal(tabKey: string, slot: HTMLElement): void {
  * from the timestamp-counter portion of the key.
  */
 export function listOpenSshTerminals(): { id: string; title: string }[] {
-  const termIds = get(sshTerminalIds);
+  const termMap = get(sshTerminalMap);
   const profiles = get(sshProfiles);
 
   const out: { id: string; title: string }[] = [];
-  for (const [tabKey] of termIds) {
+  // Use sshTerminalMap as the source of truth so entries with a created
+  // xterm container are included even if the PTY backend hasn't connected
+  // yet (i.e. the tabKey is absent from sshTerminalIds).
+  for (const [tabKey, entry] of termMap) {
+    if (!entry?.container) continue;
+
     const profileId = profileIdFromTabKey(tabKey);
     const profile = profiles.find((p) => p.id === profileId);
     const baseName = profile?.name ?? profileId;

@@ -44,7 +44,10 @@ export function listOpenAgentTerminals(): { id: string; title: string }[] {
   const m = get(agentTerminalMap);
   const out: { id: string; title: string }[] = [];
   for (const [sessionId, entry] of m) {
-    if (entry.terminalId) {
+    // Include any entry with a created xterm container, even if the PTY
+    // hasn't connected yet (terminalId == null). The xterm will mount;
+    // once the PTY connects, output flows into it.
+    if (entry?.container) {
       out.push({ id: sessionId, title: sessionId });
     }
   }
