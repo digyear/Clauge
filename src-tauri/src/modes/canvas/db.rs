@@ -74,11 +74,14 @@ pub async fn resolve_tiles(
 
     let starting_z: i64 = existing.iter().map(|t| t.z_order).max().unwrap_or(-1) + 1;
 
+    let total_existing = existing.len();
+
     // Cascade layout: every CASCADE_WRAP tiles wraps back to the start —
     // tiles beyond the wrap window stack directly under earlier ones.
     // Simple and predictable; users drag to disambiguate.
     for (i, r) in missing.iter().enumerate() {
-        let step = (i % CASCADE_WRAP) as f64;
+        let position_index = total_existing + i;
+        let step = (position_index % CASCADE_WRAP) as f64;
         let x = CASCADE_BASE + step * CASCADE_STEP;
         let y = CASCADE_BASE + step * CASCADE_STEP;
         let z = starting_z + i as i64;
