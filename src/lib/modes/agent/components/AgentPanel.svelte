@@ -72,60 +72,52 @@
   let shellEl: HTMLDivElement;
   let wrapperEl: HTMLDivElement;
 
-  // Reparent guard: if the mode becomes 'agent' and the active session's
-  // xterm container has been moved elsewhere (e.g., into a Canvas tile),
-  // pull it back into terminalEl. Without this, switching Canvas → Agent
-  // leaves the panel blank because nothing returns the DOM to terminalEl.
+  // Reparent guard: if the mode becomes 'agent' and session containers have
+  // been moved elsewhere (e.g., into a Canvas tile), pull ALL of them back
+  // into their canonical parents. Every agent-terminal container lives in
+  // terminalEl; every shell container lives in shellEl. Inactive containers
+  // get the .agent-term-hidden class so they remain in the WebKit render
+  // tree (preserving WebGL contexts) while hidden offscreen. This is the
+  // canonical home — after a Canvas round-trip, orphaned containers are
+  // re-homed here so tab-switching works correctly for ALL sessions, not
+  // just the currently-active one.
   $effect(() => {
     if ($mode !== 'agent') return;
     const session = $activeAgentSession;
     if (!session?.id) return;
-    const entry = $agentTerminalMap.get(session.id);
-    if (!entry?.container || !terminalEl) return;
-    if (entry.container.parentElement !== terminalEl) {
-      terminalEl.appendChild(entry.container);
-      try {
-        entry.fitAddon?.fit();
-      } catch {
-        // Layout not ready yet; ResizeObserver will fit shortly.
-      }
-    }
-    // Also re-attach shell container if open.
-    if ($agentShellOpen) {
-      const sEntry = $agentShellMap.get(session.id);
-      if (sEntry?.container && shellEl && sEntry.container.parentElement !== shellEl) {
-        shellEl.appendChild(sEntry.container);
-        try {
-          sEntry.fitAddon?.fit();
-        } catch {
-          // Layout not ready yet; ResizeObserver will fit shortly.
-        }
+
+    // (1) Re-home every agent terminal container to terminalEl with the
+    //     correct visibility class.
+    if (terminalEl) {
+      const activeId = session.id;
+      for (const [sid, sentry] of $agentTerminalMap) {
+        const c = sentry?.container;
+        if (!c) continue;
+        if (c.parentElement !== terminalEl) terminalEl.appendChild(c);
+        if (sid === activeId) c.classList.remove('agent-term-hidden');
+        else c.classList.add('agent-term-hidden');
       }
     }
 
-    // Clean up: ensure no OTHER session's shell container is loose in the
-    // document. xterm's container parented outside both shellEl and terminalEl
-    // (e.g., a stale Canvas tile or document.body) causes ghost rendering at (0,0).
-    const activeSessionId = session.id;
-    for (const [sid, sentry] of $agentShellMap) {
-      if (sid === activeSessionId) continue;
-      const c = sentry?.container;
-      if (!c) continue;
-      const parent = c.parentElement;
-      if (parent && parent !== shellEl && parent !== terminalEl) {
-        parent.removeChild(c);
+    // (2) Same for shells.
+    if (shellEl) {
+      const activeId = session.id;
+      for (const [sid, sentry] of $agentShellMap) {
+        const c = sentry?.container;
+        if (!c) continue;
+        if (c.parentElement !== shellEl) shellEl.appendChild(c);
+        if (sid === activeId) c.classList.remove('agent-term-hidden');
+        else c.classList.add('agent-term-hidden');
       }
     }
-    // Same cleanup for main (agent) terminal containers.
-    for (const [sid, tentry] of $agentTerminalMap) {
-      if (sid === activeSessionId) continue;
-      const c = tentry?.container;
-      if (!c) continue;
-      const parent = c.parentElement;
-      if (parent && parent !== terminalEl && parent !== shellEl) {
-        parent.removeChild(c);
-      }
-    }
+
+    // (3) Fit the active terminal + shell so dimensions are correct after
+    //     a potential Canvas round-trip. ResizeObserver handles subsequent
+    //     layout changes.
+    const activeEntry = $agentTerminalMap.get(session.id);
+    try { activeEntry?.fitAddon?.fit(); } catch { /* Layout not ready yet; ResizeObserver will fit shortly. */ }
+    const activeShellEntry = $agentShellMap.get(session.id);
+    try { activeShellEntry?.fitAddon?.fit(); } catch { /* Layout not ready yet; ResizeObserver will fit shortly. */ }
   });
 
   // Active terminal entry refs
