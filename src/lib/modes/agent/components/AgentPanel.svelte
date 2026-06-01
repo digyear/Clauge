@@ -1964,14 +1964,8 @@
     opacity: 0;
   }
 
-  /* Keep inactive xterm containers in the render tree so WebKit preserves their
-     WebGL contexts. display:none evicts GPU textures permanently in WebKit. */
   .agent-term-hidden {
-    visibility: hidden !important;
-    position: absolute !important;
-    left: -99999px !important;
-    top: 0 !important;
-    pointer-events: none !important;
+    display: none !important;
   }
 
   .shell-loading {
