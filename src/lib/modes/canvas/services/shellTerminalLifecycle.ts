@@ -46,16 +46,27 @@ export async function spawnShellTerminal(workspaceId: string, cwd: string): Prom
 
   const channel = new Channel<ShellOutput>();
   channel.onmessage = (msg) => {
+    if (!msg.data) return;
+    let bytes: Uint8Array;
+    try {
+      const binary = atob(msg.data);
+      bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    } catch {
+      bytes = new TextEncoder().encode(msg.data);
+    }
     const e = get(shellTerminals).get(id);
-    if (e?.internal && msg.data) {
-      try {
-        const binary = atob(msg.data);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        e.internal.term.write(bytes);
-      } catch {
-        e.internal.term.write(msg.data);
-      }
+    if (!e) return;
+    if (e.internal) {
+      e.internal.term.write(bytes);
+    } else {
+      // xterm not yet created — buffer until first attach.
+      shellTerminals.update((m) => {
+        const next = new Map(m);
+        const cur = next.get(id);
+        if (cur) next.set(id, { ...cur, pending: [...(cur.pending ?? []), bytes] });
+        return next;
+      });
     }
   };
 
@@ -112,10 +123,19 @@ export function attachShellTerminal(id: string, slot: HTMLElement): void {
       }
     });
 
+    // Flush any bytes the PTY emitted before the xterm existed.
+    const pending = entry.pending;
+    if (pending && pending.length > 0) {
+      for (const chunk of pending) term.write(chunk);
+    }
+
     shellTerminals.update((m) => {
       const next = new Map(m);
       const cur = next.get(id);
-      if (cur) next.set(id, { ...cur, internal: { term, fitAddon, container } });
+      if (cur) {
+        const { pending: _, ...rest } = cur;
+        next.set(id, { ...rest, internal: { term, fitAddon, container } });
+      }
       return next;
     });
   } else {

@@ -13,6 +13,8 @@ export interface ShellTerminalEntry {
   cwd: string;
   terminalId: string | null;
   internal?: ShellTerminalInternal;
+  // Bytes emitted by the PTY before the xterm exists. Flushed on first attach.
+  pending?: Uint8Array[];
 }
 
 export const shellTerminals = writable<Map<string, ShellTerminalEntry>>(new Map());

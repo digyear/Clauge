@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { mode } from '$lib/stores/app';
+import { mode, setMode } from '$lib/stores/app';
 import { navOpen, aiPanelOpen, aiPanelOpenPerMode, activeModal } from '$lib/stores/app';
 import { tabs, activeTabId, closeTab, getDraft, markClean } from '$lib/shared/stores/tabs';
 import { commitRequest } from '$lib/modes/rest/stores';
@@ -128,7 +128,7 @@ function handleKeydown(e: KeyboardEvent) {
     const modes = ['agent', 'workspace', 'rest', 'sql', 'nosql', 'ssh', 'explorer', 'history'] as const;
     if (idx >= 0 && idx < modes.length) {
       e.preventDefault();
-      mode.set(modes[idx]);
+      void setMode(modes[idx]);
       return;
     }
   }

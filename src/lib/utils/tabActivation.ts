@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { mode } from '$lib/stores/app';
+import { setMode } from '$lib/stores/app';
 import { tabs, activateTab } from '$lib/shared/stores/tabs';
 
 // Switches to the tab's mode, activates it, and runs mode-specific
@@ -12,7 +12,7 @@ export async function activateTabAcrossMode(tabId: number) {
   if (!tab) return;
   // Settings is cross-mode — keep $mode pointing at the user's actual
   // mode so the "+" button + AI panel + sidebar highlight stay correct.
-  if (tab.mode !== 'settings') mode.set(tab.mode as any);
+  if (tab.mode !== 'settings') await setMode(tab.mode as any);
   activateTab(tabId);
   if (tab.mode === 'rest') {
     const { loadRequest, clearActiveRequest } = await import('$lib/modes/rest/stores');
