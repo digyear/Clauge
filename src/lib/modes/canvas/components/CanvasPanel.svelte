@@ -8,7 +8,7 @@
     setActiveWorkspace,
     viewport,
   } from '$lib/modes/canvas/stores/canvasStore';
-  import { canvasGetViewport } from '$lib/modes/canvas/commands';
+  import { canvasGetViewport, type TabRef } from '$lib/modes/canvas/commands';
   import { canvasAdapterRegistry } from '$lib/modes/canvas/adapter-registry';
   import { agentTerminalAdapter } from '$lib/modes/agent/canvas-adapter';
   import { sshTerminalAdapter } from '$lib/modes/ssh/canvas-adapter';
@@ -16,7 +16,16 @@
     shellTerminalAdapter,
     performShellClose,
   } from '$lib/modes/canvas/adapters/shellTerminalAdapter';
+  import { restRequestAdapter } from '$lib/modes/rest/canvas-adapter';
+  import { explorerFileBrowserAdapter } from '$lib/modes/explorer/canvas-adapter';
+  import {
+    mongoQueryAdapter,
+    redisQueryAdapter,
+  } from '$lib/modes/nosql/canvas-adapter';
+  import { sqlEditorAdapter } from '$lib/modes/sql/canvas-adapter';
   import { canvasEnabled } from '$lib/modes/canvas/stores/canvasEnabled';
+  import { startRenderScaleSync } from '$lib/modes/canvas/services/xtermRenderScale';
+  import { mode } from '$lib/stores/app';
   import CanvasViewport from './CanvasViewport.svelte';
   import CanvasIntro from './CanvasIntro.svelte';
   import ConfirmDialog from '$lib/shared/primitives/ConfirmDialog.svelte';
@@ -28,6 +37,7 @@
   let resolveTimer: ReturnType<typeof setTimeout> | null = null;
   let unsubscribes: Array<() => void> = [];
   let adapterUnsubscribes: Array<() => void> = [];
+  let stopRenderScaleSync: (() => void) | null = null;
   let initialized = false;
 
   let showShellCloseConfirm = $state(false);
@@ -51,16 +61,19 @@
       clearTimeout(resolveTimer);
       resolveTimer = null;
     }
-    const agentTabs = agentTerminalAdapter
-      .listOpenTabs(ACTIVE_WORKSPACE_ID)
-      .map((t) => ({ tabKind: 'agent_terminal' as const, tabId: t.id }));
-    const sshTabs = sshTerminalAdapter
-      .listOpenTabs(ACTIVE_WORKSPACE_ID)
-      .map((t) => ({ tabKind: 'ssh_terminal' as const, tabId: t.id }));
-    const shellTabs = shellTerminalAdapter
-      .listOpenTabs(ACTIVE_WORKSPACE_ID)
-      .map((t) => ({ tabKind: 'shell_terminal' as const, tabId: t.id }));
-    await loadCanvas(ACTIVE_WORKSPACE_ID, [...agentTabs, ...sshTabs, ...shellTabs]);
+    const refs: TabRef[] = [];
+    for (const adapter of canvasAdapterRegistry.list()) {
+      const size = adapter.defaultSpawnSize;
+      for (const t of adapter.listOpenTabs(ACTIVE_WORKSPACE_ID)) {
+        refs.push({
+          tabKind: adapter.tabKind,
+          tabId: t.id,
+          defaultWidth: size?.width,
+          defaultHeight: size?.height,
+        });
+      }
+    }
+    await loadCanvas(ACTIVE_WORKSPACE_ID, refs);
   }
 
   function scheduleResolve() {
@@ -80,6 +93,11 @@
     canvasAdapterRegistry.register(agentTerminalAdapter);
     canvasAdapterRegistry.register(sshTerminalAdapter);
     canvasAdapterRegistry.register(shellTerminalAdapter);
+    canvasAdapterRegistry.register(explorerFileBrowserAdapter);
+    canvasAdapterRegistry.register(restRequestAdapter);
+    canvasAdapterRegistry.register(mongoQueryAdapter);
+    canvasAdapterRegistry.register(redisQueryAdapter);
+    canvasAdapterRegistry.register(sqlEditorAdapter);
 
     setActiveWorkspace(ACTIVE_WORKSPACE_ID);
     const v = await canvasGetViewport(ACTIVE_WORKSPACE_ID);
@@ -94,6 +112,11 @@
       agentTerminalAdapter.subscribe(ACTIVE_WORKSPACE_ID, scheduleResolve),
       sshTerminalAdapter.subscribe(ACTIVE_WORKSPACE_ID, scheduleResolve),
       shellTerminalAdapter.subscribe(ACTIVE_WORKSPACE_ID, scheduleResolve),
+      explorerFileBrowserAdapter.subscribe(ACTIVE_WORKSPACE_ID, scheduleResolve),
+      restRequestAdapter.subscribe(ACTIVE_WORKSPACE_ID, scheduleResolve),
+      mongoQueryAdapter.subscribe(ACTIVE_WORKSPACE_ID, scheduleResolve),
+      redisQueryAdapter.subscribe(ACTIVE_WORKSPACE_ID, scheduleResolve),
+      sqlEditorAdapter.subscribe(ACTIVE_WORKSPACE_ID, scheduleResolve),
     );
   }
 
@@ -104,10 +127,22 @@
     }
     for (const u of adapterUnsubscribes) u();
     adapterUnsubscribes = [];
+    stopRenderScaleSyncIfActive();
     canvasAdapterRegistry.clear();
     initialized = false;
     void flushViewportNow();
     void flushDirtyTilesNow();
+  }
+
+  function startRenderScaleSyncIfNeeded() {
+    if (stopRenderScaleSync) return;
+    stopRenderScaleSync = startRenderScaleSync();
+  }
+
+  function stopRenderScaleSyncIfActive() {
+    if (!stopRenderScaleSync) return;
+    stopRenderScaleSync();
+    stopRenderScaleSync = null;
   }
 
   onMount(() => {
@@ -122,6 +157,15 @@
       }
     });
     unsubscribes.push(unsub);
+
+    const unsubMode = mode.subscribe((m) => {
+      if (m === 'canvas' && get(canvasEnabled)) {
+        startRenderScaleSyncIfNeeded();
+      } else {
+        stopRenderScaleSyncIfActive();
+      }
+    });
+    unsubscribes.push(unsubMode);
 
     const onShellCloseRequest = (e: Event) => {
       const tabId = (e as CustomEvent<{ tabId: string }>).detail?.tabId;

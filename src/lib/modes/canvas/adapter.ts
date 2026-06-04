@@ -16,6 +16,13 @@ export interface CanvasTabAdapter {
   tabKind: TabKind;
   mountStrategy: MountStrategy;
 
+  /**
+   * Initial spawn size when this adapter's tile is first created. Defaults
+   * to the backend's 720x480 if omitted. Used by `resolveTilesNow` so the
+   * tile renders comfortably for the host content (kanban needs more, etc.).
+   */
+  defaultSpawnSize?: { width: number; height: number };
+
   /** Return currently-open tabs for this workspace (for canvas_resolve_tiles input). */
   listOpenTabs(workspaceId: string): { id: string; title: string }[];
 

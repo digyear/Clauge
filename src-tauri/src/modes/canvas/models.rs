@@ -40,6 +40,8 @@ pub struct CanvasViewport {
 pub struct TabRef {
     pub tab_kind: String,
     pub tab_id: String,
+    pub default_width: Option<f64>,
+    pub default_height: Option<f64>,
 }
 
 /// Geometry update payload for batched tile flush.

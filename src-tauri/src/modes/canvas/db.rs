@@ -85,6 +85,8 @@ pub async fn resolve_tiles(
         let x = CASCADE_BASE + step * CASCADE_STEP;
         let y = CASCADE_BASE + step * CASCADE_STEP;
         let z = starting_z + i as i64;
+        let w = r.default_width.unwrap_or(DEFAULT_TILE_WIDTH);
+        let h = r.default_height.unwrap_or(DEFAULT_TILE_HEIGHT);
 
         sqlx::query(
             "INSERT INTO canvas_tiles
@@ -96,8 +98,8 @@ pub async fn resolve_tiles(
         .bind(&r.tab_kind)
         .bind(x)
         .bind(y)
-        .bind(DEFAULT_TILE_WIDTH)
-        .bind(DEFAULT_TILE_HEIGHT)
+        .bind(w)
+        .bind(h)
         .bind(z)
         .execute(&mut *tx)
         .await?;

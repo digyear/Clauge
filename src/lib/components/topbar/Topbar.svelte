@@ -1,5 +1,6 @@
 <script lang="ts">
   import { navOpen, aiPanelOpen, aiPanelOpenPerMode, mode, setMode } from '$lib/stores/app';
+  import { focusedTabId } from '$lib/modes/canvas/stores/canvasStore';
   import { tabs, activeTabId, addTab, closeTab, activateTab, getDraft, markClean, clearDraft } from '$lib/shared/stores/tabs';
   import { activeRequestId, loadRequest, clearActiveRequest, commitRequest } from '$lib/modes/rest/stores';
   import { sqlIsConnected, activeConnection, disconnectFromDb, initSqlTab, clearSqlTabData, setSqlTabData, sqlScripts, saveSqlScript, updateSqlScript, deleteSqlScript, getSqlTabData, activeConnectionId, selectedDatabase, connectToDatabase, sqlPendingChanges, connectToDb, connectedIds, connections, loadConnections } from '$lib/modes/sql/stores';
@@ -546,7 +547,10 @@
     {#each filteredTabs as tab (tab.id)}
       <button
         class="tab"
-        class:on={$activeTabId === tab.id && (tab.mode === $mode || tab.mode === 'settings')}
+        class:on={
+          ($mode === 'canvas' && $focusedTabId && tab.key === $focusedTabId) ||
+          ($activeTabId === tab.id && (tab.mode === $mode || tab.mode === 'settings'))
+        }
         class:tab-dirty={tab.mode === 'rest' && (tab.dirty || tab.unsaved)}
         onclick={() => handleTabClick(tab.id)}
         oncontextmenu={(e: MouseEvent) => handleTabContextMenu(e, tab)}

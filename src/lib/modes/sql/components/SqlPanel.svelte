@@ -7,7 +7,6 @@
     connections,
     sqlTabState,
     setSqlTabData,
-    getSqlTabData,
     ensureConnected,
     setBinding,
     cancelQuery,
@@ -23,19 +22,19 @@
     loadTablesForDb,
     insertQueryText,
     aiExecuteQuery,
-    sqlRowLimit,
     updateSqlScript,
     registerSqlEventListeners,
   } from '../stores';
   import { tabs, activeTabId, addTab } from '$lib/shared/stores/tabs';
-  import { sqlExecuteQuery, sqlExecuteBatch, sqlDescribeTable, sqlCurrentSchema } from '../commands';
-  import type { TableInfo, SqlResultEntry, ColumnInfo, SqlQueryResult, Binding } from '../types';
+  import { sqlDescribeTable, sqlCurrentSchema } from '../commands';
+  import { destroySqlEditor, listOpenSqlEditors } from '../services/sqlEditorReparent';
+  import {
+    executeSqlForTab,
+    executeSqlBatchForTab,
+  } from '../services/sqlExecuteService';
+  import type { TableInfo, ColumnInfo } from '../types';
   import { descriptorFor } from '../dialects';
   import { showToast } from '$lib/shared/primitives/toast';
-  import { friendlyError } from '$lib/utils/errors';
-  import { get } from 'svelte/store';
-  import { splitSqlStatements } from '../utils/splitter';
-  import { translateMetaCommand } from '../utils/psqlMeta';
 
   // Component-local UI state
   let editorHeight = $state(45);
@@ -337,298 +336,77 @@
   });
 
   // --- Query change autosave -----------------------------------------------
+  //
+  // The CodeMirror EditorView is owned by the singleton reparent
+  // registry and writes every doc change directly to sqlTabState. We
+  // watch `currentQuery` here and debounce a backend save when the
+  // active tab has a persisted script key. Skipping the very first
+  // value avoids re-saving the loaded text right after the tab is
+  // populated.
 
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSavedQuery: string | null = null;
+  let lastSavedTabId: number | null = null;
 
-  function handleQueryChange(q: string) {
-    if (!activeSqlTab) return;
-    setSqlTabData(activeSqlTab.id, { query: q });
-
-    if (activeSqlTab.key) {
-      if (saveTimer) clearTimeout(saveTimer);
-      const scriptId = activeSqlTab.key;
-      const label = activeSqlTab.label;
-      // Autosave the CURRENT binding alongside name+query. Both fields
-      // update atomically via COALESCE on the backend, so the script's
-      // `(connection_id, database_name)` pair can never end up
-      // mismatched — they always move together. Picking a different
-      // DB from the pill, then typing, persists the new target.
-      const bConn = binding?.connectionId;
-      const bDb = binding?.database;
-      saveTimer = setTimeout(async () => {
-        try {
-          await updateSqlScript(scriptId, label, q, bDb, bConn);
-        } catch {
-          /* silent — retry on close */
-        }
-      }, 1500);
+  $effect(() => {
+    const q = currentQuery;
+    const tab = activeSqlTab;
+    if (!tab) {
+      lastSavedQuery = null;
+      lastSavedTabId = null;
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+      return;
     }
-  }
-
-  // --- LIMIT injection + result-label helpers (preserved) ------------------
-
-  function applyRowLimit(query: string): string {
-    const limit = get(sqlRowLimit);
-    if (limit <= 0) return query;
-    let trimmed = query.trim().replace(/;+\s*$/, '');
-    if (!/^\s*select\b/i.test(trimmed)) return query;
-    if (/\bLIMIT\s+\d+/i.test(trimmed)) return query;
-    if (/\bFORMAT\s+\w+\s*$/i.test(trimmed)) return query;
-    if (/\bSETTINGS\b/i.test(trimmed)) return query;
-    trimmed = trimmed.replace(/--[^\n]*$/, '').trimEnd();
-    return `${trimmed} LIMIT ${limit}`;
-  }
-
-  /** Translate `\dt`, `.tables`, etc. into the equivalent SELECT before
-   *  the engine sees them. Returns the original query when there's no
-   *  meta-command to rewrite (or the driver doesn't support them). */
-  function rewriteMetaCommand(query: string): string {
-    const driver = boundConnection?.driver;
-    if (!driver) return query;
-    const rewritten = translateMetaCommand(query, driver);
-    return rewritten ?? query;
-  }
-
-  /** After a successful execution, if any of the statements were DDL
-   *  (CREATE / DROP / ALTER / RENAME / TRUNCATE), invalidate the table
-   *  cache so the next autocomplete reconfigure sees the new schema.
-   *  Cheap to call — no-ops when no DDL ran.
-   *
-   *  `target` MUST be the binding that was active when the query started
-   *  — not the reactive `binding`. Reading `binding` here would invalidate
-   *  the wrong tab's cache if the user switched tabs while the query was
-   *  awaiting on the server. Callers snapshot via `const execBinding =
-   *  binding` before the first await and pass that snapshot through. */
-  async function refreshSchemaIfDdl(
-    target: Binding,
-    items: (SqlQueryResult | null | undefined)[],
-  ) {
-    const hasDdl = items.some((r) => r && r.queryKind === 'ddl');
-    if (!hasDdl) return;
-    const cacheKey = `${target.connectionId}:${target.database}`;
-    databaseTables.update((m) => {
-      const n = new Map(m);
-      n.delete(cacheKey);
-      return n;
-    });
-    // Only clobber the local columnMap if it still belongs to the
-    // executed binding — otherwise the user has already moved on and
-    // we'd be wiping the new tab's autocomplete data.
-    if (columnMapKey === cacheKey) {
-      columnMap = {};
-      columnMapKey = '';
+    if (lastSavedTabId !== tab.id) {
+      lastSavedTabId = tab.id;
+      lastSavedQuery = q;
+      return;
     }
-    await loadTablesForDb(target.connectionId, target.database);
-  }
+    if (q === lastSavedQuery) return;
+    lastSavedQuery = q;
+    if (!tab.key) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    const scriptId = tab.key;
+    const label = tab.label;
+    const bConn = binding?.connectionId;
+    const bDb = binding?.database;
+    saveTimer = setTimeout(async () => {
+      try {
+        await updateSqlScript(scriptId, label, q, bDb, bConn);
+      } catch {
+        /* silent — retry on close */
+      }
+    }, 1500);
+  });
 
-  function makeResultLabel(query: string): string {
-    const trimmed = query.trim().replace(/\s+/g, ' ');
-    const match = trimmed.match(/\b(?:FROM|INTO|UPDATE|TABLE|INDEX\s+(?:\w+\s+)?ON)\s+[`"']?(\w+)/i);
-    if (match) return match[1];
-    return trimmed.length > 30 ? trimmed.slice(0, 30) + '...' : trimmed;
-  }
+  // Tear down singleton EditorViews for SQL tabs that no longer exist
+  // in the shared tabs store. Without this, closing a SQL tab leaks
+  // its CodeMirror instance and DOM container.
+  $effect(() => {
+    const ids = new Set($tabs.filter((t) => t.mode === 'sql').map((t) => t.id));
+    for (const id of listOpenSqlEditors()) {
+      if (!ids.has(id)) destroySqlEditor(id);
+    }
+  });
 
   // --- Execute / Cancel ----------------------------------------------------
 
   let queryEditorRef: { handleExecute: () => void } | undefined = $state();
 
-  function makeQueryId(): string {
-    return (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  }
-
   async function handleExecute(q: string) {
-    if (!activeSqlTab || !binding) {
+    if (!activeSqlTab) {
       showToast('Pick a connection first', 'error');
       return;
     }
-    if (currentTabData?.inFlight) return; // structurally blocked, defensive
-
-    // Snapshot the binding before any await. Reactive `binding` can
-    // change mid-execute if the user switches tabs; we need to point
-    // results, schema invalidation, and the cancel handle at the
-    // binding that *started* the query.
-    const execBinding: Binding = binding;
-
-    // Always re-check the pool before executing. ensureConnected is a
-    // no-op when already connected. If the user clicks Run during the
-    // connect handshake, this awaits the same in-flight Promise.
-    try {
-      await ensureConnected(execBinding.connectionId, execBinding.database);
-    } catch (e: any) {
-      showToast(`Couldn't connect: ${friendlyError(e)}`, 'error');
-      return;
-    }
-
-    const tabId = activeSqlTab.id;
-    const queryId = makeQueryId();
-    const label = makeResultLabel(q);
-    const existing = getSqlTabData(tabId).results || [];
-    const existingIdx = existing.findIndex((e) => e.label === label);
-
-    const startedAt = Date.now();
-    setSqlTabData(tabId, {
-      inFlight: { queryId, startedAt },
-      error: null,
-    });
-
-    try {
-      const result = await sqlExecuteQuery(
-        execBinding.connectionId,
-        execBinding.database,
-        applyRowLimit(rewriteMetaCommand(q)),
-        queryId,
-      );
-      const entry: SqlResultEntry = { label, query: q, result, error: null, startedAt };
-      let updated: SqlResultEntry[];
-      let focusIdx: number;
-      if (existingIdx >= 0) {
-        updated = [...existing];
-        updated[existingIdx] = entry;
-        focusIdx = existingIdx;
-      } else {
-        updated = [...existing, entry];
-        focusIdx = updated.length - 1;
-      }
-      setSqlTabData(tabId, {
-        result,
-        results: updated,
-        activeResultIdx: focusIdx,
-        inFlight: null,
-      });
-      showToast(`Query completed in ${result.durationMs}ms`, 'success');
-      void refreshSchemaIfDdl(execBinding, [result]);
-    } catch (e: any) {
-      const msg = e?.toString?.() ?? String(e);
-      const entry: SqlResultEntry = { label, query: q, result: null, error: msg, startedAt };
-      let updated: SqlResultEntry[];
-      let focusIdx: number;
-      if (existingIdx >= 0) {
-        updated = [...existing];
-        updated[existingIdx] = entry;
-        focusIdx = existingIdx;
-      } else {
-        updated = [...existing, entry];
-        focusIdx = updated.length - 1;
-      }
-      setSqlTabData(tabId, {
-        error: msg,
-        results: updated,
-        activeResultIdx: focusIdx,
-        inFlight: null,
-      });
-      showToast(friendlyError(e), 'error');
-    }
+    await executeSqlForTab(activeSqlTab.id, q);
   }
 
   async function handleExecuteMulti(queries: string[]) {
-    if (!activeSqlTab || !binding) {
+    if (!activeSqlTab) {
       showToast('Pick a connection first', 'error');
       return;
     }
-    if (currentTabData?.inFlight) return;
-
-    // Snapshot binding before any await — see refreshSchemaIfDdl docs.
-    const execBinding: Binding = binding;
-
-    try {
-      await ensureConnected(execBinding.connectionId, execBinding.database);
-    } catch (e: any) {
-      showToast(`Couldn't connect: ${friendlyError(e)}`, 'error');
-      return;
-    }
-
-    const tabId = activeSqlTab.id;
-    const entries: SqlResultEntry[] = queries.map((q) => ({
-      label: makeResultLabel(q),
-      query: q,
-      result: null,
-      error: null,
-      startedAt: Date.now(),
-    }));
-
-    // One InFlight entry for the whole batch — the backend acquires one
-    // connection and one transaction (PG/MySQL/SQLite) and runs every
-    // statement on it. Cancellation mid-batch isn't supported in this
-    // path yet; users wanting per-statement cancel should execute
-    // statements singly.
-    const batchId = makeQueryId();
-    const batchStartedAt = Date.now();
-    setSqlTabData(tabId, {
-      inFlight: { queryId: batchId, startedAt: batchStartedAt },
-      result: null,
-      error: null,
-      results: entries,
-      activeResultIdx: 0,
-    });
-
-    const driver = boundConnection?.driver ?? '';
-    // PG/MySQL/SQLite get true BEGIN/COMMIT/ROLLBACK. CH and D1 fall
-    // back to sequential auto-commits in the backend — same atomicity
-    // story as before, just consolidated to one Tauri call.
-    const isTransactional = ['postgresql', 'mysql', 'sqlite'].includes(driver);
-
-    const prepared = queries.map((q) => applyRowLimit(rewriteMetaCommand(q)));
-
-    let results: SqlQueryResult[] = [];
-    let batchError: string | null = null;
-    try {
-      results = await sqlExecuteBatch(execBinding.connectionId, execBinding.database, prepared);
-    } catch (e: any) {
-      batchError = e?.toString?.() ?? String(e);
-    }
-
-    if (batchError) {
-      // The backend's error message already names the failing statement
-      // index and (for transactional engines) confirms rollback. We
-      // surface it on the first entry without a result so the user can
-      // see what hit.
-      const firstUnsuccessful = results.length;
-      for (let i = 0; i < entries.length; i++) {
-        if (i < results.length) {
-          entries[i].result = results[i];
-        } else if (i === firstUnsuccessful) {
-          entries[i].error = batchError;
-        }
-      }
-      setSqlTabData(tabId, {
-        inFlight: null,
-        result: entries[entries.length - 1]?.result ?? null,
-        error: batchError,
-        results: entries,
-        activeResultIdx: firstUnsuccessful,
-      });
-      if (isTransactional) {
-        showToast(
-          `Batch rolled back — ${queries.length - firstUnsuccessful} statements failed (no changes persisted)`,
-          'error',
-        );
-      } else {
-        showToast(
-          `Batch failed at statement ${firstUnsuccessful + 1} — ${firstUnsuccessful} statement(s) already persisted (engine has no rollback)`,
-          'error',
-        );
-      }
-      return;
-    }
-
-    // Full success.
-    for (let i = 0; i < entries.length; i++) {
-      entries[i].result = results[i] ?? null;
-    }
-    setSqlTabData(tabId, {
-      inFlight: null,
-      result: entries[entries.length - 1]?.result ?? null,
-      error: null,
-      results: entries,
-      activeResultIdx: entries.length - 1,
-    });
-    showToast(
-      isTransactional
-        ? `${queries.length} statements committed atomically`
-        : `${queries.length} statements completed`,
-      'success',
-    );
-    void refreshSchemaIfDdl(execBinding, results);
+    await executeSqlBatchForTab(activeSqlTab.id, queries);
   }
 
   async function handleCancel() {
@@ -829,24 +607,23 @@
     {/if}
 
     <!-- Top: Query Editor -->
-    <!-- Keyed by tab id so each tab owns its CodeMirror EditorView (and
-         therefore its own undo history). Sharing one editor across tabs
-         leaked cmd+z across tab boundaries. -->
+    <!-- The EditorView lives in the singleton reparent registry, keyed
+         by tab id. The registry surfaces one EditorView per tab so undo
+         history, cursor, and selection survive tab switches and Atlas
+         canvas tile reparent. -->
     <div class="sql-editor" style="height:{editorHeight}%">
-      {#key activeSqlTab?.id}
-        <QueryEditor
-          bind:this={queryEditorRef}
-          query={currentQuery}
-          tables={tableList}
-          {columnMap}
-          schemaLoading={isSchemaLoading}
-          defaultSchema={binding ? $defaultSchemas.get(`${binding.connectionId}:${binding.database}`) : undefined}
-          disabled={!!inFlight || isConnecting}
-          onexecute={handleExecute}
-          onexecutemulti={handleExecuteMulti}
-          onquerychange={handleQueryChange}
-        />
-      {/key}
+      <QueryEditor
+        bind:this={queryEditorRef}
+        tabId={activeSqlTab!.id}
+        query={currentQuery}
+        tables={tableList}
+        {columnMap}
+        schemaLoading={isSchemaLoading}
+        defaultSchema={binding ? $defaultSchemas.get(`${binding.connectionId}:${binding.database}`) : undefined}
+        disabled={!!inFlight || isConnecting}
+        onexecute={handleExecute}
+        onexecutemulti={handleExecuteMulti}
+      />
     </div>
 
     <!-- Draggable divider -->

@@ -1,5 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
-import type { CanvasTile, TabRef } from '$lib/modes/canvas/commands';
+import type { CanvasTile, TabKind, TabRef } from '$lib/modes/canvas/commands';
+import type { AppMode } from '$lib/stores/app';
 import {
   canvasResolveTiles,
   canvasSetViewport,
@@ -115,4 +116,33 @@ export async function flushDirtyTilesNow(): Promise<void> {
 // Z-ordered list for rendering — Phase 3 consumes this.
 export const tilesSortedByZ = derived(tilesByTab, ($map) =>
   [...$map.values()].sort((a, b) => a.zOrder - b.zOrder),
+);
+
+/**
+ * Maps a focused tile's TabKind back to its source mode (the value of $mode
+ * when the user navigates to that tab's home). Used by future AI panel /
+ * hotkey routing on canvas; safe to consume now even though plumbing is
+ * still hidden behind v2 polish work.
+ */
+const TAB_KIND_TO_MODE: Partial<Record<TabKind, AppMode>> = {
+  agent_terminal: 'agent',
+  ssh_terminal: 'ssh',
+  shell_terminal: 'canvas',
+  sql_editor: 'sql',
+  rest_request: 'rest',
+  mongo_query: 'nosql',
+  redis_query: 'nosql',
+  explorer_file_browser: 'explorer',
+  workspace_note: 'workspace',
+  workspace_board: 'workspace',
+};
+
+export const focusedTileMode = derived(
+  [focusedTabId, tilesByTab],
+  ([$id, $map]): AppMode | null => {
+    if (!$id) return null;
+    const tile = $map.get($id);
+    if (!tile) return null;
+    return TAB_KIND_TO_MODE[tile.tabKind as TabKind] ?? null;
+  },
 );

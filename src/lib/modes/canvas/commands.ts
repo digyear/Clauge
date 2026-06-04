@@ -1,16 +1,17 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 
-/** Must match the tab_kind CHECK constraint in src-tauri/migrations/19_canvas_tables.sql and 20_canvas_shell_terminal.sql. */
+/** Must match the tab_kind CHECK constraint in the latest canvas_tiles migration. */
 export type TabKind =
   | 'agent_terminal'
   | 'ssh_terminal'
+  | 'shell_terminal'
   | 'sql_editor'
   | 'rest_request'
   | 'mongo_query'
   | 'redis_query'
+  | 'explorer_file_browser'
   | 'workspace_note'
-  | 'workspace_board'
-  | 'shell_terminal';
+  | 'workspace_board';
 
 export interface CanvasTile {
   workspaceId: string;
@@ -39,6 +40,10 @@ export interface CanvasViewport {
 export interface TabRef {
   tabKind: TabKind;
   tabId: string;
+  /** Width to spawn new tiles at (per-kind default). Omit = backend default. */
+  defaultWidth?: number;
+  /** Height to spawn new tiles at (per-kind default). Omit = backend default. */
+  defaultHeight?: number;
 }
 
 export interface TileGeometryUpdate {
