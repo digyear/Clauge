@@ -49,9 +49,9 @@
             const termId = get(sshTerminalIds).get(tile.tabId);
             if (termId) resizePty = (c, r) => { sshResizeTerminal(termId, c, r).catch(() => {}); };
           } else if (kind === 'shell_terminal') {
+            // shellTerminalLifecycle wires term.onResize → agentResizeTerminal
+            // already, so we only need to fit() here; don't double-dispatch.
             fitAddon = get(shellTerminals).get(tile.tabId)?.internal?.fitAddon as typeof fitAddon;
-            const termId = get(shellTerminals).get(tile.tabId)?.terminalId;
-            if (termId) resizePty = (c, r) => { agentResizeTerminal(termId, c, r).catch(() => {}); };
           }
           try {
             fitAddon?.fit();

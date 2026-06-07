@@ -40,9 +40,8 @@ export function installXtermPointerCompensation(host: HTMLElement): () => void {
   const adjust = (e: PointerEvent | MouseEvent) => {
     const v = get(viewport);
     if (v.zoom === 1) return;
-    const target = e.target as HTMLElement | null;
-    if (!target) return;
-    const xtermRoot = target.closest('.xterm') as HTMLElement | null;
+    if (!(e.target instanceof Element)) return;
+    const xtermRoot = e.target.closest('.xterm') as HTMLElement | null;
     if (!xtermRoot) return;
     const rect = xtermRoot.getBoundingClientRect();
     const newClientX = rect.left + (e.clientX - rect.left) / v.zoom;

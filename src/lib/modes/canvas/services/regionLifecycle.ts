@@ -67,7 +67,15 @@ export async function createRegion(opts: CreateRegionOptions): Promise<CanvasReg
   try {
     await canvasUpsertRegion(region);
   } catch (err) {
-    console.error('[atlas] failed to persist region', err);
+    // Roll the optimistic insert back so we don't leave a ghost region
+    // floating on the canvas with no backend row.
+    regionsById.update((m) => {
+      const next = new Map(m);
+      next.delete(region.regionId);
+      return next;
+    });
+    pendingRenameRegionId.update((cur) => (cur === region.regionId ? null : cur));
+    throw err;
   }
   return region;
 }

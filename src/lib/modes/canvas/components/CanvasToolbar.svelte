@@ -34,13 +34,17 @@
     const v = $viewport;
     const cx = (window.innerWidth / 2 - v.offsetX) / v.zoom - REGION_DEFAULT_W / 2;
     const cy = (window.innerHeight / 2 - v.offsetY) / v.zoom - REGION_DEFAULT_H / 2;
-    await createRegion({
-      workspaceId: ACTIVE_WORKSPACE_ID,
-      x: cx,
-      y: cy,
-      width: REGION_DEFAULT_W,
-      height: REGION_DEFAULT_H,
-    });
+    try {
+      await createRegion({
+        workspaceId: ACTIVE_WORKSPACE_ID,
+        x: cx,
+        y: cy,
+        width: REGION_DEFAULT_W,
+        height: REGION_DEFAULT_H,
+      });
+    } catch (err) {
+      console.error('[atlas] failed to create region', err);
+    }
   }
 
   function setZoom(z: number) {

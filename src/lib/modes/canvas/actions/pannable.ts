@@ -101,14 +101,18 @@ export function pannable(node: HTMLElement) {
     if (preview.width < REGION_CREATE_MIN_WIDTH || preview.height < REGION_CREATE_MIN_HEIGHT) {
       return; // too small — cancel
     }
-    await createRegion({
-      workspaceId: REGION_WORKSPACE_ID,
-      x: preview.x,
-      y: preview.y,
-      width: preview.width,
-      height: preview.height,
-      color: preview.color,
-    });
+    try {
+      await createRegion({
+        workspaceId: REGION_WORKSPACE_ID,
+        x: preview.x,
+        y: preview.y,
+        width: preview.width,
+        height: preview.height,
+        color: preview.color,
+      });
+    } catch (err) {
+      console.error('[atlas] failed to create region', err);
+    }
   }
 
   function endPan(e: PointerEvent) {

@@ -133,15 +133,17 @@ export function draggable(node: HTMLElement, params: DraggableParams) {
       const centerX = tile.x + tile.width / 2;
       const centerY = tile.y + tile.height / 2;
       let containing: string | null = null;
+      let highestZ = -Infinity;
       for (const r of get(regionsById).values()) {
         if (
           centerX >= r.x &&
           centerX <= r.x + r.width &&
           centerY >= r.y &&
-          centerY <= r.y + r.height
+          centerY <= r.y + r.height &&
+          r.zOrder > highestZ
         ) {
           containing = r.regionId;
-          // Don't break — pick the topmost region (highest zOrder) if multiple overlap.
+          highestZ = r.zOrder;
         }
       }
       if (containing !== tile.regionId) {
