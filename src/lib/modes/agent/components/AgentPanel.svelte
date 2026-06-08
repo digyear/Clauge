@@ -399,6 +399,47 @@
     return getTerminalTheme(app.theme, app.accentColor);
   }
 
+  type ImeCoalesceState = { last: string; at: number };
+
+  const hasNonAscii = (data: string | null | undefined): boolean => !!data && /[^\x00-\x7F]/.test(data);
+
+  function coalesceGrowingImeCommit(data: string, state: ImeCoalesceState): string {
+    // Some Linux IME + WebKitGTK/xterm.js combinations can resend the
+    // whole committed composition buffer through xterm.onData(), e.g.
+    // "你" then "你好".  Do not intercept DOM composition/input events here:
+    // preventing xterm's hidden textarea events can stop IME commits entirely.
+    // Keep this workaround at the PTY bridge only and only trim the observed
+    // growing-buffer shape. Plain ASCII/control input is always passed through.
+    const now = Date.now();
+    if (!hasNonAscii(data)) {
+      if (/\x1b|[\x00-\x08\x0e-\x1f\x7f]/.test(data) || data.length !== 1) {
+        state.last = '';
+        state.at = 0;
+      }
+      return data;
+    }
+
+    if (state.last && now - state.at < 500 && data.length > state.last.length && data.startsWith(state.last)) {
+      const suffix = data.slice(state.last.length);
+      state.last = data;
+      state.at = now;
+      return suffix;
+    }
+
+    state.last = data;
+    state.at = now;
+    return data;
+  }
+
+  function clearXtermTextarea(term: Terminal): void {
+    // WebKitGTK can leave committed IME text in xterm's hidden textarea; the
+    // next commit is then emitted as previous+new ("你好" then
+    // "你好今天星期几").  Clear after xterm has already produced onData so the
+    // current commit is preserved while the next diff starts from empty.
+    const textarea = term.textarea;
+    if (textarea && textarea.value) textarea.value = '';
+  }
+
   function createTermEntry(sessionId: string): { term: Terminal; fitAddon: FitAddon; searchAddon: SearchAddon; container: HTMLDivElement; terminalId: string | null; _exitBuffer?: string } {
     const t = new Terminal({
       cursorBlink: true,
@@ -443,7 +484,8 @@
       return true;
     });
 
-    t.onData((data) => {
+    const writeAgentTerminalData = (data: string) => {
+      if (!data) return;
       const tIds = get(agentTerminalIds);
       const termId = tIds.get(sessionId);
       if (termId) {
@@ -469,6 +511,12 @@
           if (errTab) closeTab(errTab.id);
         });
       }
+    };
+    const termImeState: ImeCoalesceState = { last: '', at: 0 };
+    t.onData((rawData: string) => {
+      const data = coalesceGrowingImeCommit(rawData, termImeState);
+      clearXtermTextarea(t);
+      writeAgentTerminalData(data);
     });
 
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -573,7 +621,8 @@
       shellLoadingSessions = shellLoadingSessions.filter(id => id !== sessionId);
     }, AGENT_SHELL_LOADER_MS);
 
-    t.onData((data) => {
+    const writeShellData = (data: string) => {
+      if (!data) return;
       const sIds = get(agentShellIds);
       const shellId = sIds.get(sessionId);
       if (shellId) {
@@ -584,6 +633,12 @@
           refitAll();
         });
       }
+    };
+    const shellImeState: ImeCoalesceState = { last: '', at: 0 };
+    t.onData((rawData: string) => {
+      const data = coalesceGrowingImeCommit(rawData, shellImeState);
+      clearXtermTextarea(t);
+      writeShellData(data);
     });
 
     let shellResizeTimer: ReturnType<typeof setTimeout> | null = null;
