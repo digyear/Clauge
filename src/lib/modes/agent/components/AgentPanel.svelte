@@ -1691,7 +1691,7 @@
                      : _prov === 'opencode' ? '/opencode-dark.svg'
                      : '/code-in-action.svg'}
         {@const _name = _prov === 'codex' ? 'Codex'
-                      : _prov === 'gemini' ? 'Gemini'
+                      : _prov === 'gemini' ? 'Antigravity'
                       : _prov === 'opencode' ? 'OpenCode'
                       : 'Claude Code'}
         <div class="agent-loading">

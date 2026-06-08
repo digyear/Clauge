@@ -685,7 +685,9 @@ fn oneshot_argv(
                 format!("{persona}\n\n---\n\n{prompt}")
             };
             let mut argv = vec![
-                "gemini".to_string(),
+                // Antigravity CLI (`agy`) replaced gemini-cli on
+                // 2026-06-18; internal provider id stays "gemini".
+                "agy".to_string(),
                 "--skip-trust".to_string(),
                 "--yolo".to_string(),
             ];
