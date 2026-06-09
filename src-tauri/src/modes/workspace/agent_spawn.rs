@@ -224,7 +224,14 @@ pub async fn drawer_chat_turn(
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let lower = stderr.to_lowercase();
         let friendly = if lower.contains("auth") || lower.contains("logged in") || lower.contains("token") {
-            format!("{provider_owned} is not authenticated. Run `{provider_owned} /login` and retry.")
+            // The display name matches the provider id, but Antigravity
+            // dropped `gemini` for `agy` so the binary in the hint isn't
+            // always the provider id.
+            let auth_cmd = match provider_owned.as_str() {
+                "gemini" => "agy /login".to_string(),
+                other => format!("{other} /login"),
+            };
+            format!("{provider_owned} is not authenticated. Run `{auth_cmd}` and retry.")
         } else if stderr.is_empty() {
             format!("{provider_owned} exited with non-zero status (no stderr)")
         } else {

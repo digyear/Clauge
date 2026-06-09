@@ -818,12 +818,23 @@ async fn query_opencode_sessions(
 /// filename IS the conversation UUID, so resume discovery doesn't have
 /// to open the database — we just enumerate `.db` files and use their
 /// stems as the resumable id (`agy --conversation <uuid>` accepts it
-/// directly). Per-project filtering would require reading each db's
-/// `project_path` row; for now we list every conversation and let the
-/// picker UI sort by recency.
-fn discover_gemini_sessions(_project_path: &str) -> Result<Vec<DiscoveredSession>, String> {
+/// directly). Per-project filtering needs a SQLite read of each db's
+/// `project_path` row, which isn't wired yet.
+///
+/// **Important:** when `project_path` is non-empty (i.e. the caller is
+/// resolving "what id should I resume for THIS project?"), we return
+/// an empty list rather than risk handing back a UUID for a different
+/// project. That would cause `agy --conversation <uuid>` to reopen
+/// someone else's conversation. The session row's `claudeSessionId`
+/// already carries the right id once `agy` has printed it in the exit
+/// banner (frontend regex captures it), so returning empty here just
+/// means "no auto-resume on a fresh row" — not a regression.
+fn discover_gemini_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>, String> {
+    if !project_path.is_empty() {
+        return Ok(Vec::new());
+    }
     let cli: &dyn CliRunner = runner_for("gemini");
-    let conversations_dir = match cli.session_dir_for_project(_project_path) {
+    let conversations_dir = match cli.session_dir_for_project(project_path) {
         Some(p) => p,
         None => return Ok(Vec::new()),
     };
@@ -2024,6 +2035,16 @@ fn gemini_project_path_for_slug(slug: &str) -> Option<String> {
 }
 
 fn gemini_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
+    // TODO(antigravity): the old `~/.gemini/tmp/<slug>/chats/*.jsonl`
+    // layout is gone — Antigravity stores conversations in SQLite at
+    // `~/.gemini/antigravity-cli/conversations/<uuid>.db`. Token /
+    // model / project breakdowns need a SQLite read of each db's
+    // message log. Until that's wired, return empty so the UI shows
+    // a clean "no data" state rather than partial / stale numbers
+    // mixed with whatever's still in the legacy tmp dir.
+    let _ = days;
+    return Ok(empty_analytics());
+    #[allow(unreachable_code)]
     let tmp_root = match dirs::home_dir().map(|h| h.join(".gemini").join("tmp")) {
         Some(p) if p.exists() => p,
         _ => return Ok(empty_analytics()),
@@ -2235,6 +2256,15 @@ fn gemini_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
 /// total field is already the running input-window size Google's
 /// backend reports back, so no summation needed.
 fn gemini_context_usage(session_id: &str) -> Result<ContextUsage, String> {
+    // TODO(antigravity): context-fill lived in the JSONL header's
+    // `tokens.total` field. Antigravity uses SQLite at
+    // `~/.gemini/antigravity-cli/conversations/<uuid>.db` and the
+    // schema isn't reverse-engineered yet. Return Err so the context
+    // bar hides cleanly instead of showing a stale value pulled from
+    // a pre-migration file.
+    let _ = session_id;
+    return Err("Antigravity context usage not yet implemented".into());
+    #[allow(unreachable_code)]
     let tmp_root = dirs::home_dir()
         .map(|h| h.join(".gemini").join("tmp"))
         .ok_or("Cannot determine home directory")?;
