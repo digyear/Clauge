@@ -166,6 +166,10 @@ export const cloudConflicts = writable<string[]>([]);
 /** Show the "Cloud data found — restore?" modal on first sign-in when local has rows. */
 export const showSyncRestorePrompt = writable<boolean>(false);
 
+/** Show the "Set up this device" modal when both local and cloud have data
+ *  on a device that has never synced — the user picks merge/keep/cloud. */
+export const showDeviceSetup = writable<boolean>(false);
+
 /** Persisted: did the user complete the first-sign-in restore decision? */
 export const hasSyncedOnce = writable<boolean>(
   typeof localStorage !== 'undefined'
@@ -223,6 +227,7 @@ export function setDisconnected() {
   lastSyncedByKind.set({});
   hasSyncedOnce.set(false);
   showSyncRestorePrompt.set(false);
+  showDeviceSetup.set(false);
   cloudConflicts.set([]);
   if (typeof localStorage !== 'undefined') {
     localStorage.removeItem(STORAGE_KEYS.GITHUB_AVATAR);

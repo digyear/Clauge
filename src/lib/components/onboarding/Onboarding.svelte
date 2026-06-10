@@ -36,14 +36,9 @@
         if (!detail?.code || !detail?.provider) return;
         ghConnecting = true;
         try {
-            const { cloudExchangeCode, cloudCheckRemoteExists } =
-                await import("$lib/commands/cloud");
-            const {
-                setConnected,
-                markSynced,
-                showSyncRestorePrompt,
-                setLastSyncedForKinds,
-            } = await import("$lib/stores/cloud");
+            const { cloudExchangeCode } = await import("$lib/commands/cloud");
+            const { setConnected, setLastSyncedForKinds } =
+                await import("$lib/stores/cloud");
             const { showToast } = await import("$lib/shared/primitives/toast");
             const status = await cloudExchangeCode(
                 detail.provider,
@@ -62,29 +57,10 @@
                     "success",
                 );
             }
-            const { collections } = await import("$lib/modes/rest/stores");
-            const { connections: sqlConns } =
-                await import("$lib/modes/sql/stores");
-            const { nosqlConnections } =
-                await import("$lib/modes/nosql/stores");
-            const localEmpty =
-                get(collections).length === 0 &&
-                get(sqlConns).length === 0 &&
-                get(nosqlConnections).length === 0;
-            if (localEmpty) {
-                try {
-                    const remoteHas = await cloudCheckRemoteExists();
-                    if (remoteHas) showSyncRestorePrompt.set(true);
-                    else markSynced();
-                } catch (e) {
-                    // Leave hasSyncedOnce unset so the next boot retries —
-                    // marking on a transient failure permanently dismissed
-                    // the prompt and was a real footgun.
-                    console.warn("[Cloud] remote check failed:", e);
-                }
-            } else {
-                markSynced();
-            }
+            // Shared 4-case first-sync decision (restore prompt / push /
+            // device setup) — same path the layout boot block runs.
+            const { decideFirstSync } = await import("$lib/services/firstSync");
+            await decideFirstSync();
             await finish();
         } catch (e: any) {
             const { showToast } = await import("$lib/shared/primitives/toast");

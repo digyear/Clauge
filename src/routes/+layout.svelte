@@ -48,7 +48,6 @@
     import {
         loadCollections,
         clearActiveRequest,
-        collections,
     } from "$lib/modes/rest/stores";
     import { loadEnvironments } from "$lib/modes/rest/stores";
     import { loadProviderStatus } from "$lib/shared/stores/providerStatus";
@@ -61,7 +60,6 @@
         showSqlDisconnectConfirm,
         sqlDisconnectTarget,
         disconnectFromDb,
-        connections as sqlConnections,
     } from "$lib/modes/sql/stores";
     import { showToast } from "$lib/shared/primitives/toast";
     import ConfirmDialog from "$lib/shared/primitives/ConfirmDialog.svelte";
@@ -70,7 +68,6 @@
         showNoSqlConnectionDialog,
         editingNoSqlConnection,
         handleNoSqlConnectionSave,
-        nosqlConnections,
     } from "$lib/modes/nosql/stores";
     import SqlConnectionDialog from "$lib/modes/sql/components/ConnectionDialog.svelte";
     import NoSqlConnectionDialog from "$lib/modes/nosql/components/ConnectionDialog.svelte";
@@ -82,9 +79,7 @@
     import {
         setConnected,
         setDisconnected,
-        hasSyncedOnce,
-        markSynced,
-        showSyncRestorePrompt,
+        showDeviceSetup,
         setLastSyncedForKinds,
         proState,
         cloudPlan,
@@ -97,12 +92,12 @@
     import {
         cloudGetStatus,
         cloudLogout,
-        cloudCheckRemoteExists,
-        cloudSyncPushNow,
         cloudGetConflicts,
         cloudPullIfRemoteNewer,
         proStateCurrent,
     } from "$lib/commands/cloud";
+    import { decideFirstSync } from "$lib/services/firstSync";
+    import DeviceSetupModal from "$lib/components/cloud/DeviceSetupModal.svelte";
     import { listen } from "@tauri-apps/api/event";
     import { cloudConflicts } from "$lib/stores/cloud";
     import { activeModal, aiPanelOpen, mode, setMode } from "$lib/stores/app";
@@ -1071,35 +1066,10 @@
                 );
                 setLastSyncedForKinds(status.lastSynced);
 
-                const localEmpty =
-                    get(collections).length === 0 &&
-                    get(sqlConnections).length === 0 &&
-                    get(nosqlConnections).length === 0;
-
-                if (localEmpty && !get(hasSyncedOnce)) {
-                    // First boot of a fresh device on an existing account.
-                    try {
-                        const remoteHas = await cloudCheckRemoteExists();
-                        if (remoteHas) showSyncRestorePrompt.set(true);
-                        else markSynced();
-                    } catch (e) {
-                        // Don't markSynced — a transient network blip
-                        // shouldn't permanently dismiss the restore option.
-                        console.warn("[Cloud] remote check failed:", e);
-                    }
-                } else if (!get(hasSyncedOnce)) {
-                    // Local has data but we've never synced — push first, and
-                    // only mark synced once the server confirmed it.
-                    cloudSyncPushNow()
-                        .then(() => markSynced())
-                        .catch((e) => {
-                            console.warn("[Cloud] initial push failed:", e);
-                            showToast(
-                                "Cloud backup failed — use the sync button in the sidebar to retry",
-                                "error",
-                            );
-                        });
-                }
+                // First boot of a device that has never synced — the
+                // 4-case decision (restore prompt / push / device setup)
+                // lives in firstSync.ts, shared with the login flows.
+                await decideFirstSync();
             } else {
                 // Server says we're not authenticated. The snapshots we
                 // hydrated optimistically above are stale (session expired
@@ -1358,6 +1328,7 @@
 <UsageDashboard bind:show={showUsageDashboard} />
 <UpgradeModal />
 <WelcomeProModal />
+<DeviceSetupModal bind:show={$showDeviceSetup} />
 
 <style>
     .app-shell {

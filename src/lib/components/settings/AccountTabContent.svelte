@@ -15,8 +15,6 @@
         setDisconnected,
         lastSyncedByKind,
         setLastSyncedForKinds,
-        markSynced,
-        showSyncRestorePrompt,
         cloudConflicts,
         type Provider,
     } from "$lib/stores/cloud";
@@ -30,7 +28,6 @@
         cloudGoogleLoginUrl,
         cloudExchangeCode,
         cloudLinkProvider,
-        cloudCheckRemoteExists,
         cloudUnlinkProvider,
         cloudLogout,
         cloudWipeRemote,
@@ -44,6 +41,8 @@
         type SnapshotInfo,
         type SyncStateRow,
     } from "$lib/commands/cloud";
+    import { reloadSyncedStores } from "$lib/commands/syncReload";
+    import { decideFirstSync } from "$lib/services/firstSync";
     import { showToast } from "$lib/shared/primitives/toast";
     import { friendlyError } from "$lib/utils/errors";
     import Dropdown from "$lib/shared/primitives/Dropdown.svelte";
@@ -156,41 +155,9 @@
                     "success",
                 );
             }
-            // Only offer the destructive "Restore?" prompt when local
-            // has nothing to lose. If the user already has local data,
-            // pulling cloud would wholesale-replace it (sync::pull_all
-            // is per-domain table replacement). Push the local state up
-            // instead — matches the boot-path behaviour in +layout.svelte.
-            try {
-                const { collections } = await import("$lib/modes/rest/stores");
-                const { connections: sqlConns } = await import("$lib/modes/sql/stores");
-                const { nosqlConnections } = await import("$lib/modes/nosql/stores");
-                const localEmpty =
-                    get(collections).length === 0 &&
-                    get(sqlConns).length === 0 &&
-                    get(nosqlConnections).length === 0;
-
-                const remoteHas = await cloudCheckRemoteExists();
-                if (localEmpty && remoteHas) {
-                    showSyncRestorePrompt.set(true);
-                } else if (localEmpty) {
-                    markSynced();
-                } else {
-                    // Local has data — assume the user wants to keep it.
-                    // Mark synced and push so the cloud picks up this
-                    // device's state. The conflict resolver will fire
-                    // on the next divergence if both sides drift later.
-                    markSynced();
-                    cloudSyncPushNow().catch((e) =>
-                        console.warn("[Cloud] initial push after link failed:", e),
-                    );
-                }
-            } catch (e) {
-                // Network blip — leave hasSyncedOnce unset so the next
-                // boot retries. Don't permanently dismiss the prompt
-                // because of a transient failure.
-                console.warn("[Cloud] remote check after link failed:", e);
-            }
+            // Shared 4-case first-sync decision (restore prompt / push /
+            // device setup) — same path the layout boot block runs.
+            await decideFirstSync();
         } catch (err) {
             showToast(friendlyError(err), "error");
         } finally {
@@ -341,31 +308,6 @@
         } finally {
             setSyncing(false);
         }
-    }
-
-    async function reloadSyncedStores() {
-        const [r, s, n, ssh, agent, explorer, workspace] = await Promise.all([
-            import("$lib/modes/rest/stores"),
-            import("$lib/modes/sql/stores"),
-            import("$lib/modes/nosql/stores"),
-            import("$lib/modes/ssh/stores"),
-            import("$lib/modes/agent/stores"),
-            import("$lib/modes/explorer/stores"),
-            import("$lib/modes/workspace/stores"),
-        ]);
-        await Promise.all([
-            r.loadCollections(),
-            r.loadEnvironments(),
-            s.loadConnections(),
-            s.loadSqlScripts(),
-            n.loadNoSqlConnections(),
-            ssh.loadSshProfiles(),
-            agent.loadAgentSessions(),
-            agent.loadAgentContexts(),
-            explorer.loadExplorerConnections(),
-            workspace.loadWorkspaces(),
-            workspace.loadCoworkers(),
-        ]);
     }
 
     async function pullFromCloud() {
