@@ -1,8 +1,17 @@
 use sqlx::SqlitePool;
 
-use crate::cloud::domains::util::{empty_payload, encode, insert_row, select_rows_as_json, SyncPayload};
+use crate::cloud::domains::util::{empty_payload, encode, insert_row, select_rows_as_json, SyncPayload, TableSpec};
 
 pub const KIND: &str = "agent";
+
+pub fn merge_specs() -> &'static [TableSpec] {
+    &[TableSpec {
+        table: "agent_contexts",
+        pk: "id",
+        updated_at: Some("updated_at"),
+        columns: &["id", "name", "content", "created_at", "updated_at"],
+    }]
+}
 
 pub async fn build_payload(pool: &SqlitePool) -> Result<SyncPayload, String> {
     // Only agent_contexts travel — the named system-prompt snippets the

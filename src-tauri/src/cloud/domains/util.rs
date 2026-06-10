@@ -181,7 +181,6 @@ pub fn hash_of_payload(payload: &SyncPayload) -> String {
 
 /// Declarative description of one syncable table for merge imports.
 /// `columns` MUST match the domain's export SELECT list exactly.
-#[allow(dead_code)] // wired up by per-domain merge specs (Task 3.2)
 pub struct TableSpec {
     pub table: &'static str,
     pub pk: &'static str,
@@ -194,7 +193,6 @@ pub struct TableSpec {
 /// UPSERT-union merge: inserts rows missing locally; for same-pk rows the
 /// newer `updated_at` wins (ties keep local). NEVER deletes local rows.
 /// Specs must be ordered FK-parents-first. Single transaction.
-#[allow(dead_code)] // wired up by merge_kind dispatch (Task 3.2)
 pub async fn merge_import(
     pool: &SqlitePool,
     payload: &SyncPayload,

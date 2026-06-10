@@ -1,8 +1,20 @@
 use sqlx::SqlitePool;
 
-use crate::cloud::domains::util::{empty_payload, encode, insert_row, select_rows_as_json, SyncPayload};
+use crate::cloud::domains::util::{empty_payload, encode, insert_row, select_rows_as_json, SyncPayload, TableSpec};
 
 pub const KIND: &str = "nosql";
+
+pub fn merge_specs() -> &'static [TableSpec] {
+    &[TableSpec {
+        table: "nosql_connections",
+        pk: "id",
+        updated_at: Some("updated_at"),
+        columns: &[
+            "id", "name", "driver", "host", "port", "database_name", "username", "ssl",
+            "direct_connection", "ssh_profile_id", "sort_order", "created_at", "updated_at",
+        ],
+    }]
+}
 
 pub async fn build_payload(pool: &SqlitePool) -> Result<SyncPayload, String> {
     let mut payload = empty_payload(KIND);

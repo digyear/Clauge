@@ -1,8 +1,22 @@
 use sqlx::SqlitePool;
 
-use crate::cloud::domains::util::{empty_payload, encode, insert_row, select_rows_as_json, SyncPayload};
+use crate::cloud::domains::util::{empty_payload, encode, insert_row, select_rows_as_json, SyncPayload, TableSpec};
 
 pub const KIND: &str = "explorer";
+
+pub fn merge_specs() -> &'static [TableSpec] {
+    &[TableSpec {
+        table: "explorer_connections",
+        pk: "id",
+        updated_at: None,
+        columns: &[
+            "id", "name", "kind", "accent_color", "ssh_profile_id", "sftp_working_dir", "host",
+            "port", "username", "auth_type", "key_path", "ftp_passive", "ftp_tls", "s3_preset",
+            "s3_endpoint", "s3_region", "s3_bucket", "s3_path_style", "azure_account",
+            "azure_container", "azure_auth_kind", "created_at",
+        ],
+    }]
+}
 
 pub async fn build_payload(pool: &SqlitePool) -> Result<SyncPayload, String> {
     let mut payload = empty_payload(KIND);

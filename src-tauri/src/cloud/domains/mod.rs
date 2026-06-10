@@ -57,3 +57,54 @@ pub async fn import_kind(
         _ => Err(format!("unknown kind: {}", kind)),
     }
 }
+
+#[allow(dead_code)] // called by merge orchestration (Task 3.3)
+pub async fn merge_kind(
+    pool: &sqlx::SqlitePool,
+    kind: &str,
+    payload_b64: &str,
+) -> Result<(), String> {
+    let payload = util::decode(payload_b64)?;
+    if payload.kind != kind {
+        return Err(format!(
+            "payload kind mismatch: header says {}, route says {}",
+            payload.kind, kind
+        ));
+    }
+    let specs = match kind {
+        rest::KIND => rest::merge_specs(),
+        sql::KIND => sql::merge_specs(),
+        nosql::KIND => nosql::merge_specs(),
+        agent::KIND => agent::merge_specs(),
+        ssh::KIND => ssh::merge_specs(),
+        explorer::KIND => explorer::merge_specs(),
+        coworkers::KIND => coworkers::merge_specs(),
+        _ => return Err(format!("unknown kind: {}", kind)),
+    };
+    util::merge_import(pool, &payload, specs).await
+}
+
+#[cfg(test)]
+mod spec_tests {
+    #[test]
+    fn merge_specs_are_internally_consistent() {
+        let all: &[(&str, &[crate::cloud::domains::util::TableSpec])] = &[
+            ("rest", crate::cloud::domains::rest::merge_specs()),
+            ("sql", crate::cloud::domains::sql::merge_specs()),
+            ("nosql", crate::cloud::domains::nosql::merge_specs()),
+            ("agent", crate::cloud::domains::agent::merge_specs()),
+            ("ssh", crate::cloud::domains::ssh::merge_specs()),
+            ("explorer", crate::cloud::domains::explorer::merge_specs()),
+            ("coworkers", crate::cloud::domains::coworkers::merge_specs()),
+        ];
+        for (kind, specs) in all {
+            assert!(!specs.is_empty(), "{kind} has no specs");
+            for s in *specs {
+                assert!(s.columns.contains(&s.pk), "{kind}/{} missing pk col", s.table);
+                if let Some(u) = s.updated_at {
+                    assert!(s.columns.contains(&u), "{kind}/{} missing updated_at col", s.table);
+                }
+            }
+        }
+    }
+}

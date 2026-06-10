@@ -19,9 +19,18 @@
 
 use sqlx::SqlitePool;
 
-use crate::cloud::domains::util::{bind_value_to_query, empty_payload, encode, select_rows_as_json, SyncPayload};
+use crate::cloud::domains::util::{bind_value_to_query, empty_payload, encode, select_rows_as_json, SyncPayload, TableSpec};
 
 pub const KIND: &str = "coworkers";
+
+pub fn merge_specs() -> &'static [TableSpec] {
+    &[TableSpec {
+        table: "workspace_coworkers",
+        pk: "id",
+        updated_at: None,
+        columns: COLUMNS,
+    }]
+}
 
 const COLUMNS: &[&str] = &[
     "id",

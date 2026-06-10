@@ -1,8 +1,20 @@
 use sqlx::SqlitePool;
 
-use crate::cloud::domains::util::{empty_payload, encode, select_rows_as_json, SyncPayload};
+use crate::cloud::domains::util::{empty_payload, encode, select_rows_as_json, SyncPayload, TableSpec};
 
 pub const KIND: &str = "ssh";
+
+pub fn merge_specs() -> &'static [TableSpec] {
+    &[TableSpec {
+        table: "ssh_profiles",
+        pk: "id",
+        updated_at: None,
+        columns: &[
+            "id", "name", "host", "port", "username", "auth_type", "key_path", "accent_color",
+            "jump_profile_id", "proxy_command", "created_at",
+        ],
+    }]
+}
 
 pub async fn build_payload(pool: &SqlitePool) -> Result<SyncPayload, String> {
     let mut payload = empty_payload(KIND);

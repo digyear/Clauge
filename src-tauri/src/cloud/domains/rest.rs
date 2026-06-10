@@ -1,7 +1,7 @@
 use sqlx::SqlitePool;
 
 use crate::cloud::domains::util::{
-    empty_payload, encode, select_rows_as_json, SyncPayload,
+    empty_payload, encode, select_rows_as_json, SyncPayload, TableSpec,
 };
 
 pub const KIND: &str = "rest";
@@ -14,6 +14,55 @@ const TABLES: &[&str] = &[
     "environments",
     "env_variables",
 ];
+
+pub fn merge_specs() -> &'static [TableSpec] {
+    &[
+        TableSpec {
+            table: "collections",
+            pk: "id",
+            updated_at: Some("updated_at"),
+            columns: &[
+                "id", "name", "description", "sort_order", "env_id", "created_at", "updated_at",
+            ],
+        },
+        TableSpec {
+            table: "environments",
+            pk: "id",
+            updated_at: Some("updated_at"),
+            columns: &[
+                "id", "name", "color", "is_default", "sort_order", "created_at", "updated_at",
+            ],
+        },
+        TableSpec {
+            table: "requests",
+            pk: "id",
+            updated_at: Some("updated_at"),
+            columns: &[
+                "id", "collection_id", "name", "description", "method", "url", "body",
+                "body_type", "auth_type", "auth_data", "pre_script", "sort_order", "created_at",
+                "updated_at",
+            ],
+        },
+        TableSpec {
+            table: "request_headers",
+            pk: "id",
+            updated_at: None,
+            columns: &["id", "request_id", "key", "value", "enabled", "sort_order"],
+        },
+        TableSpec {
+            table: "request_params",
+            pk: "id",
+            updated_at: None,
+            columns: &["id", "request_id", "key", "value", "enabled", "sort_order"],
+        },
+        TableSpec {
+            table: "env_variables",
+            pk: "id",
+            updated_at: None,
+            columns: &["id", "environment_id", "key", "value", "is_secret", "sort_order"],
+        },
+    ]
+}
 
 pub async fn build_payload(pool: &SqlitePool) -> Result<SyncPayload, String> {
     let mut payload = empty_payload(KIND);
