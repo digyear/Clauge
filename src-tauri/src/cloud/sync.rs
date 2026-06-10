@@ -266,12 +266,18 @@ pub async fn pull_all(
 
 /// Lower rank = applied earlier. Parents (referenced by FKs in other
 /// kinds) get a smaller number. Anything not listed sorts to the end —
-/// add new kinds here only when they're FK targets.
+/// add new kinds here only when they're FK targets. Current ordering:
+/// ssh (0) → coworkers (5) → everything else, including the workspace
+/// kinds whose cards/comments reference workspace_coworkers (10).
 pub fn pull_order_rank(kind: &str) -> u8 {
     match kind {
         // ssh_profiles is referenced by sql_connections, nosql_connections,
         // and explorer_connections, so it must restore first.
         k if k == crate::cloud::domains::ssh::KIND => 0,
+        // workspace_coworkers is referenced by workspace_board_cards
+        // (*_by_coworker_id) and workspace_card_comments (coworker_id),
+        // so it must restore before the workspace kinds.
+        k if k == crate::cloud::domains::coworkers::KIND => 5,
         _ => 10,
     }
 }
@@ -296,7 +302,9 @@ pub async fn local_has_data(pool: &SqlitePool) -> Result<bool, String> {
            (SELECT COUNT(*) FROM agent_contexts) + \
            (SELECT COUNT(*) FROM agent_sessions WHERE origin = 'manual' OR origin IS NULL) + \
            (SELECT COUNT(*) FROM environments) + \
-           (SELECT COUNT(*) FROM sql_scripts) \
+           (SELECT COUNT(*) FROM sql_scripts) + \
+           (SELECT COUNT(*) FROM workspace_notes) + \
+           (SELECT COUNT(*) FROM workspace_board_cards) \
            AS n",
     )
     .fetch_one(pool)
