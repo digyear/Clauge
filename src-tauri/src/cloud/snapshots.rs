@@ -51,7 +51,6 @@ pub struct SnapshotInfo {
 }
 
 /// Export `kind` and write it to disk. Filename: `<utc-ts>-<uuid6>__<kind>__<reason>.json.gz`.
-#[allow(dead_code)]
 pub async fn snapshot_kind(pool: &SqlitePool, kind: &str, reason: &str) -> Result<PathBuf, String> {
     if !reason.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
         return Err(format!("invalid snapshot reason: {}", reason));

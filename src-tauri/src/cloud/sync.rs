@@ -203,6 +203,8 @@ pub async fn pull_kind(
     state: &AuthState,
     kind: &str,
 ) -> Result<(), String> {
+    // Safety invariant: recovery copy before any destructive import.
+    crate::cloud::snapshots::snapshot_kind(pool, kind, "pre-pull").await?;
     let resp = client::sync_pull(pool, state, kind).await.map_err(String::from)?;
     import_kind(pool, kind, &resp.payload).await?;
     settings::upsert(pool, &settings_key_hash(kind), &resp.content_hash)
