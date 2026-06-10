@@ -131,6 +131,11 @@ pub async fn restore_snapshot(pool: &SqlitePool, file_name: &str) -> Result<(), 
 mod tests {
     use super::*;
 
+    static TEST_LOCK: OnceLock<parking_lot::Mutex<()>> = OnceLock::new();
+    fn test_guard() -> parking_lot::MutexGuard<'static, ()> {
+        TEST_LOCK.get_or_init(|| parking_lot::Mutex::new(())).lock()
+    }
+
     async fn test_pool() -> sqlx::SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
@@ -153,6 +158,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_writes_file_and_prunes() {
+        let _guard = test_guard();
         let dir = std::env::temp_dir().join(format!("clauge-snap-test-{}", uuid::Uuid::new_v4()));
         set_dir_for_test(dir.clone());
         let pool = test_pool().await;
@@ -171,6 +177,7 @@ mod tests {
 
     #[tokio::test]
     async fn restore_roundtrip() {
+        let _guard = test_guard();
         let dir = std::env::temp_dir().join(format!("clauge-snap-test-{}", uuid::Uuid::new_v4()));
         set_dir_for_test(dir.clone());
         let pool = test_pool().await;
@@ -191,6 +198,7 @@ mod tests {
 
     #[tokio::test]
     async fn restore_rejects_traversal_names() {
+        let _guard = test_guard();
         let dir = std::env::temp_dir().join(format!("clauge-snap-test-{}", uuid::Uuid::new_v4()));
         set_dir_for_test(dir.clone());
         let pool = test_pool().await;
