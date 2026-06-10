@@ -34,6 +34,9 @@
   let { show = $bindable() }: Props = $props();
 
   let busy = $state<'merge' | 'keep' | 'cloud' | null>(null);
+  let selected = $state<'merge' | 'cloud' | 'keep' | null>('merge');
+
+  const busyLabels = { merge: 'Merging…', cloud: 'Restoring…', keep: 'Pushing…' } as const;
 
   async function run(choice: 'merge' | 'keep' | 'cloud') {
     if (busy) return;
@@ -93,21 +96,42 @@
         </p>
 
         <div class="ds-options">
-          <button class="ds-option ds-option-primary" onclick={() => run('merge')} disabled={!!busy}>
-            <span class="ds-option-title">
-              {busy === 'merge' ? 'Merging…' : 'Merge (recommended)'}
+          <button
+            class="ds-option"
+            class:selected={selected === 'merge'}
+            aria-pressed={selected === 'merge'}
+            onclick={() => (selected = 'merge')}
+            disabled={!!busy}
+          >
+            <span class="ds-option-head">
+              <span class="ds-radio" aria-hidden="true"></span>
+              <span class="ds-option-title">Merge (recommended)</span>
             </span>
             <span class="ds-option-caption">Keeps everything from both devices. Newer edits win.</span>
           </button>
-          <button class="ds-option" onclick={() => run('cloud')} disabled={!!busy}>
-            <span class="ds-option-title">
-              {busy === 'cloud' ? 'Restoring…' : 'Use cloud copy'}
+          <button
+            class="ds-option"
+            class:selected={selected === 'cloud'}
+            aria-pressed={selected === 'cloud'}
+            onclick={() => (selected = 'cloud')}
+            disabled={!!busy}
+          >
+            <span class="ds-option-head">
+              <span class="ds-radio" aria-hidden="true"></span>
+              <span class="ds-option-title">Use cloud copy</span>
             </span>
             <span class="ds-option-caption">Replace this device's data with the cloud copy.</span>
           </button>
-          <button class="ds-option" onclick={() => run('keep')} disabled={!!busy}>
-            <span class="ds-option-title">
-              {busy === 'keep' ? 'Pushing…' : "Keep this device's data"}
+          <button
+            class="ds-option"
+            class:selected={selected === 'keep'}
+            aria-pressed={selected === 'keep'}
+            onclick={() => (selected = 'keep')}
+            disabled={!!busy}
+          >
+            <span class="ds-option-head">
+              <span class="ds-radio" aria-hidden="true"></span>
+              <span class="ds-option-title">Keep this device's data</span>
             </span>
             <span class="ds-option-caption">Overwrite the cloud with this device's data.</span>
           </button>
@@ -117,6 +141,13 @@
       <footer class="ds-foot">
         <button class="ds-later" onclick={close} disabled={!!busy}>
           Decide later
+        </button>
+        <button
+          class="ds-continue"
+          onclick={() => selected && run(selected)}
+          disabled={!selected || !!busy}
+        >
+          {busy ? busyLabels[busy] : 'Continue'}
         </button>
       </footer>
     </div>
@@ -223,6 +254,41 @@
     background: var(--surface-hover);
     border-color: var(--b2);
   }
+  .ds-option.selected {
+    border-color: var(--acc);
+    background: color-mix(in srgb, var(--acc) 10%, transparent);
+  }
+  .ds-option.selected:hover:not(:disabled) {
+    border-color: var(--acc);
+    background: color-mix(in srgb, var(--acc) 14%, transparent);
+  }
+  .ds-option-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ds-radio {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1.5px solid var(--b2);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.12s;
+  }
+  .ds-radio::after {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--acc);
+    transform: scale(0);
+    transition: transform 0.12s;
+  }
+  .ds-option.selected .ds-radio { border-color: var(--acc); }
+  .ds-option.selected .ds-radio::after { transform: scale(1); }
   .ds-option-title {
     font-size: 13px;
     font-weight: 600;
@@ -231,22 +297,13 @@
   .ds-option-caption {
     font-size: 12px;
     color: var(--t3);
-  }
-  .ds-option-primary {
-    background: var(--acc);
-    border-color: var(--acc);
-  }
-  .ds-option-primary .ds-option-title { color: #fff; }
-  .ds-option-primary .ds-option-caption { color: rgba(255, 255, 255, 0.75); }
-  .ds-option-primary:hover:not(:disabled) {
-    background: var(--acc);
-    border-color: var(--acc);
-    filter: brightness(1.08);
+    padding-left: 22px;
   }
 
   .ds-foot {
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    justify-content: space-between;
     padding: 12px 18px 16px;
     border-top: 1px solid var(--b1);
   }
@@ -264,4 +321,19 @@
   }
   .ds-later:hover:not(:disabled) { color: var(--t1); background: var(--surface-hover); }
   .ds-later:disabled { opacity: 0.5; }
+  .ds-continue {
+    height: 28px;
+    padding: 0 14px;
+    border-radius: 6px;
+    border: 1px solid var(--acc);
+    background: var(--acc);
+    color: #fff;
+    font-family: var(--ui);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: default;
+    transition: filter 0.12s, opacity 0.12s;
+  }
+  .ds-continue:hover:not(:disabled) { filter: brightness(1.08); }
+  .ds-continue:disabled { opacity: 0.5; }
 </style>
