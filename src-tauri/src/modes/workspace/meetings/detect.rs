@@ -12,6 +12,7 @@ use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::modes::workspace::meetings::recorder::RecorderState;
+use crate::modes::workspace::meetings::widget;
 use crate::shared::repos::settings as settings_repo;
 
 pub const SETTING_KEY: &str = "workspace_meeting_detect_enabled";
@@ -390,6 +391,7 @@ pub fn start_poller(app: AppHandle) {
             if !state.enabled() {
                 if state.tracker.lock().reset() {
                     let _ = app.emit(EVT_ENDED, ());
+                    widget::close_widget(&app);
                 }
                 continue;
             }
@@ -420,9 +422,11 @@ pub fn start_poller(app: AppHandle) {
             match event {
                 Some(DetectEvent::CallDetected(meeting_app)) => {
                     let _ = app.emit(EVT_DETECTED, CallDetectedPayload { app: meeting_app });
+                    widget::open_widget(&app);
                 }
                 Some(DetectEvent::CallEnded) => {
                     let _ = app.emit(EVT_ENDED, ());
+                    widget::close_widget(&app);
                 }
                 None => {}
             }

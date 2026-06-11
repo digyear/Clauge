@@ -45,6 +45,7 @@
     import favicon from "$lib/assets/favicon.svg";
 
     import { onMount, onDestroy } from "svelte";
+    import { page } from "$app/state";
     import {
         loadCollections,
         clearActiveRequest,
@@ -164,6 +165,10 @@
     import { DEFAULT_ACCENT_COLOR } from "$lib/shared/constants/colors";
 
     let { children } = $props();
+
+    // The floating meeting widget runs in its own webview window: it must
+    // not boot the app (stores, cloud, shortcuts) or mount the chrome.
+    const isWidget = page.url.pathname.startsWith("/widget");
 
     let showSaveDialog = $state(false);
     let saveDialogTabId = $state(-1);
@@ -713,6 +718,7 @@
     }
 
     onMount(async () => {
+        if (isWidget) return;
         // Fade out splash screen now that the layout is mounted
         requestAnimationFrame(() => {
             const splash = document.getElementById("clauge-splash");
@@ -1291,6 +1297,9 @@
     <link rel="icon" href={favicon} />
 </svelte:head>
 
+{#if isWidget}
+    {@render children()}
+{:else}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="app-shell" onmousedown={handleGlobalMousedown}>
     <Sidebar />
@@ -1416,6 +1425,7 @@
 <UpgradeModal />
 <WelcomeProModal />
 <DeviceSetupModal bind:show={$showDeviceSetup} />
+{/if}
 
 <style>
     .app-shell {

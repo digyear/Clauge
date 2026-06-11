@@ -16,6 +16,7 @@ use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::modes::workspace::meetings::repo;
+use crate::modes::workspace::meetings::widget;
 use crate::modes::workspace::models::TranscriptSegment;
 use crate::shared::audio::resample::downmix;
 use crate::shared::audio::{
@@ -292,6 +293,14 @@ pub async fn start_recording(
             system_audio,
         },
     );
+    // The detect poller can emit call-ended and close the widget while this
+    // start is still in flight, leaving a recording with no visible stop
+    // affordance. Detected starts carry a source app, so reopen the pill for
+    // them (`open_widget` is a no-op show if it already exists); manual
+    // starts (source_app: None) never open it.
+    if source_app.is_some() {
+        widget::open_widget(&app);
+    }
     Ok(meeting_id)
 }
 
@@ -562,6 +571,7 @@ fn run_mic_drain(
             EVT_ERROR,
             RecordingMessage { meeting_id: &meeting_id, message: &msg },
         );
+        widget::close_widget(&app);
         let (mic, system) = {
             let mut slot = active.lock();
             match slot.as_mut() {
@@ -747,6 +757,7 @@ async fn run_flush(
         log::warn!("[meetings] failed to finalize meeting {meeting_id}: {e}");
     }
     let _ = app.emit(EVT_STOPPED, MeetingEvent { meeting_id: &meeting_id });
+    widget::close_widget(&app);
     {
         let mut slot = active.lock();
         if slot.as_ref().is_some_and(|rec| rec.meeting_id == meeting_id) {
