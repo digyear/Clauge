@@ -13,7 +13,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -84,6 +84,12 @@ pub struct AgentSessionInfo {
     pub status: String,
     pub project_path: String,
     pub last_used_at: String,
+    /// terminalId of a currently-live desktop/companion terminal whose
+    /// session_ref matches this row. The phone opens a WS to
+    /// `/v1/term/{liveTerminalId}/ws` to attach to the *same* fanout
+    /// hub the desktop is publishing to — true mirroring. `null` when no
+    /// terminal is live for this session (phone must spawn one first).
+    pub live_terminal_id: Option<String>,
 }
 
 /// Match a live terminal to a session row. Companion spawns stamp the
@@ -109,6 +115,30 @@ fn agent_status(terminal_state: &TerminalState, session: &AgentSession) -> &'sta
     "idle"
 }
 
+/// terminalId of a live (child still running) terminal whose
+/// session_ref matches this row, so the phone attaches to the same
+/// fanout hub the desktop publishes to. The registry HashMap key is the
+/// terminalId — identical to the fanout hub key — so a hit here points
+/// straight at an attachable stream. Multiple live matches are rare
+/// (one PTY per resume id); we take the last one iterated, which is the
+/// most recently surviving entry for that ref.
+fn live_agent_terminal_id(terminal_state: &TerminalState, session: &AgentSession) -> Option<String> {
+    let mut terminals = terminal_state.terminals.lock();
+    let mut found = None;
+    for (tid, entry) in terminals.iter_mut() {
+        let Some(r) = entry.session_ref.as_deref() else {
+            continue;
+        };
+        if r != session.id && Some(r) != session.claude_session_id.as_deref() {
+            continue;
+        }
+        if matches!(entry.child.try_wait(), Ok(None)) {
+            found = Some(tid.clone());
+        }
+    }
+    found
+}
+
 async fn list_agent_sessions(State(state): State<Arc<CompanionAppState>>) -> Response {
     let rows = match sessions_repo::list_sessions(&state.pool).await {
         Ok(rows) => rows,
@@ -119,6 +149,7 @@ async fn list_agent_sessions(State(state): State<Arc<CompanionAppState>>) -> Res
         .into_iter()
         .map(|s| {
             let status = agent_status(&terminal_state, &s).to_string();
+            let live_terminal_id = live_agent_terminal_id(&terminal_state, &s);
             AgentSessionInfo {
                 id: s.id,
                 title: s.title,
@@ -126,6 +157,7 @@ async fn list_agent_sessions(State(state): State<Arc<CompanionAppState>>) -> Res
                 status,
                 project_path: s.project_path,
                 last_used_at: s.last_used_at,
+                live_terminal_id,
             }
         })
         .collect();
@@ -146,8 +178,22 @@ pub struct SshProfileInfo {
     pub username: String,
     pub accent_color: Option<String>,
     pub last_used_at: Option<String>,
-    /// Any open tab (desktop or companion) for this profile.
+    /// Any open tab (desktop or companion) for this profile. Kept for
+    /// back-compat; equals `!liveTerminals.is_empty()`.
     pub live: bool,
+    /// Every live tab for this profile — a profile can have multiple
+    /// open at once. Each terminalId is a fanout hub key the phone can
+    /// attach to (`/v1/term/{terminalId}/ws`) to mirror that exact tab.
+    pub live_terminals: Vec<LiveSshTerminal>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveSshTerminal {
+    pub terminal_id: String,
+    /// Best-effort tab label. No per-tab title is tracked, so this falls
+    /// back to the terminalId tail.
+    pub label: Option<String>,
 }
 
 async fn list_ssh_profiles(State(state): State<Arc<CompanionAppState>>) -> Response {
@@ -156,26 +202,46 @@ async fn list_ssh_profiles(State(state): State<Arc<CompanionAppState>>) -> Respo
         Err(e) => return internal("list ssh profiles", e),
     };
     let ssh_state = state.app.state::<SshTerminalState>();
-    let live: HashSet<String> = ssh_state
-        .terminals
-        .lock()
-        .values()
-        .map(|e| e.profile_id.clone())
-        .collect();
+    // profile_id → its live tabs (terminalId is both the registry key
+    // and the fanout hub key, so each entry is directly attachable).
+    let mut live_by_profile: HashMap<String, Vec<LiveSshTerminal>> = HashMap::new();
+    for (tid, entry) in ssh_state.terminals.lock().iter() {
+        live_by_profile
+            .entry(entry.profile_id.clone())
+            .or_default()
+            .push(LiveSshTerminal {
+                label: Some(terminal_id_tail(tid)),
+                terminal_id: tid.clone(),
+            });
+    }
     let list: Vec<SshProfileInfo> = rows
         .into_iter()
-        .map(|p| SshProfileInfo {
-            live: live.contains(&p.id),
-            id: p.id,
-            name: p.name,
-            host: p.host,
-            port: p.port,
-            username: p.username,
-            accent_color: p.accent_color,
-            last_used_at: p.last_used_at,
+        .map(|p| {
+            let live_terminals = live_by_profile.remove(&p.id).unwrap_or_default();
+            SshProfileInfo {
+                live: !live_terminals.is_empty(),
+                live_terminals,
+                id: p.id,
+                name: p.name,
+                host: p.host,
+                port: p.port,
+                username: p.username,
+                accent_color: p.accent_color,
+                last_used_at: p.last_used_at,
+            }
         })
         .collect();
     JsonResponse(list).into_response()
+}
+
+/// Short, human-ish handle for a terminalId — the segment after the
+/// last `-` (UUID tail), used as a fallback tab label.
+fn terminal_id_tail(terminal_id: &str) -> String {
+    terminal_id
+        .rsplit('-')
+        .next()
+        .unwrap_or(terminal_id)
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -442,6 +508,7 @@ mod tests {
             status: "running".into(),
             project_path: "/Users/me/proj".into(),
             last_used_at: "2026-06-11T10:00:00Z".into(),
+            live_terminal_id: Some("term-abc".into()),
         };
         assert_eq!(
             serde_json::to_value(&info).unwrap(),
@@ -452,7 +519,25 @@ mod tests {
                 "status": "running",
                 "projectPath": "/Users/me/proj",
                 "lastUsedAt": "2026-06-11T10:00:00Z",
+                "liveTerminalId": "term-abc",
             })
+        );
+    }
+
+    #[test]
+    fn agent_session_info_null_live_terminal() {
+        let info = AgentSessionInfo {
+            id: "sess-2".into(),
+            title: "Idle".into(),
+            provider: "claude".into(),
+            status: "idle".into(),
+            project_path: "/Users/me/proj".into(),
+            last_used_at: "2026-06-11T10:00:00Z".into(),
+            live_terminal_id: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&info).unwrap()["liveTerminalId"],
+            serde_json::Value::Null
         );
     }
 
@@ -467,6 +552,16 @@ mod tests {
             accent_color: None,
             last_used_at: Some("2026-06-10T08:30:00Z".into()),
             live: true,
+            live_terminals: vec![
+                LiveSshTerminal {
+                    terminal_id: "term-1".into(),
+                    label: Some("1".into()),
+                },
+                LiveSshTerminal {
+                    terminal_id: "term-2".into(),
+                    label: None,
+                },
+            ],
         };
         assert_eq!(
             serde_json::to_value(&info).unwrap(),
@@ -479,8 +574,36 @@ mod tests {
                 "accentColor": null,
                 "lastUsedAt": "2026-06-10T08:30:00Z",
                 "live": true,
+                "liveTerminals": [
+                    { "terminalId": "term-1", "label": "1" },
+                    { "terminalId": "term-2", "label": null },
+                ],
             })
         );
+    }
+
+    #[test]
+    fn ssh_profile_info_no_live_terminals() {
+        let info = SshProfileInfo {
+            id: "prof-2".into(),
+            name: "dev box".into(),
+            host: "10.0.0.6".into(),
+            port: 22,
+            username: "dev".into(),
+            accent_color: None,
+            last_used_at: None,
+            live: false,
+            live_terminals: vec![],
+        };
+        let v = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["live"], json!(false));
+        assert_eq!(v["liveTerminals"], json!([]));
+    }
+
+    #[test]
+    fn terminal_id_tail_extracts_suffix() {
+        assert_eq!(terminal_id_tail("a-b-c-deadbeef"), "deadbeef");
+        assert_eq!(terminal_id_tail("nodash"), "nodash");
     }
 
     #[test]
