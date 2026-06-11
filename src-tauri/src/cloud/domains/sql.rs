@@ -39,7 +39,10 @@ pub async fn build_payload(pool: &SqlitePool) -> Result<SyncPayload, String> {
     );
     payload.tables.insert(
         "sql_scripts".into(),
-        select_rows_as_json(pool, "SELECT * FROM sql_scripts ORDER BY sort_order, id").await?,
+        select_rows_as_json(
+            pool,
+            "SELECT id, name, connection_id, database_name, query, sort_order, created_at, updated_at FROM sql_scripts ORDER BY sort_order, id",
+        ).await?,
     );
     Ok(payload)
 }

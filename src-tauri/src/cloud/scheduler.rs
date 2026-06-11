@@ -16,11 +16,18 @@ use tokio::sync::Notify;
 const DEBOUNCE: Duration = Duration::from_millis(5_000);
 
 static DIRTY: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+// Kinds drained from DIRTY but whose push hasn't finished yet. Without this,
+// quitting mid-push would persist an empty pending set and lose the kinds if
+// the push never completes.
+static IN_FLIGHT: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
 static ENABLED: OnceLock<Mutex<bool>> = OnceLock::new();
 static NOTIFY: OnceLock<Arc<Notify>> = OnceLock::new();
 
 fn dirty() -> &'static Mutex<HashSet<&'static str>> {
     DIRTY.get_or_init(|| Mutex::new(HashSet::new()))
+}
+fn in_flight() -> &'static Mutex<HashSet<&'static str>> {
+    IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
 }
 fn enabled_flag() -> &'static Mutex<bool> {
     ENABLED.get_or_init(|| Mutex::new(false))
@@ -42,6 +49,7 @@ impl Scheduler {
     pub fn disable_and_clear(&self) {
         *enabled_flag().lock() = false;
         dirty().lock().clear();
+        in_flight().lock().clear();
         notify().notify_one();
     }
 }
@@ -57,13 +65,20 @@ pub fn bump(kind: &'static str) {
 }
 
 fn drain() -> Vec<&'static str> {
-    dirty().lock().drain().collect()
+    let kinds: Vec<&'static str> = dirty().lock().drain().collect();
+    // Track the drained kinds as in-flight so the quit path still sees them
+    // as pending until the push settles one way or the other.
+    in_flight().lock().extend(kinds.iter().copied());
+    kinds
 }
 
-/// Non-destructive view of the dirty set — used by the quit path to
-/// persist pending kinds so they survive a restart.
+/// Non-destructive view of everything still owed to the cloud: kinds waiting
+/// in the dirty set plus kinds mid-push. Used by the quit path to persist
+/// pending kinds so they survive a restart.
 pub fn pending_kinds() -> Vec<&'static str> {
-    dirty().lock().iter().copied().collect()
+    let mut set: HashSet<&'static str> = dirty().lock().iter().copied().collect();
+    set.extend(in_flight().lock().iter().copied());
+    set.into_iter().collect()
 }
 
 /// Re-mark kinds dirty by slug (boot-time recovery of a persisted set).
@@ -114,9 +129,11 @@ pub fn spawn(app: AppHandle) {
             };
             let auth_state = app.state::<crate::cloud::auth::AuthState>();
             if !auth_state.is_connected() {
-                // Re-mark dirty for when the user comes back.
+                // Re-mark dirty for when the user comes back. Back in dirty
+                // means no longer in-flight.
                 for k in &kinds {
                     dirty().lock().insert(k);
+                    in_flight().lock().remove(k);
                 }
                 continue;
             }
@@ -131,6 +148,12 @@ pub fn spawn(app: AppHandle) {
 
             match crate::cloud::sync::push_all(&pool, &auth_state, &kind_slice).await {
                 Ok(pushed) => {
+                    // `pushed` only lists kinds that moved bytes, but every
+                    // drained kind was handled (NoChange/Conflict included) —
+                    // clear them all from in-flight.
+                    for k in &kinds {
+                        in_flight().lock().remove(k);
+                    }
                     if !pushed.is_empty() {
                         let _ = app.emit("cloud:synced", &pushed);
                         log::info!("[cloud:scheduler] auto-pushed: {:?}", pushed);
@@ -138,8 +161,10 @@ pub fn spawn(app: AppHandle) {
                 }
                 Err(e) => {
                     log::warn!("[cloud:scheduler] push failed ({}); re-queueing", e);
+                    // Back in dirty means no longer in-flight.
                     for k in &kinds {
                         dirty().lock().insert(k);
+                        in_flight().lock().remove(k);
                     }
                 }
             }

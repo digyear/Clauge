@@ -151,7 +151,23 @@ pub async fn force_push_kind(
     kind: &str,
 ) -> Result<(), String> {
     match push_kind(pool, state, kind, true).await? {
-        PushOutcome::Pushed | PushOutcome::NoChange => Ok(()),
+        PushOutcome::Pushed => Ok(()),
+        PushOutcome::NoChange => {
+            // NoChange is ambiguous here: either the export genuinely matches
+            // the server, or push_kind skipped an oversize payload. The latter
+            // must NOT count as success — resolve_merge would clear the
+            // conflict flag while the remote still differs.
+            if let Some(row) = settings::get_by_key(pool, &format!("cloud:too_large:{}", kind))
+                .await
+                .map_err(|e| format!("read too_large flag: {}", e))?
+            {
+                return Err(format!(
+                    "'{}' is too large to sync ({} bytes gzipped)",
+                    kind, row.value
+                ));
+            }
+            Ok(())
+        }
         PushOutcome::Conflict { .. } => {
             // 412 even with prev='*' shouldn't happen, but surface a clear error.
             Err("server refused force-push".to_string())

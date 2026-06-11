@@ -23,6 +23,11 @@ use crate::cloud::domains::util::{bind_value_to_query, empty_payload, encode, se
 
 pub const KIND: &str = "coworkers";
 
+/// Merge semantics: insert-missing-only, BY DESIGN. workspace_coworkers has
+/// no updated_at column, so last-write-wins is impossible — on rows that
+/// exist on both sides, local wins during a merge. This is not an oversight:
+/// remote edits to existing coworkers still propagate via full pulls, where
+/// import() applies the remote row through its UPSERT.
 pub fn merge_specs() -> &'static [TableSpec] {
     &[TableSpec {
         table: "workspace_coworkers",
