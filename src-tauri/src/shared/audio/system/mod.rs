@@ -1,0 +1,98 @@
+use std::sync::mpsc::Sender;
+
+use super::CaptureEvent;
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(not(target_os = "macos"))]
+mod stub;
+
+#[derive(Debug)]
+pub enum SystemAudioError {
+    /// System audio capture is not available on this platform/OS version.
+    /// Callers should degrade to mic-only capture instead of failing.
+    Unsupported(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for SystemAudioError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsupported(msg) => write!(f, "system audio unsupported: {msg}"),
+            Self::Failed(msg) => write!(f, "system audio capture failed: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for SystemAudioError {}
+
+/// Captures system output audio (what plays through the speakers) and pushes
+/// `CaptureEvent`s into `tx`, mirroring the `MicCapture` API shape.
+pub struct SystemCapture {
+    #[cfg(target_os = "macos")]
+    inner: macos::MacSystemCapture,
+    #[cfg(not(target_os = "macos"))]
+    inner: stub::StubCapture,
+}
+
+impl SystemCapture {
+    pub fn start(tx: Sender<CaptureEvent>) -> Result<Self, SystemAudioError> {
+        #[cfg(target_os = "macos")]
+        {
+            Ok(Self {
+                inner: macos::MacSystemCapture::start(tx)?,
+            })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Ok(Self {
+                inner: stub::StubCapture::start(tx)?,
+            })
+        }
+    }
+
+    pub fn stop(self) {
+        self.inner.stop();
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    use super::SystemCapture;
+    use crate::shared::audio::CaptureEvent;
+
+    /// Manual smoke test — triggers the macOS system-audio permission dialog
+    /// on first run, so it must never run in CI. Play some audio, then:
+    /// `cargo test --lib shared::audio::system -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn manual_system_tap_smoke() {
+        let (tx, rx) = channel();
+        let capture = SystemCapture::start(tx).expect("start system capture");
+        std::thread::sleep(Duration::from_secs(2));
+        capture.stop();
+
+        let mut frames = 0usize;
+        let mut samples = 0usize;
+        let mut format: Option<(u16, u32)> = None;
+        let mut errors: Vec<String> = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                CaptureEvent::Frame(f) => {
+                    frames += 1;
+                    samples += f.samples.len();
+                    format.get_or_insert((f.channels, f.rate));
+                }
+                CaptureEvent::Error(e) => errors.push(e),
+            }
+        }
+        println!(
+            "system tap smoke: frames={frames} samples={samples} format={format:?} errors={errors:?}"
+        );
+        assert!(errors.is_empty(), "capture reported errors: {errors:?}");
+        assert!(frames > 0, "no frames captured in 2s");
+    }
+}

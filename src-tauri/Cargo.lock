@@ -155,6 +155,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
+ "cidre",
  "cocoa",
  "cpal",
  "dirs 5.0.1",
@@ -1098,6 +1099,22 @@ dependencies = [
  "wasm-bindgen",
  "windows-link 0.2.1",
 ]
+
+[[package]]
+name = "cidre"
+version = "0.15.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a38ded03d3ce8433da5d62ee0a7c8628519e707e9cc3b14e7ea1f67786c5d7c4"
+dependencies = [
+ "cc",
+ "cidre-macros",
+]
+
+[[package]]
+name = "cidre-macros"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6facfeffa8b9792dc014bb4e65e364d13518b74e06783d56249810a3e48cfad7"
 
 [[package]]
 name = "cipher"

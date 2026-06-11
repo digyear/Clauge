@@ -111,6 +111,11 @@ hkdf = "0.12"
 cocoa = "0.26"
 objc = "0.2"
 window-vibrancy = "0.7"
+# System-audio capture via Core Audio process taps (shared/audio/system/macos.rs).
+# crates.io 0.15.2 matches the repo HEAD, so no git pin is needed. Default
+# features pull every Apple framework binding (tokio, metal, ...) — trimmed to
+# the Core Audio surface. macos_14_2 gates TapGuard (the tap API's floor).
+cidre = { version = "0.15.2", default-features = false, features = ["core_audio", "at", "av", "cat", "cf", "cm", "ns", "macos_14_2"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
