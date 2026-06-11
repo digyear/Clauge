@@ -98,6 +98,7 @@
         proStateCurrent,
     } from "$lib/commands/cloud";
     import { decideFirstSync } from "$lib/services/firstSync";
+    import { setupCompanionLifecycle } from "$lib/services/companionLifecycle";
     import DeviceSetupModal from "$lib/components/cloud/DeviceSetupModal.svelte";
     import { listen } from "@tauri-apps/api/event";
     import { cloudConflicts } from "$lib/stores/cloud";
@@ -171,6 +172,7 @@
     let updateCheckInterval: ReturnType<typeof setInterval> | null = null;
     let backgroundPullInterval: ReturnType<typeof setInterval> | null = null;
     let deepLinkUnlisten: (() => void) | null = null;
+    let companionLifecycleUnlisten: (() => void) | null = null;
     // Tracks the last dispatched OAuth token to prevent double-firing
     // (getCurrent() and onOpenUrl can both return the same startup URL).
     let lastDispatchedToken = "";
@@ -630,6 +632,7 @@
 
     onDestroy(() => {
         teardownGlobalShortcuts();
+        companionLifecycleUnlisten?.();
         window.removeEventListener(
             APP_EVENT.SAVE_NEW_REQUEST,
             handleSaveNewRequest,
@@ -1158,6 +1161,18 @@
         ).catch((e) =>
             console.warn("[companion] pair-request listener failed:", e),
         );
+
+        // ── Companion: phone session open/close ───────────────────────
+        // A phone opened/closed an Agent or SSH session; drive the real
+        // desktop tab (open + spawn / close) and report the terminalId
+        // back so the parked REST handler can answer.
+        setupCompanionLifecycle()
+            .then((fn) => {
+                companionLifecycleUnlisten = fn;
+            })
+            .catch((e) =>
+                console.warn("[companion] lifecycle listeners failed:", e),
+            );
 
         // ── REST: refresh on MCP-driven mutations ─────────────────────
         // Existing Tauri commands don't emit events because the frontend

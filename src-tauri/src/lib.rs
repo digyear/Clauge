@@ -606,6 +606,8 @@ pub fn run() {
             companion::pairing::companion_deny_pair,
             companion::devices::companion_list_devices,
             companion::devices::companion_revoke_device,
+            companion::companion_report_opened,
+            companion::companion_report_open_failed,
 
             // Canvas mode
             modes::canvas::commands::canvas_resolve_tiles,

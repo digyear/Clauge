@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tauri::State as TauriState;
 use tokio::sync::watch;
 
+use super::lifecycle::LifecycleState;
 use super::pairing::PairingState;
 use super::{api, auth, pairing, ws, BASE_PORT, PORT_FALLBACK_RANGE};
 
@@ -24,6 +25,9 @@ pub struct CompanionAppState {
     /// For emitting `companion:pair-request` to the desktop UI.
     pub app: tauri::AppHandle,
     pub pairing: Arc<PairingState>,
+    /// Shared with the Tauri commands so spawn handlers can park on the
+    /// desktop UI opening a real tab and reporting its terminalId.
+    pub lifecycle: Arc<LifecycleState>,
     /// Server-stop signal. Upgraded WebSocket connections outlive the
     /// listener's graceful shutdown, so each mirror task watches this
     /// and dies when the server is toggled off.
@@ -37,12 +41,14 @@ pub async fn start(
     pool: SqlitePool,
     app: tauri::AppHandle,
     pairing: Arc<PairingState>,
+    lifecycle: Arc<LifecycleState>,
 ) -> Result<ServerHandle, String> {
     let (tx, rx) = watch::channel(false);
     let state = Arc::new(CompanionAppState {
         pool,
         app,
         pairing,
+        lifecycle,
         shutdown: rx.clone(),
     });
     let mut last_err: Option<String> = None;
@@ -119,7 +125,13 @@ pub async fn companion_start(
     if let Some(h) = &*g {
         return Ok(CompanionStatus { running: true, port: Some(h.port) });
     }
-    let handle = start(pool.inner().clone(), app.clone(), state.pairing.clone()).await?;
+    let handle = start(
+        pool.inner().clone(),
+        app.clone(),
+        state.pairing.clone(),
+        state.lifecycle.clone(),
+    )
+    .await?;
     let port = handle.port;
     // Start push dispatch alongside the listener — the drain + attention
     // sweep tasks watch the same shutdown channel and die on stop.

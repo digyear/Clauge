@@ -15,18 +15,25 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::Manager;
+use std::time::Duration;
+use tauri::{Emitter, Manager};
+use tokio::sync::oneshot;
 
 use crate::modes::agent::models::{AgentSession, TerminalState};
-use crate::modes::agent::terminal::spawn_agent_terminal_impl;
 use crate::modes::ssh::models::{SshCommand, SshTerminalState};
-use crate::modes::ssh::terminal::spawn_ssh_terminal_impl;
 use crate::shared::repos::sessions as sessions_repo;
 use crate::shared::repos::ssh_profiles as ssh_profiles_repo;
 
 use super::auth::AuthedDevice;
 use super::devices;
+use super::lifecycle::{CloseSessionEvent, OpenSessionEvent, OPEN_TIMEOUT};
 use super::server::CompanionAppState;
+use super::{EVT_CLOSE_SESSION, EVT_OPEN_SESSION};
+
+/// After asking the frontend to close a tab, wait this long before
+/// falling back to a direct kill — covers terminals with no desktop tab
+/// (e.g. legacy headless spawns) the UI can't close for us.
+const CLOSE_GRACE: Duration = Duration::from_millis(750);
 
 /// Routes nested under /v1 — server.rs wraps them in the bearer
 /// middleware, so every handler here runs authenticated.
@@ -57,6 +64,41 @@ fn api_err(status: StatusCode, msg: &str) -> Response {
 fn internal(context: &str, e: impl std::fmt::Display) -> Response {
     log::error!("[companion] {}: {}", context, e);
     api_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+}
+
+/// Ask the desktop UI to open a real tab for this session and block on
+/// its report of the resulting terminalId. The opened terminal goes
+/// through the normal frontend spawn path, so it registers with the D3
+/// fanout — the returned terminalId is directly attachable by the phone.
+/// Clean failure on timeout (no phantom tab-less PTYs): we never fall
+/// back to a headless spawn here.
+async fn request_open(state: &CompanionAppState, ev: OpenSessionEvent) -> Response {
+    let request_id = ev.request_id.clone();
+    let (tx, rx) = oneshot::channel();
+    state.lifecycle.register_pending(request_id.clone(), tx);
+
+    if let Err(e) = state.app.emit(EVT_OPEN_SESSION, ev) {
+        state.lifecycle.remove_pending(&request_id);
+        return internal("emit open-session", e);
+    }
+
+    match tokio::time::timeout(OPEN_TIMEOUT, rx).await {
+        Ok(Ok(Ok(terminal_id))) => {
+            log::info!("[companion] desktop opened terminal {}", terminal_id);
+            JsonResponse(json!({ "terminalId": terminal_id })).into_response()
+        }
+        // Frontend reported a failure opening the tab.
+        Ok(Ok(Err(msg))) => {
+            log::warn!("[companion] open-session failed: {}", msg);
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "failed to open session")
+        }
+        // Sender dropped without an answer (e.g. server stopping).
+        Ok(Err(_)) => api_err(StatusCode::INTERNAL_SERVER_ERROR, "open request cancelled"),
+        Err(_) => {
+            state.lifecycle.remove_pending(&request_id);
+            api_err(StatusCode::GATEWAY_TIMEOUT, "desktop did not open the session")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -322,6 +364,10 @@ async fn spawn_agent_session(
     State(state): State<Arc<CompanionAppState>>,
     JsonResponse(body): JsonResponse<SpawnAgentBody>,
 ) -> Response {
+    // Resolve to an existing row id either way: for newSession we create
+    // the row here (same defaults as desktop's agent_create_session) and
+    // hand the id to the frontend, which then opens + spawns the tab the
+    // normal way. The desktop never spawns a tab-less PTY for the phone.
     let session = match (body.session_id, body.new_session) {
         (Some(id), None) => match sessions_repo::get_session_by_id(&state.pool, &id).await {
             Ok(s) => s,
@@ -346,34 +392,16 @@ async fn spawn_agent_session(
     let now = chrono::Utc::now().to_rfc3339();
     let _ = sessions_repo::update_session_last_used(&state.pool, &session.id, &now).await;
 
-    let terminal_state = state.app.state::<TerminalState>();
-    let result = spawn_agent_terminal_impl(
-        &terminal_state,
-        &state.pool,
-        Some(session.id.clone()),
-        session.claude_session_id.clone(),
-        session.project_path.clone(),
-        Some(session.context_prompt.clone()).filter(|p| !p.is_empty()),
-        Some(session.skip_permissions == 1),
-        session.git_name.clone(),
-        session.git_email.clone(),
-        Some(session.provider.clone()),
-        session.binary_path.clone(),
-        None,
-        None, // no output channel — D3 fan-out taps the PTY
+    request_open(
+        &state,
+        OpenSessionEvent {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            kind: "agent".into(),
+            session_id: Some(session.id),
+            profile_id: None,
+        },
     )
-    .await;
-    match result {
-        Ok(terminal_id) => {
-            log::info!(
-                "[companion] spawned agent terminal {} for session {}",
-                terminal_id,
-                session.id
-            );
-            JsonResponse(json!({ "terminalId": terminal_id })).into_response()
-        }
-        Err(e) => internal("spawn agent terminal", e),
-    }
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -398,18 +426,16 @@ async fn spawn_ssh_session(
     let now = chrono::Utc::now().to_rfc3339();
     let _ = ssh_profiles_repo::touch_last_used(&state.pool, &body.profile_id, &now).await;
 
-    let ssh_state = state.app.state::<SshTerminalState>();
-    match spawn_ssh_terminal_impl(&ssh_state, &state.pool, body.profile_id.clone(), None).await {
-        Ok(terminal_id) => {
-            log::info!(
-                "[companion] spawned ssh terminal {} for profile {}",
-                terminal_id,
-                body.profile_id
-            );
-            JsonResponse(json!({ "terminalId": terminal_id })).into_response()
-        }
-        Err(e) => internal("spawn ssh terminal", e),
-    }
+    request_open(
+        &state,
+        OpenSessionEvent {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            kind: "ssh".into(),
+            session_id: None,
+            profile_id: Some(body.profile_id),
+        },
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -420,27 +446,52 @@ async fn kill_terminal(
     State(state): State<Arc<CompanionAppState>>,
     Path(terminal_id): Path<String>,
 ) -> Response {
-    // Same internals as agent_kill_terminal / ssh_kill_terminal: remove
-    // the registry entry and kill/close. Try agent first, then ssh.
+    // Prefer closing the real desktop tab so the whole tab lifecycle
+    // (xterm teardown, store cleanup, kill) runs the normal way. The
+    // frontend's close handler kills the PTY for us.
+    let _ = state.app.emit(
+        EVT_CLOSE_SESSION,
+        CloseSessionEvent {
+            terminal_id: terminal_id.clone(),
+        },
+    );
+
+    // Fallback for terminals with no desktop tab (the UI can't close
+    // what it doesn't render): after a short grace, if the entry is
+    // still in the registry, kill it directly.
+    tokio::time::sleep(CLOSE_GRACE).await;
+    if direct_kill(&state, &terminal_id) {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+
+    // Gone from the registry — the desktop tab close did the kill.
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// Remove the registry entry and kill/close the PTY directly, the way
+/// `agent_kill_terminal` / `ssh_kill_terminal` do. Returns true if an
+/// entry was found and killed. Used only as the no-desktop-tab fallback
+/// in `kill_terminal`. Try agent first, then ssh.
+fn direct_kill(state: &CompanionAppState, terminal_id: &str) -> bool {
     {
         let terminal_state = state.app.state::<TerminalState>();
-        let removed = terminal_state.terminals.lock().remove(&terminal_id);
+        let removed = terminal_state.terminals.lock().remove(terminal_id);
         if let Some(mut entry) = removed {
             let _ = entry.child.kill();
-            log::info!("[companion] killed agent terminal {}", terminal_id);
-            return StatusCode::NO_CONTENT.into_response();
+            log::info!("[companion] killed agent terminal {} (fallback)", terminal_id);
+            return true;
         }
     }
     {
         let ssh_state = state.app.state::<SshTerminalState>();
-        let removed = ssh_state.terminals.lock().remove(&terminal_id);
+        let removed = ssh_state.terminals.lock().remove(terminal_id);
         if let Some(entry) = removed {
             let _ = entry.handle_tx.send(SshCommand::Kill);
-            log::info!("[companion] killed ssh terminal {}", terminal_id);
-            return StatusCode::NO_CONTENT.into_response();
+            log::info!("[companion] killed ssh terminal {} (fallback)", terminal_id);
+            return true;
         }
     }
-    api_err(StatusCode::NOT_FOUND, "unknown terminal")
+    false
 }
 
 // ---------------------------------------------------------------------------
