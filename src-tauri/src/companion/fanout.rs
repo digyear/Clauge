@@ -4,14 +4,17 @@
 // statics (same shape as cloud/scheduler.rs) because the publishers are
 // the PTY reader threads / russh tasks, which have no AppHandle.
 //
-// Resize rule (the mirror invariant): every attached client — the
-// desktop counts as client "desktop" — records its viewport here, and
-// the PTY is driven at the element-wise minimum (min cols, min rows)
-// over all clients, recomputed on attach/detach/resize. With only the
-// desktop attached the minimum IS the desktop size, so desktop-only
-// behavior is unchanged; `set_client_size`/`remove_client` return the
-// new effective size only when it actually changed, so callers never
-// fire redundant resizes.
+// Resize rule (the mirror invariant): the desktop is authoritative for
+// the PTY size. Every attached client — the desktop counts as client
+// "desktop" — records its viewport here, but when a desktop client is
+// registered the PTY is driven at ITS size and phone sizes are ignored,
+// so a phone attaching can never shrink the desktop TUI. Only when no
+// desktop client is present (a phone-only session with no desktop tab)
+// does the PTY fall back to the element-wise minimum (min cols, min
+// rows) over the remaining clients, giving that session a usable size.
+// Recomputed on attach/detach/resize; `set_client_size`/`remove_client`
+// return the new effective size only when it actually changed, so
+// callers never fire redundant resizes.
 
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
@@ -163,7 +166,16 @@ pub fn looks_like_prompt(tail: &[u8]) -> bool {
     matches!(last, '❯' | '$' | '#' | '>' | ':')
 }
 
-fn min_size(sizes: &HashMap<String, (u16, u16)>) -> Option<(u16, u16)> {
+/// The PTY size the hub should be driven at, given every client's
+/// reported viewport. The desktop is authoritative: if a `"desktop"`
+/// client is registered, its size wins outright and phone sizes are
+/// ignored, so a phone can never shrink the desktop terminal. With no
+/// desktop client (a phone-only session) it falls back to the
+/// element-wise minimum over the remaining clients.
+fn effective(sizes: &HashMap<String, (u16, u16)>) -> Option<(u16, u16)> {
+    if let Some(&desktop) = sizes.get(DESKTOP_CLIENT) {
+        return Some(desktop);
+    }
     sizes.values().fold(None, |acc, &(c, r)| match acc {
         None => Some((c, r)),
         Some((mc, mr)) => Some((mc.min(c), mr.min(r))),
@@ -270,7 +282,7 @@ pub fn attach(terminal_id: &str) -> Option<Attached> {
         scrollback: [a, b].concat(),
         rx: hub.tx.subscribe(),
         kind: hub.kind,
-        effective_size: min_size(&hub.sizes),
+        effective_size: effective(&hub.sizes),
     })
 }
 
@@ -280,7 +292,7 @@ pub fn attach(terminal_id: &str) -> Option<Attached> {
 #[allow(dead_code)]
 pub fn effective_size(terminal_id: &str) -> Option<(u16, u16)> {
     let map = hubs().lock();
-    min_size(&map.get(terminal_id)?.sizes)
+    effective(&map.get(terminal_id)?.sizes)
 }
 
 /// Record a client's viewport. Returns the new effective size only if
@@ -290,9 +302,9 @@ pub fn effective_size(terminal_id: &str) -> Option<(u16, u16)> {
 pub fn set_client_size(terminal_id: &str, client: &str, cols: u16, rows: u16) -> Option<(u16, u16)> {
     let mut map = hubs().lock();
     let hub = map.get_mut(terminal_id)?;
-    let before = min_size(&hub.sizes);
+    let before = effective(&hub.sizes);
     hub.sizes.insert(client.to_string(), (cols, rows));
-    let after = min_size(&hub.sizes);
+    let after = effective(&hub.sizes);
     if after != before {
         after
     } else {
@@ -306,9 +318,9 @@ pub fn set_client_size(terminal_id: &str, client: &str, cols: u16, rows: u16) ->
 pub fn remove_client(terminal_id: &str, client: &str) -> Option<(u16, u16)> {
     let mut map = hubs().lock();
     let hub = map.get_mut(terminal_id)?;
-    let before = min_size(&hub.sizes);
+    let before = effective(&hub.sizes);
     hub.sizes.remove(client);
-    let after = min_size(&hub.sizes);
+    let after = effective(&hub.sizes);
     if after != before {
         after
     } else {
@@ -406,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn effective_size_min_math_across_add_remove() {
+    fn effective_size_desktop_is_authoritative() {
         let id = "fanout-test-size";
         register(id, TermKind::Ssh, "test");
         assert_eq!(effective_size(id), None);
@@ -419,25 +431,69 @@ mod tests {
         // Same size again → no change → no resize to fire.
         assert_eq!(set_client_size(id, DESKTOP_CLIENT, 120, 40), None);
 
-        // Phone smaller in cols, larger in rows → element-wise min.
-        assert_eq!(set_client_size(id, "phone-1", 80, 60), Some((80, 40)));
-        assert_eq!(effective_size(id), Some((80, 40)));
+        // A smaller phone must NOT shrink the desktop — effective stays
+        // at the desktop size and no resize fires.
+        assert_eq!(set_client_size(id, "phone-1", 80, 24), None);
+        assert_eq!(effective_size(id), Some((120, 40)));
 
-        // Second phone strictly bigger → min unchanged.
+        // A second, larger phone: still desktop-authoritative, no change.
         assert_eq!(set_client_size(id, "phone-2", 200, 50), None);
+        assert_eq!(effective_size(id), Some((120, 40)));
 
-        // Phone-1 leaves → min relaxes to (120, 40).
-        assert_eq!(remove_client(id, "phone-1"), Some((120, 40)));
-        // Removing a client that never registered → no change.
+        // Phones leaving never changes the size while desktop is present.
+        assert_eq!(remove_client(id, "phone-1"), None);
         assert_eq!(remove_client(id, "ghost"), None);
+        assert_eq!(remove_client(id, "phone-2"), None);
+        assert_eq!(effective_size(id), Some((120, 40)));
 
-        // Remaining clients leave: phone-2 going changes the min…
-        assert_eq!(remove_client(id, "phone-2"), None); // (120,40) is still the min
-        assert_eq!(remove_client(id, DESKTOP_CLIENT), None); // → empty, nothing to apply
+        // The desktop's own resize still drives the PTY exactly.
+        assert_eq!(set_client_size(id, DESKTOP_CLIENT, 100, 30), Some((100, 30)));
+
+        // Desktop leaves last → empty, nothing to apply.
+        assert_eq!(remove_client(id, DESKTOP_CLIENT), None);
         assert_eq!(effective_size(id), None);
 
         // Unknown terminal → None everywhere.
         assert_eq!(set_client_size("nope", "x", 1, 1), None);
+        unregister(id);
+    }
+
+    #[test]
+    fn effective_size_falls_back_to_phone_when_no_desktop() {
+        let id = "fanout-test-size-phone-only";
+        register(id, TermKind::Ssh, "test");
+
+        // No desktop tab: the phone's size defines the PTY so a
+        // phone-spawned session is still usable.
+        assert_eq!(set_client_size(id, "phone-1", 80, 24), Some((80, 24)));
+        assert_eq!(effective_size(id), Some((80, 24)));
+
+        // A second phone: fall back to the element-wise minimum.
+        assert_eq!(set_client_size(id, "phone-2", 60, 30), Some((60, 24)));
+        assert_eq!(effective_size(id), Some((60, 24)));
+
+        // Larger phone leaves → min relaxes.
+        assert_eq!(remove_client(id, "phone-2"), Some((80, 24)));
+        unregister(id);
+    }
+
+    #[test]
+    fn phone_churn_never_changes_size_while_desktop_present() {
+        let id = "fanout-test-size-churn";
+        register(id, TermKind::Agent, "test");
+
+        assert_eq!(set_client_size(id, DESKTOP_CLIENT, 150, 45), Some((150, 45)));
+
+        // Add, resize, and remove phones repeatedly — desktop wins every
+        // time, so set/remove all report "no change".
+        assert_eq!(set_client_size(id, "phone-1", 40, 20), None);
+        assert_eq!(set_client_size(id, "phone-1", 200, 80), None);
+        assert_eq!(set_client_size(id, "phone-2", 30, 10), None);
+        assert_eq!(effective_size(id), Some((150, 45)));
+        assert_eq!(remove_client(id, "phone-1"), None);
+        assert_eq!(remove_client(id, "phone-2"), None);
+        assert_eq!(effective_size(id), Some((150, 45)));
+
         unregister(id);
     }
 
