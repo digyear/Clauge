@@ -305,6 +305,21 @@ export const workspaceMeetingUpdateNotes = (id: string, notesMd: string) =>
   invoke<void>('workspace_meeting_update_notes', { id, notesMd });
 export const workspaceMeetingDelete = (id: string) =>
   invoke<void>('workspace_meeting_delete', { id });
+/** Resolves to the generated notes markdown. `providerId` is a registry
+ *  slug ('clauge' = managed Clauge AI); omitted `model` falls back to the
+ *  provider's registry default. Rejects with 'pro_required',
+ *  'no_api_key', 'transcript is empty', 'meeting is still recording',
+ *  'generation already in progress', or an upstream error string.
+ *  Every failure past the in-flight guard is ALSO emitted as
+ *  `MEETING_EVENT.NOTES_ERROR` (the rejection alone can't reach a tab
+ *  that was closed and reopened mid-run); only the pre-guard
+ *  'meeting is still recording' / 'generation already in progress'
+ *  rejections arrive without the event. */
+export const workspaceMeetingGenerateNotes = (
+  id: string,
+  providerId: string,
+  model?: string,
+) => invoke<string>('workspace_meeting_generate_notes', { id, providerId, model });
 
 /** Exact error string `workspace_meeting_start` rejects with when the
  *  requested whisper model isn't downloaded yet. */

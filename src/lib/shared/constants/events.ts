@@ -91,6 +91,14 @@ export const MEETING_EVENT = {
   TRANSCRIPT_SEGMENT: 'meetings:transcript-segment',
   /** Detail: `{ name, downloaded, total }` — `total` 0 = indeterminate. */
   MODEL_DOWNLOAD_PROGRESS: 'meetings:model-download-progress',
+  /** Detail: `{ meetingId, done, total }` — emitted only when notes
+   *  generation needs multiple summarization chunks. */
+  NOTES_PROGRESS: 'meetings:notes-progress',
+  /** Detail: `{ meetingId }`. */
+  NOTES_READY: 'meetings:notes-ready',
+  /** Detail: `{ meetingId, message }` — emitted for every notes-generation
+   *  failure past the in-flight guard, alongside the command rejection. */
+  NOTES_ERROR: 'meetings:notes-error',
   /** Detail: `{ app }`. */
   CALL_DETECTED: 'meetings:call-detected',
   CALL_ENDED: 'meetings:call-ended',

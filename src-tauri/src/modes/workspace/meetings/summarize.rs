@@ -22,6 +22,7 @@ pub const OVERLAP_CHARS: usize = 1_500;
 
 const EVT_PROGRESS: &str = "meetings:notes-progress";
 const EVT_READY: &str = "meetings:notes-ready";
+const EVT_ERROR: &str = "meetings:notes-error";
 
 /// Usage-attribution mode label (ai_usage table + Clauge AI worker log).
 const USAGE_MODE: &str = "meetings";
@@ -146,6 +147,26 @@ pub fn strip_code_fences(s: &str) -> String {
 }
 
 pub async fn generate_notes(
+    app: &AppHandle,
+    pool: &SqlitePool,
+    meeting_id: &str,
+    provider_id: &str,
+    model: Option<&str>,
+) -> Result<String, String> {
+    let result = generate_notes_inner(app, pool, meeting_id, provider_id, model).await;
+    // Failure counterpart of EVT_READY: the run may have outlived the tab
+    // that invoked it, so the command rejection alone can't reach a
+    // reopened meeting view — the event can.
+    if let Err(message) = &result {
+        let _ = app.emit(
+            EVT_ERROR,
+            serde_json::json!({"meetingId": meeting_id, "message": message}),
+        );
+    }
+    result
+}
+
+async fn generate_notes_inner(
     app: &AppHandle,
     pool: &SqlitePool,
     meeting_id: &str,

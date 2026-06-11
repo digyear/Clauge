@@ -8,13 +8,18 @@
     workspaceMeetingGet,
     workspaceMeetingUpdateTitle,
     workspaceMeetingUpdateNotes,
+    workspaceMeetingGenerateNotes,
   } from '../commands';
   import { parseTranscript } from '../types';
   import type { TranscriptSegment, WorkspaceMeeting } from '../types';
   import { showToast } from '$lib/shared/primitives/toast';
   import { errorToast } from '$lib/utils/errors';
-  import { tabs as sharedTabs, updateTab } from '$lib/shared/stores/tabs';
+  import ConfirmDialog from '$lib/shared/primitives/ConfirmDialog.svelte';
+  import { tabs as sharedTabs, updateTab, openSettingsTab } from '$lib/shared/stores/tabs';
   import { MEETING_EVENT } from '$lib/shared/constants/events';
+  import { settings } from '$lib/stores/settings';
+  import { cloudPlan, upgradeModalOpen } from '$lib/stores/cloud';
+  import { PROVIDERS } from '$lib/shared/ai/providers';
 
   interface Props {
     meetingId: string;
@@ -88,6 +93,12 @@
     notFound = false;
     baseline = null;
     liveSnapshot = [];
+    // Generation keeps running backend-side across tab switches; the
+    // notes-progress listener re-raises the flag if this meeting is
+    // still being summarized.
+    generating = false;
+    progress = null;
+    pickerOpen = false;
     try {
       const fetched = await workspaceMeetingGet(id);
       meeting = fetched;
@@ -107,8 +118,12 @@
     untrack(() => bootstrap(id));
   });
 
+  // Component scope (not onMount) so startGeneration's catch — which can
+  // outlive the component when a tab is closed mid-generation — can
+  // check it too.
+  let destroyed = false;
+
   onMount(() => {
-    let destroyed = false;
     const stoppedPromise = listen<{ meetingId: string }>(MEETING_EVENT.RECORDING_STOPPED, async (e) => {
       if (destroyed || e.payload.meetingId !== meetingId) return;
       // Refetch FIRST so the full transcript replaces the live list
@@ -129,12 +144,61 @@
         meeting = await workspaceMeetingGet(meetingId);
       } catch { /* deleted concurrently */ }
     });
+    // Emitted only on multi-chunk runs. Also re-raises `generating` when
+    // this tab was closed and reopened mid-generation — the backend keeps
+    // going regardless.
+    const progressPromise = listen<{ meetingId: string; done: number; total: number }>(
+      MEETING_EVENT.NOTES_PROGRESS,
+      (e) => {
+        if (destroyed || e.payload.meetingId !== meetingId) return;
+        generating = true;
+        progress = { done: e.payload.done, total: e.payload.total };
+      },
+    );
+    // Sole completion path — the invoke success resolves around the same
+    // time but defers here so a run that outlived its original tab still
+    // lands when the meeting is reopened.
+    const readyPromise = listen<{ meetingId: string }>(MEETING_EVENT.NOTES_READY, async (e) => {
+      if (destroyed || e.payload.meetingId !== meetingId) return;
+      generating = false;
+      progress = null;
+      // Kill any debounced manual save BEFORE the refetch await — a stale
+      // save firing in that gap would overwrite the generated notes.
+      if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null; }
+      dirty = false;
+      try {
+        const fresh = await workspaceMeetingGet(meetingId);
+        meeting = fresh;
+        currentNotes = fresh.notesMd ?? '';
+        baseline = null;
+        showEditor = !!fresh.notesMd?.trim();
+        notesEpoch += 1;
+        view = 'notes';
+        showToast('Meeting notes ready', 'success');
+      } catch { /* deleted while generating */ }
+    });
+    // Failure twin of notes-ready. Owns the error UI for every failure
+    // past the backend's in-flight guard; `errorHandledFor` dedupes
+    // against the invoke catch when this tab is the one that started the
+    // run (event vs rejection ordering is not guaranteed).
+    const failedPromise = listen<{ meetingId: string; message: string }>(
+      MEETING_EVENT.NOTES_ERROR,
+      (e) => {
+        if (destroyed || e.payload.meetingId !== meetingId) return;
+        if (errorHandledFor === e.payload.meetingId) { errorHandledFor = null; return; }
+        errorHandledFor = e.payload.meetingId;
+        handleGenerationFailure(e.payload.message);
+      },
+    );
     return () => {
       destroyed = true;
       // Awaiting the promise covers destroy-before-listen-resolves; the
       // flag covers callbacks already in flight.
       stoppedPromise.then((u) => u());
       startedPromise.then((u) => u());
+      progressPromise.then((u) => u());
+      readyPromise.then((u) => u());
+      failedPromise.then((u) => u());
     };
   });
 
@@ -199,11 +263,171 @@
     if (dirty) saveNotes();
   });
 
-  // T15 swaps this body for the real AI generation flow — keep the
-  // button wired through this single function.
+  // ── Generate notes ─────────────────────────────────────────────────
+
+  const CLAUGE = 'clauge';
+  const isPro = $derived($cloudPlan === 'pro');
+
+  // Same configured-provider rule as AIConfigSelector: only BYOK
+  // providers with a key set are offered. Deduped to the first registry
+  // entry per provider — that entry is the provider's default model.
+  const configuredProviders = $derived.by(() => {
+    const seen = new Set<string>();
+    return PROVIDERS.filter((p) => {
+      if (seen.has(p.providerId) || !$settings[p.keySettingName]?.trim()) return false;
+      seen.add(p.providerId);
+      return true;
+    });
+  });
+
+  let pickerOpen = $state(false);
+  let pickerEl = $state<HTMLDivElement | null>(null);
+  let generating = $state(false);
+  let progress = $state<{ done: number; total: number } | null>(null);
+  let showRegenConfirm = $state(false);
+  /** Bumping this remounts Crepe so generated notes replace the buffer —
+   *  updating `value` alone doesn't reach an already-mounted editor. */
+  let notesEpoch = $state(0);
+
+  const hasNotes = $derived(!!meeting?.notesMd?.trim());
+  const canGenerate = $derived(
+    !!meeting && parsed.length > 0 && !recordingThis && meeting.status !== 'recording',
+  );
+
+  const generateLabel = $derived.by(() => {
+    if (generating) {
+      return progress ? `Summarizing ${progress.done}/${progress.total}…` : 'Generating…';
+    }
+    return hasNotes ? 'Regenerate' : 'Generate notes';
+  });
+
+  /** Single entry point for both the header button and the empty-state
+   *  hint button. */
   function onGenerate() {
-    showToast('Coming in the next update', 'info');
+    if (generating) return;
+    if (parsed.length === 0) {
+      showToast('No transcript to generate notes from', 'error');
+      return;
+    }
+    if (hasNotes) {
+      showRegenConfirm = true;
+      return;
+    }
+    pickerOpen = !pickerOpen;
   }
+
+  function pickClaugeAI() {
+    if (!isPro) {
+      pickerOpen = false;
+      upgradeModalOpen.set(true);
+      return;
+    }
+    startGeneration(CLAUGE);
+  }
+
+  function openAIKeySettings() {
+    pickerOpen = false;
+    openSettingsTab('ai:byok');
+  }
+
+  /** Failure-dedupe token: a backend failure reaches an open tab TWICE —
+   *  once as the invoke rejection, once as the notes-error event — in no
+   *  guaranteed order. Whichever path runs first handles the UI and sets
+   *  this to the meeting id; the second sees its own id and only clears
+   *  the token. Reset on every new generation so a token orphaned by a
+   *  pre-guard rejection (which emits no event) can't swallow the next
+   *  failure's toast. */
+  let errorHandledFor: string | null = null;
+
+  /** Shared error UI for the invoke catch and the notes-error listener:
+   *  resets the in-flight state and routes the message to the right
+   *  toast/modal. Callers guard meeting identity + dedupe first. */
+  function handleGenerationFailure(message: string) {
+    generating = false;
+    progress = null;
+    if (message.includes('pro_required')) {
+      showToast('Clauge AI needs an active Pro plan — upgrade to generate notes', 'error');
+      upgradeModalOpen.set(true);
+    } else if (message.includes('no_api_key')) {
+      showToast('No API key for this provider — add one in Settings → AI', 'error');
+      openSettingsTab('ai:byok');
+    } else {
+      errorToast('Notes generation failed', message);
+    }
+  }
+
+  async function startGeneration(providerId: string, model?: string) {
+    if (!meeting || generating) return;
+    // The catch below can fire after the user has switched this reused
+    // component to another meeting — everything in it must compare
+    // against the id the run was started for, never `meeting`/`meetingId`
+    // read at catch time.
+    const id = meeting.id;
+    pickerOpen = false;
+    generating = true;
+    progress = null;
+    errorHandledFor = null;
+    try {
+      await workspaceMeetingGenerateNotes(id, providerId, model);
+      // Success is applied by the notes-ready listener (refetch + tab
+      // switch + toast) — nothing to do here.
+    } catch (e) {
+      // Another meeting is displayed (or the component is gone): skip ALL
+      // of it — state reset, toasts, modals. If the failed meeting is
+      // reopened later, the notes-error listener shows the failure there.
+      if (destroyed || meetingId !== id) return;
+      const msg = String(e);
+      if (msg.includes('generation already in progress')) {
+        // A run started from a previous tab instance is still going; keep
+        // the button in its in-flight state and let notes-ready land it.
+        showToast('Notes are already being generated for this meeting', 'info');
+        return;
+      }
+      if (errorHandledFor === id) { errorHandledFor = null; return; }
+      errorHandledFor = id;
+      handleGenerationFailure(msg);
+    }
+  }
+
+  // Same dismiss idiom as AIConfigSelector — deferred a frame so the
+  // click that opened the popover doesn't immediately close it.
+  function pickerOutside(e: MouseEvent) {
+    if (!pickerOpen) return;
+    if (pickerEl?.contains(e.target as Node)) return;
+    pickerOpen = false;
+  }
+  function pickerKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && pickerOpen) pickerOpen = false;
+  }
+  $effect(() => {
+    if (!pickerOpen) return;
+    const t = setTimeout(() => {
+      window.addEventListener('mousedown', pickerOutside);
+      window.addEventListener('keydown', pickerKey);
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('mousedown', pickerOutside);
+      window.removeEventListener('keydown', pickerKey);
+    };
+  });
+
+  const provenanceProvider = $derived.by(() => {
+    const p = meeting?.notesProvider;
+    if (!p) return '';
+    if (p === CLAUGE || p === 'clauge-ai') return 'Clauge AI';
+    return PROVIDERS.find((x) => x.providerId === p)?.providerLabel ?? p;
+  });
+
+  // Same names AIConfigSelector shows: registry `modelLabel` for BYOK
+  // models, "Managed" for the Clauge AI sentinel id; unknown ids fall
+  // back to the raw stored value.
+  const provenanceModel = $derived.by(() => {
+    const m = meeting?.notesModel;
+    if (!m) return '';
+    if (m === 'clauge-managed') return 'Managed';
+    return PROVIDERS.find((x) => x.modelId === m)?.modelLabel ?? m;
+  });
 
   // ── Transcript ─────────────────────────────────────────────────────
 
@@ -337,17 +561,105 @@
       {/if}
     </div>
 
-    <div class="mv-segment">
-      <button type="button" class="mv-seg-btn" class:active={view === 'notes'} onclick={() => (view = 'notes')}>Notes</button>
-      <button type="button" class="mv-seg-btn" class:active={view === 'transcript'} onclick={() => (view = 'transcript')}>Transcript</button>
+    <div class="mv-toolbar">
+      <div class="mv-segment">
+        <button type="button" class="mv-seg-btn" class:active={view === 'notes'} onclick={() => (view = 'notes')}>Notes</button>
+        <button type="button" class="mv-seg-btn" class:active={view === 'transcript'} onclick={() => (view = 'transcript')}>Transcript</button>
+      </div>
+      <span style="flex:1"></span>
+      {#if canGenerate}
+        <div class="mv-gen-wrap" bind:this={pickerEl}>
+          <button
+            type="button"
+            class="mv-gen-btn"
+            onclick={onGenerate}
+            disabled={generating}
+            aria-haspopup="listbox"
+            aria-expanded={pickerOpen}
+          >
+            {#if generating}
+              <span class="mv-gen-spinner" aria-hidden="true"></span>
+            {:else}
+              <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true">
+                <path d="M12 2l2.6 7.4L22 12l-7.4 2.6L12 22l-2.6-7.4L2 12l7.4-2.6L12 2z" />
+              </svg>
+            {/if}
+            {generateLabel}
+          </button>
+          {#if pickerOpen}
+            <div class="mv-gen-pop" role="listbox" aria-label="Choose AI provider">
+              <!-- Clauge AI — pinned at top, gated by Pro. Mirrors AIConfigSelector. -->
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="mv-gen-row is-clauge"
+                role="option"
+                tabindex="0"
+                aria-selected="false"
+                aria-disabled={!isPro}
+                onclick={pickClaugeAI}
+                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickClaugeAI(); } }}
+              >
+                <span class="mv-gen-dot mv-gen-dot-clauge" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="9" height="9" fill="currentColor">
+                    <path d="M12 2l2.6 7.4L22 12l-7.4 2.6L12 22l-2.6-7.4L2 12l7.4-2.6L12 2z" />
+                  </svg>
+                </span>
+                <span class="mv-gen-text">
+                  <span class="mv-gen-name">Clauge AI</span>
+                  <span class="mv-gen-sub">
+                    {#if isPro}Managed · no API key needed{:else}Requires Pro{/if}
+                  </span>
+                </span>
+                {#if !isPro}
+                  <span class="mv-gen-pro">PRO</span>
+                {/if}
+              </div>
+              {#if configuredProviders.length > 0}
+                <div class="mv-gen-sep" aria-hidden="true"><span>Your providers</span></div>
+                {#each configuredProviders as p (p.providerId)}
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div
+                    class="mv-gen-row"
+                    role="option"
+                    tabindex="0"
+                    aria-selected="false"
+                    onclick={() => startGeneration(p.providerId, p.modelId)}
+                    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startGeneration(p.providerId, p.modelId); } }}
+                  >
+                    <span class="mv-gen-dot" aria-hidden="true"></span>
+                    <span class="mv-gen-text">
+                      <span class="mv-gen-name">{p.providerLabel}</span>
+                      <span class="mv-gen-sub">{p.modelLabel}</span>
+                    </span>
+                  </div>
+                {/each}
+              {:else if !isPro}
+                <div class="mv-gen-empty">
+                  Add an API key in Settings or upgrade to Clauge Pro.
+                  <button type="button" class="mv-gen-settings" onclick={openAIKeySettings}>Open Settings</button>
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
 
     <!-- Both tab bodies stay mounted (display toggle, #9): Crepe keeps
          its editing state and the transcript keeps its scroll offset. -->
     <div class="mv-pane" class:hidden={view !== 'notes'}>
       {#if showEditor}
+        {#if meeting.notesProvider && meeting.notesGeneratedAt}
+          <div class="mv-provenance">
+            Generated by {provenanceProvider}
+            {#if provenanceModel}· {provenanceModel}{/if}
+            · {new Date(meeting.notesGeneratedAt).toLocaleString()}
+          </div>
+        {/if}
         <div class="mv-editor">
-          {#key meeting.id}
+          {#key `${meeting.id}:${notesEpoch}`}
             <MilkdownEditor value={meeting.notesMd ?? ''} onChange={onNotesChange} />
           {/key}
         </div>
@@ -405,6 +717,15 @@
     </div>
   </div>
 {/if}
+
+<ConfirmDialog
+  bind:show={showRegenConfirm}
+  title="Regenerate notes"
+  message="Regenerate notes? Current notes (including manual edits) will be replaced."
+  confirmText="Regenerate"
+  confirmColor="var(--acc)"
+  onconfirm={() => { pickerOpen = true; }}
+/>
 
 <style>
   .mv-loading {
@@ -533,6 +854,12 @@
     50% { opacity: 0.35; }
   }
 
+  .mv-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
   .mv-segment {
     display: inline-flex;
     background: var(--e);
@@ -540,8 +867,168 @@
     border-radius: 9px;
     padding: 3px;
     gap: 2px;
-    align-self: flex-start;
-    margin-bottom: 14px;
+  }
+
+  .mv-gen-wrap {
+    position: relative;
+  }
+  .mv-gen-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 12px;
+    border-radius: 7px;
+    border: 1px solid var(--b1);
+    background: var(--surface-hover);
+    color: var(--t1);
+    font-family: var(--ui);
+    font-size: 11.5px;
+    font-weight: 500;
+    cursor: default;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+  }
+  .mv-gen-btn:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--acc) 45%, transparent);
+    color: var(--t1);
+  }
+  .mv-gen-btn:disabled {
+    opacity: 0.7;
+    color: var(--t3);
+  }
+  .mv-gen-btn svg { color: var(--acc); }
+  .mv-gen-spinner {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1.5px solid var(--b2, var(--b1));
+    border-top-color: var(--acc);
+    animation: mv-spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes mv-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .mv-gen-pop {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 30;
+    min-width: 240px;
+    padding: 5px;
+    border-radius: 10px;
+    border: 1px solid var(--b1);
+    background: var(--e);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  }
+  .mv-gen-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 9px;
+    border-radius: 7px;
+    cursor: default;
+  }
+  .mv-gen-row:hover {
+    background: var(--surface-hover);
+  }
+  .mv-gen-row[aria-disabled='true'] .mv-gen-name,
+  .mv-gen-row[aria-disabled='true'] .mv-gen-sub {
+    color: var(--t4);
+  }
+  .mv-gen-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--acc);
+    flex-shrink: 0;
+  }
+  .mv-gen-dot-clauge {
+    width: auto;
+    height: auto;
+    background: transparent;
+    color: var(--acc);
+    display: inline-flex;
+  }
+  .mv-gen-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .mv-gen-name {
+    font-family: var(--ui);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--t1);
+  }
+  .mv-gen-sub {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--t4);
+  }
+  .mv-gen-pro {
+    margin-left: auto;
+    padding: 1px 6px;
+    border-radius: 5px;
+    border: 1px solid color-mix(in srgb, var(--acc) 40%, transparent);
+    color: var(--acc);
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+  }
+  .mv-gen-sep {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 5px 4px 3px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--t4);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .mv-gen-sep::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--b1);
+  }
+  .mv-gen-empty {
+    padding: 9px 10px 10px;
+    font-family: var(--ui);
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--t3);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 7px;
+  }
+  .mv-gen-settings {
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--b1);
+    background: transparent;
+    color: var(--t2);
+    font-family: var(--ui);
+    font-size: 11px;
+    cursor: default;
+    transition: background 0.12s, color 0.12s;
+  }
+  .mv-gen-settings:hover {
+    background: var(--surface-hover);
+    color: var(--t1);
+  }
+
+  .mv-provenance {
+    flex-shrink: 0;
+    padding: 2px 0 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--t4);
   }
   .mv-seg-btn {
     border: none;
