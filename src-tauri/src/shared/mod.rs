@@ -6,4 +6,5 @@ pub mod http;
 pub mod logger;
 pub mod platform;
 pub mod repos;
+pub mod transcribe;
 pub mod updater;

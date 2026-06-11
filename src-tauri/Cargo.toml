@@ -96,6 +96,14 @@ toml_edit = "0.25.5"
 cpal = { version = "0.18", features = ["pulseaudio"] }
 rubato = "3.0"
 audioadapter-buffers = "3.0"
+# Local Whisper transcription (shared/transcribe/). whisper-rs compiles
+# whisper.cpp through cmake; CUDA/Vulkan stay off — CPU everywhere, with
+# Metal+CoreML layered on for macOS below (features are additive per-target).
+# CoreML builds with WHISPER_COREML_ALLOW_FALLBACK=1, so missing .mlmodelc
+# files degrade to Metal/CPU instead of failing context load.
+# log_backend routes whisper.cpp/GGML stderr spam into the `log` crate
+# (picked up by our rolling file logger) via install_logging_hooks().
+whisper-rs = { version = "0.16", features = ["log_backend"] }
 # Credential store — per-OS dispatch in shared/platform/credential_store.rs:
 #   macOS   → shell-out to /usr/bin/security (implicitly trusted by Keychain,
 #             avoids re-signing prompts).
@@ -121,6 +129,7 @@ window-vibrancy = "0.7"
 # features pull every Apple framework binding (tokio, metal, ...) — trimmed to
 # the Core Audio surface. macos_14_2 gates TapGuard (the tap API's floor).
 cidre = { version = "0.15.2", default-features = false, features = ["core_audio", "at", "av", "cat", "cf", "cm", "ns", "macos_14_2"] }
+whisper-rs = { version = "0.16", features = ["metal", "coreml", "log_backend"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
@@ -137,3 +146,7 @@ windows = { version = "0.61", features = ["Win32_Graphics_Dwm", "Win32_Foundatio
 # spawning a fresh instance.
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[dev-dependencies]
+# WAV reader for the transcription smoke test (shared/transcribe/engine.rs).
+hound = "3.5"

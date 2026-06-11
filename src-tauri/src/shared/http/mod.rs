@@ -104,6 +104,25 @@ pub async fn build_app_http_client(pool: &SqlitePool) -> Result<reqwest::Client,
         .map_err(|e| format!("HTTP client build failed: {}", e))
 }
 
+/// Build the HTTP client for large file downloads (whisper models).
+///
+/// Deliberately has NO total timeout — a 466 MB model on a slow link can
+/// take far longer than the app client's 60s budget. Stall protection comes
+/// from `connect_timeout` (30s) + `read_timeout` (60s between chunks,
+/// reqwest ≥ 0.12.5). Picks up the global proxy like every other client.
+pub async fn build_download_http_client(pool: &SqlitePool) -> Result<reqwest::Client, String> {
+    let builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::limited(DEFAULT_REDIRECT_LIMIT));
+
+    let builder = apply_proxy(pool, builder).await?;
+
+    builder
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {}", e))
+}
+
 /// Build the HTTP client for user-driven REST requests. Layers REST-only
 /// knobs (timeout, redirects, SSL verification, gzip/brotli/deflate)
 /// on top of the app-client base.

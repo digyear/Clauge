@@ -1,8 +1,9 @@
 use sqlx::SqlitePool;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::modes::workspace::meetings::repo;
 use crate::modes::workspace::models::WorkspaceMeeting;
+use crate::shared::transcribe::models as whisper_models;
 
 // --- CRUD ---
 
@@ -73,4 +74,29 @@ pub async fn workspace_meeting_delete(
     repo::delete_meeting(pool.inner(), &id)
         .await
         .map_err(|e| e.to_string())
+}
+
+// --- Whisper models ---
+
+#[tauri::command]
+pub async fn workspace_meeting_models_list(
+    app: AppHandle,
+) -> Result<Vec<whisper_models::ModelInfo>, String> {
+    Ok(whisper_models::list_models(&app))
+}
+
+#[tauri::command]
+pub async fn workspace_meeting_model_download(
+    app: AppHandle,
+    name: String,
+) -> Result<(), String> {
+    whisper_models::download_model(&app, &name).await
+}
+
+#[tauri::command]
+pub async fn workspace_meeting_model_delete(
+    app: AppHandle,
+    name: String,
+) -> Result<(), String> {
+    whisper_models::delete_model(&app, &name)
 }

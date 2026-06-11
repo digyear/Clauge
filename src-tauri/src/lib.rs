@@ -84,6 +84,11 @@ pub fn run() {
                 let _ = shared::logger::init(&log_dir);
             }
 
+            // Route whisper.cpp/GGML native logging into the `log` crate
+            // (log_backend feature) instead of spamming stderr on every
+            // transcription. Safe to call once; permanent for the process.
+            whisper_rs::install_logging_hooks();
+
             // Apply advanced/diagnostic settings from `settings.json`
             // (lives next to the SQLite DB in app_config_dir). This is
             // the hidden knob for log verbosity + future feature flags.
@@ -601,6 +606,9 @@ pub fn run() {
             modes::workspace::meetings::commands::workspace_meeting_update_title,
             modes::workspace::meetings::commands::workspace_meeting_update_notes,
             modes::workspace::meetings::commands::workspace_meeting_delete,
+            modes::workspace::meetings::commands::workspace_meeting_models_list,
+            modes::workspace::meetings::commands::workspace_meeting_model_download,
+            modes::workspace::meetings::commands::workspace_meeting_model_delete,
 
             // Companion (mobile) server
             companion::server::companion_status,
