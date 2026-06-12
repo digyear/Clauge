@@ -200,6 +200,7 @@
             now = Date.now();
         }, 30_000);
         window.addEventListener(APP_EVENT.OAUTH_CALLBACK, handleOAuthCallback);
+        window.addEventListener("click", handleInfoOutsideClick);
     });
     onDestroy(() => {
         if (tickerId) clearInterval(tickerId);
@@ -207,6 +208,7 @@
             APP_EVENT.OAUTH_CALLBACK,
             handleOAuthCallback,
         );
+        window.removeEventListener("click", handleInfoOutsideClick);
     });
 
     async function refreshStatus() {
@@ -686,6 +688,50 @@
         } catch (e) {
             showToast(friendlyError(e), "error");
         }
+    }
+
+    // Map developer reason keys to plain-English labels.
+    // Unknown/unrecognized reasons are title-cased as a safe fallback.
+    function reasonLabel(reason: string): string {
+        const map: Record<string, string> = {
+            "pre-restore": "Before restore from cloud",
+            "pre-conflict": "Before using cloud copy",
+            "pre-merge": "Before merge",
+            "pre-history-restore": "Before version restore",
+            "pre-snapshot-restore": "Before snapshot restore",
+            "manual": "Manual backup",
+            "pre-pull": "Before pull from cloud",
+        };
+        if (map[reason]) return map[reason];
+        // Fallback: replace hyphens with spaces and title-case each word
+        return reason
+            .split("-")
+            .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(" ");
+    }
+
+    // Info popover state — one per section (snap / hist).
+    // hovered = shown by hover, clicked = pinned by click; both show the popover.
+    let snapInfoHovered = $state(false);
+    let snapInfoClicked = $state(false);
+    let histInfoHovered = $state(false);
+    let histInfoClicked = $state(false);
+    let snapInfoVisible = $derived(snapInfoHovered || snapInfoClicked);
+    let histInfoVisible = $derived(histInfoHovered || histInfoClicked);
+
+    function toggleSnapInfo(e: MouseEvent) {
+        e.stopPropagation();
+        snapInfoClicked = !snapInfoClicked;
+        histInfoClicked = false;
+    }
+    function toggleHistInfo(e: MouseEvent) {
+        e.stopPropagation();
+        histInfoClicked = !histInfoClicked;
+        snapInfoClicked = false;
+    }
+    function handleInfoOutsideClick(e: MouseEvent) {
+        snapInfoClicked = false;
+        histInfoClicked = false;
     }
 
     function copyHandle() {
@@ -1525,27 +1571,45 @@
 
             <!-- Local snapshots -->
             <section class="acc-card">
-                <button
-                    class="acc-sec-head"
-                    class:acc-sec-open={snapSectionOpen}
-                    onclick={() => (snapSectionOpen = !snapSectionOpen)}
-                >
-                    <h3 class="acc-card-title acc-sec-title">
-                        Local snapshots ({snapshotGroups.length})
-                    </h3>
-                    <svg
-                        class="acc-sec-chev"
-                        viewBox="0 0 24 24"
-                        width="14"
-                        height="14"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2.2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"><polyline points="9 6 15 12 9 18" /></svg
+                <div class="acc-sec-head-wrap">
+                    <button
+                        class="acc-sec-head"
+                        class:acc-sec-open={snapSectionOpen}
+                        onclick={() => (snapSectionOpen = !snapSectionOpen)}
                     >
-                </button>
+                        <h3 class="acc-card-title acc-sec-title">
+                            Local snapshots ({snapshotGroups.length})
+                        </h3>
+                        <svg
+                            class="acc-sec-chev"
+                            viewBox="0 0 24 24"
+                            width="14"
+                            height="14"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2.2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"><polyline points="9 6 15 12 9 18" /></svg
+                        >
+                    </button>
+                    <div
+                        class="acc-info-wrap"
+                        onmouseenter={() => (snapInfoHovered = true)}
+                        onmouseleave={() => (snapInfoHovered = false)}
+                    >
+                        <button
+                            class="acc-info-btn"
+                            aria-label="What is this?"
+                            onclick={toggleSnapInfo}
+                        >ℹ</button>
+                        {#if snapInfoVisible}
+                            <div class="acc-info-popover" role="tooltip">
+                                Automatic backups saved on this device just before an action that would overwrite your data — restoring from the cloud, merging, or resolving a sync conflict. If something goes wrong, click Restore to bring that data back. These live only on this computer.
+                            </div>
+                        {/if}
+                    </div>
+                </div>
                 {#if snapSectionOpen}
                     {#if snapshotGroups.length === 0}
                         <p class="acc-snap-empty">
@@ -1570,14 +1634,14 @@
                                     <div class="acc-grp-entries">
                                         {#each g.entries as s (s.fileName)}
                                             {#snippet snapSub()}
-                                                {s.reason}
+                                                {reasonLabel(s.reason)}
                                                 <span class="acc-sub-dot">·</span>
                                                 {fmtSnapshotTime(s.createdAt)}
                                                 <span class="acc-sub-dot">·</span>
                                                 {fmtSnapshotSize(s.sizeBytes)}
                                             {/snippet}
                                             {@render accEntryRow(
-                                                s.reason,
+                                                reasonLabel(s.reason),
                                                 snapSub,
                                                 restoringSnapshot === s.fileName,
                                                 restoringSnapshot !== null,
@@ -1597,27 +1661,45 @@
 
             <!-- Cloud version history -->
             <section class="acc-card">
-                <button
-                    class="acc-sec-head"
-                    class:acc-sec-open={histSectionOpen}
-                    onclick={() => (histSectionOpen = !histSectionOpen)}
-                >
-                    <h3 class="acc-card-title acc-sec-title">
-                        Cloud version history ({historyKinds.length})
-                    </h3>
-                    <svg
-                        class="acc-sec-chev"
-                        viewBox="0 0 24 24"
-                        width="14"
-                        height="14"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2.2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"><polyline points="9 6 15 12 9 18" /></svg
+                <div class="acc-sec-head-wrap">
+                    <button
+                        class="acc-sec-head"
+                        class:acc-sec-open={histSectionOpen}
+                        onclick={() => (histSectionOpen = !histSectionOpen)}
                     >
-                </button>
+                        <h3 class="acc-card-title acc-sec-title">
+                            Cloud version history ({historyKinds.length})
+                        </h3>
+                        <svg
+                            class="acc-sec-chev"
+                            viewBox="0 0 24 24"
+                            width="14"
+                            height="14"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2.2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"><polyline points="9 6 15 12 9 18" /></svg
+                        >
+                    </button>
+                    <div
+                        class="acc-info-wrap"
+                        onmouseenter={() => (histInfoHovered = true)}
+                        onmouseleave={() => (histInfoHovered = false)}
+                    >
+                        <button
+                            class="acc-info-btn"
+                            aria-label="What is this?"
+                            onclick={toggleHistInfo}
+                        >ℹ</button>
+                        {#if histInfoVisible}
+                            <div class="acc-info-popover" role="tooltip">
+                                The last few cloud versions of each synced item. Every time a device overwrites a synced item, the previous version is kept here so you can roll back. Restore brings an older cloud version back to this device.
+                            </div>
+                        {/if}
+                    </div>
+                </div>
                 {#if histSectionOpen}
                     {#if historyKinds.length === 0}
                         <p class="acc-snap-empty">
@@ -2968,6 +3050,66 @@
     }
     .acc-confirm-hint-ok {
         color: var(--ok);
+    }
+
+    /* Info popover — shared by both recovery sections. */
+    .acc-sec-head-wrap {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+    }
+    .acc-sec-head-wrap .acc-sec-head {
+        flex: 1;
+        min-width: 0;
+    }
+    .acc-info-wrap {
+        position: relative;
+        flex-shrink: 0;
+    }
+    .acc-info-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        border: 1px solid var(--b1);
+        background: transparent;
+        color: var(--t3);
+        font-size: 11px;
+        line-height: 1;
+        cursor: default;
+        font-family: var(--ui);
+        transition:
+            background 0.14s,
+            color 0.14s,
+            border-color 0.14s;
+        padding: 0;
+    }
+    .acc-info-btn:hover,
+    .acc-info-btn:focus-visible {
+        background: var(--surface-hover);
+        color: var(--t1);
+        border-color: var(--b2);
+        outline: none;
+    }
+    .acc-info-popover {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 6px);
+        width: 260px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--b1);
+        background: var(--surface-hover);
+        color: var(--t2);
+        font-size: 12px;
+        line-height: 1.55;
+        box-shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.45);
+        z-index: 200;
+        font-family: var(--ui);
+        white-space: normal;
     }
 
     /* Spinners */
