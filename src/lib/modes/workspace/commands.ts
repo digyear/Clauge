@@ -1,13 +1,17 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   InboxItem,
+  MeetingDetectStatus,
   ProjectScanResult,
+  RecordingStatus,
+  WhisperModelInfo,
   Workspace,
   WorkspaceBoard,
   WorkspaceBoardCard,
   WorkspaceBoardColumn,
   WorkspaceCardComment,
   WorkspaceCoworker,
+  WorkspaceMeeting,
   WorkspaceNote,
 } from './types';
 
@@ -286,6 +290,85 @@ export const workspaceMcpUnregister = (agent?: string) =>
  *  port if the server isn't running yet). */
 export const workspaceMcpNewToken = (port: number) =>
   invoke<string>('workspace_mcp_new_token', { port });
+
+// ── Meetings ─────────────────────────────────────────────────────────
+
+/** Rows come back with `transcript` blanked to "[]" — use
+ *  `workspaceMeetingGet` to load the full transcript. */
+export const workspaceMeetingList = () =>
+  invoke<WorkspaceMeeting[]>('workspace_meeting_list');
+export const workspaceMeetingGet = (id: string) =>
+  invoke<WorkspaceMeeting>('workspace_meeting_get', { id });
+export const workspaceMeetingUpdateTitle = (id: string, title: string) =>
+  invoke<void>('workspace_meeting_update_title', { id, title });
+export const workspaceMeetingUpdateNotes = (id: string, notesMd: string) =>
+  invoke<void>('workspace_meeting_update_notes', { id, notesMd });
+export const workspaceMeetingDelete = (id: string) =>
+  invoke<void>('workspace_meeting_delete', { id });
+/** Resolves to the generated notes markdown. `providerId` is a registry
+ *  slug ('clauge' = managed Clauge AI); omitted `model` falls back to the
+ *  provider's registry default. Rejects with 'pro_required',
+ *  'no_api_key', 'transcript is empty', 'meeting is still recording',
+ *  'generation already in progress', or an upstream error string.
+ *  Every failure past the in-flight guard is ALSO emitted as
+ *  `MEETING_EVENT.NOTES_ERROR` (the rejection alone can't reach a tab
+ *  that was closed and reopened mid-run); only the pre-guard
+ *  'meeting is still recording' / 'generation already in progress'
+ *  rejections arrive without the event. */
+export const workspaceMeetingGenerateNotes = (
+  id: string,
+  providerId: string,
+  model?: string,
+) => invoke<string>('workspace_meeting_generate_notes', { id, providerId, model });
+
+/** Exact error string `workspace_meeting_start` rejects with when the
+ *  requested whisper model isn't downloaded yet. */
+export const MEETING_MODEL_MISSING = 'model_missing';
+
+/** Resolves to the new meeting id. Omitted `model` / `language` fall
+ *  back server-side to the `workspace_meeting_model` /
+ *  `workspace_meeting_language` settings rows (written by Settings),
+ *  then to the recorder defaults — so call sites should pass nothing
+ *  unless they want a one-off override. */
+export const workspaceMeetingStart = (params: {
+  sourceApp?: string | null;
+  model?: string | null;
+  language?: string | null;
+} = {}) => invoke<string>('workspace_meeting_start', params);
+/** Resolves to the stopped meeting's id. */
+export const workspaceMeetingStop = () =>
+  invoke<string>('workspace_meeting_stop');
+export const workspaceMeetingRecordingStatus = () =>
+  invoke<RecordingStatus>('workspace_meeting_recording_status');
+
+export const workspaceMeetingModelsList = () =>
+  invoke<WhisperModelInfo[]>('workspace_meeting_models_list');
+export const workspaceMeetingModelDownload = (name: string) =>
+  invoke<void>('workspace_meeting_model_download', { name });
+export const workspaceMeetingModelDelete = (name: string) =>
+  invoke<void>('workspace_meeting_model_delete', { name });
+
+export const workspaceMeetingDetectSetEnabled = (enabled: boolean) =>
+  invoke<void>('workspace_meeting_detect_set_enabled', { enabled });
+export const workspaceMeetingDetectGetEnabled = () =>
+  invoke<boolean>('workspace_meeting_detect_get_enabled');
+/** Auto-stop: end a detected-call recording once the call's app releases
+ *  the microphone. Never applies to manually started recordings. */
+export const workspaceMeetingAutostopSetEnabled = (enabled: boolean) =>
+  invoke<void>('workspace_meeting_autostop_set_enabled', { enabled });
+export const workspaceMeetingAutostopGetEnabled = () =>
+  invoke<boolean>('workspace_meeting_autostop_get_enabled');
+/** macOS one-time permission preflight: briefly opens mic + system-audio
+ *  capture so the TCC prompts appear now (when the user enables meeting
+ *  notes) instead of mid-meeting. No-op on other platforms and on every
+ *  call after the prompts were answered; never rejects on a denied prompt. */
+export const workspaceMeetingRequestPermissions = () =>
+  invoke<void>('workspace_meeting_request_permissions');
+
+export const workspaceMeetingDetectStatus = () =>
+  invoke<MeetingDetectStatus>('workspace_meeting_detect_status');
+export const workspaceMeetingDetectDismiss = () =>
+  invoke<void>('workspace_meeting_detect_dismiss');
 
 // ── Project issue scan ───────────────────────────────────────────────
 

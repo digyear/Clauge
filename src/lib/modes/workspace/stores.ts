@@ -3,16 +3,25 @@
 // don't have to thread the actor argument every time.
 
 import { writable, derived, get } from 'svelte/store';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
+  RecordingStatus,
+  TranscriptSegment,
   Workspace,
   WorkspaceBoard,
   WorkspaceBoardCard,
   WorkspaceBoardColumn,
+  WorkspaceMeeting,
   WorkspaceNote,
 } from './types';
 import type { WorkspaceCoworker } from './types';
 import * as cmd from './commands';
 import { currentUserActor } from './attribution';
+import { showToast } from '$lib/shared/primitives/toast';
+import { errorToast } from '$lib/utils/errors';
+import { MEETING_EVENT } from '$lib/shared/constants/events';
+import { tabs as sharedTabs, addTab, activateTab } from '$lib/shared/stores/tabs';
+import { setMode } from '$lib/stores/app';
 
 // ── List + active selection ───────────────────────────────────────────
 
@@ -387,4 +396,238 @@ export async function deleteBoard(boardId: string, workspaceId: string) {
     next.delete(boardId);
     return next;
   });
+}
+
+// ── Meetings ──────────────────────────────────────────────────────────
+// One global list (meetings aren't strictly workspace-scoped — rows
+// survive workspace deletion). Selection reuses the tab system: T12's
+// MeetingView receives its id from a `meeting:<id>` tab key, mirroring
+// NoteView / BoardView.
+
+export const meetings = writable<WorkspaceMeeting[]>([]);
+
+/** Open (or activate) the `meeting:<id>` workspace tab and switch to
+ *  workspace mode. Shared by the nav accordion rows and the statusbar
+ *  recording indicator. */
+export function openMeetingTab(m: Pick<WorkspaceMeeting, 'id' | 'title'>) {
+  const key = `meeting:${m.id}`;
+  const existing = get(sharedTabs).find(t => t.mode === 'workspace' && t.key === key);
+  if (existing) activateTab(existing.id);
+  else addTab(m.title || 'Untitled meeting', 'workspace', key, 'var(--acc)');
+  void setMode('workspace');
+}
+
+export async function loadMeetings() {
+  try {
+    meetings.set(await cmd.workspaceMeetingList());
+  } catch (e) {
+    console.error('Failed to load meetings:', e);
+  }
+}
+
+/** Recorder snapshot — statusbar indicator + MeetingView subscribe.
+ *  Refreshed from the backend on init and on every started/stopped
+ *  event; elapsed time between refreshes is derived in the UI from
+ *  `startedAt`. */
+export const recordingStatus = writable<RecordingStatus>({
+  recording: false,
+  stopping: false,
+  meetingId: null,
+  startedAt: null,
+  sourceApp: null,
+  systemAudio: false,
+  elapsedSecs: 0,
+});
+
+export async function loadRecordingStatus() {
+  try {
+    recordingStatus.set(await cmd.workspaceMeetingRecordingStatus());
+  } catch { /* ignore */ }
+}
+
+/** Shared stop path for the nav record button and MeetingView's Stop
+ *  button (the statusbar indicator stays open-only). Toasts on failure
+ *  and refreshes the recorder snapshot either way so subscribers leave
+ *  the "recording" state even when the stopped event lags behind the
+ *  transcription drain. Returns whether the stop invoke resolved. */
+export async function stopActiveRecording(): Promise<boolean> {
+  try {
+    await cmd.workspaceMeetingStop();
+    return true;
+  } catch (err) {
+    errorToast('Failed to stop recording', err);
+    return false;
+  } finally {
+    loadRecordingStatus();
+  }
+}
+
+/** Meeting ids with a notes generation currently in flight. Fed by the
+ *  global notes-progress / notes-ready / notes-error listeners (the
+ *  backend emits 0/total progress at the start of EVERY run) plus an
+ *  eager add in MeetingView.startGeneration, so the nav can block
+ *  deletes for meetings it never opened a tab for. */
+export const generatingMeetings = writable<Set<string>>(new Set());
+
+export function markGenerationStart(meetingId: string) {
+  generatingMeetings.update((s) => {
+    if (s.has(meetingId)) return s;
+    const next = new Set(s);
+    next.add(meetingId);
+    return next;
+  });
+}
+
+export function markGenerationEnd(meetingId: string) {
+  generatingMeetings.update((s) => {
+    if (!s.has(meetingId)) return s;
+    const next = new Set(s);
+    next.delete(meetingId);
+    return next;
+  });
+}
+
+/** Segments streamed while a recording is live, keyed by meeting id.
+ *  An open MeetingView renders `parseTranscript(meeting)` + this list.
+ *  The stop-event handler below clears the entry itself after
+ *  `loadMeetings()` resolves (the refetched row then contains every
+ *  segment), so entries can't leak when no view is open. Also cleared
+ *  when a new recording starts for the same meeting. */
+export const liveSegmentsByMeeting = writable<Map<string, TranscriptSegment[]>>(new Map());
+
+export function clearLiveSegments(meetingId: string) {
+  liveSegmentsByMeeting.update((m) => {
+    if (!m.has(meetingId)) return m;
+    const next = new Map(m);
+    next.delete(meetingId);
+    return next;
+  });
+}
+
+/** In-flight whisper model downloads: name → progress. `total` 0 =
+ *  indeterminate (server omitted Content-Length). Entries are removed
+ *  on completion, so presence in the map means "downloading" — T13's
+ *  models list keys its progress bars off this. */
+export const modelDownloadProgress = writable<Map<string, { downloaded: number; total: number }>>(
+  new Map(),
+);
+
+/** Start a whisper model download. Always use this over calling the
+ *  command directly: the finally clears the progress entry whether the
+ *  download succeeds, fails, or the final 100% event never arrives.
+ *  `onSettled` runs before the entry is cleared so callers can refresh
+ *  their model list without the row flashing back to "Download". */
+export async function downloadModel(
+  name: string,
+  onSettled?: () => void | Promise<void>,
+): Promise<void> {
+  try {
+    await cmd.workspaceMeetingModelDownload(name);
+  } finally {
+    try {
+      await onSettled?.();
+    } finally {
+      modelDownloadProgress.update((m) => {
+        if (!m.has(name)) return m;
+        const next = new Map(m);
+        next.delete(name);
+        return next;
+      });
+    }
+  }
+}
+
+let meetingListenersStarted = false;
+
+/** Bind the meeting backend events once per app lifetime. Idempotent —
+ *  every surface that depends on the stores above (WorkspaceNav boot,
+ *  statusbar indicator) can call it safely. Listeners are global and
+ *  never unbound: the stores they feed outlive any one component. */
+export async function initMeetingListeners() {
+  if (meetingListenersStarted) return;
+  meetingListenersStarted = true;
+  loadRecordingStatus();
+  const results = await Promise.allSettled([
+    listen<{ meetingId: string }>(MEETING_EVENT.RECORDING_STARTED, (e) => {
+      clearLiveSegments(e.payload.meetingId);
+      loadMeetings();
+      loadRecordingStatus();
+    }),
+    listen<{ meetingId: string }>(MEETING_EVENT.RECORDING_STOPPED, async (e) => {
+      loadRecordingStatus();
+      // Clear AFTER the refetch lands so an open MeetingView swaps to
+      // the full transcript row without a flash of missing segments.
+      await loadMeetings();
+      clearLiveSegments(e.payload.meetingId);
+    }),
+    listen<{ meetingId: string; segment: TranscriptSegment }>(
+      MEETING_EVENT.TRANSCRIPT_SEGMENT,
+      (e) => {
+        liveSegmentsByMeeting.update((m) => {
+          const next = new Map(m);
+          next.set(e.payload.meetingId, [...(next.get(e.payload.meetingId) ?? []), e.payload.segment]);
+          return next;
+        });
+      },
+    ),
+    listen<{ meetingId: string; message: string }>(MEETING_EVENT.RECORDING_ERROR, (e) => {
+      showToast(e.payload.message, 'error');
+      loadMeetings();
+      loadRecordingStatus();
+    }),
+    listen<{ meetingId: string; message: string }>(MEETING_EVENT.RECORDING_WARNING, (e) => {
+      showToast(e.payload.message, 'info');
+    }),
+    listen<{ meetingId: string }>(MEETING_EVENT.RECORDING_AUTOSTOPPED, () => {
+      // Refresh is handled by the RECORDING_STOPPED event that the normal
+      // stop flow emits — this one only explains WHY it stopped.
+      showToast('Recording stopped — call ended', 'info');
+    }),
+    listen<{ app: string }>(MEETING_EVENT.CALL_SUPPRESSED, () => {
+      showToast('Call detected — a recording is already in progress', 'info');
+    }),
+    listen<{ meetingId: string; done: number; total: number }>(
+      MEETING_EVENT.NOTES_PROGRESS,
+      (e) => markGenerationStart(e.payload.meetingId),
+    ),
+    listen<{ meetingId: string }>(MEETING_EVENT.NOTES_READY, (e) => {
+      markGenerationEnd(e.payload.meetingId);
+    }),
+    listen<{ meetingId: string; message: string }>(MEETING_EVENT.NOTES_ERROR, (e) => {
+      markGenerationEnd(e.payload.meetingId);
+    }),
+    listen(MEETING_EVENT.DETECT_DISABLED, () => {
+      showToast('Call detection turned off — re-enable in Settings → AI Meeting Notes', 'info');
+    }),
+    listen<{ name: string; downloaded: number; total: number }>(
+      MEETING_EVENT.MODEL_DOWNLOAD_PROGRESS,
+      (e) => {
+        const { name, downloaded, total } = e.payload;
+        modelDownloadProgress.update((m) => {
+          const next = new Map(m);
+          if (total > 0 && downloaded >= total) next.delete(name);
+          else next.set(name, { downloaded, total });
+          return next;
+        });
+      },
+    ),
+  ]);
+  const unlistens = results
+    .filter((r): r is PromiseFulfilledResult<UnlistenFn> => r.status === 'fulfilled')
+    .map((r) => r.value);
+  const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (rejected.length > 0) {
+    // Partial registration is worse than none: tear down what succeeded so
+    // a retry doesn't double-register handlers, then allow a later call to
+    // retry instead of permanently running without listeners.
+    for (const unlisten of unlistens) {
+      try {
+        unlisten();
+      } catch {
+        // best effort
+      }
+    }
+    meetingListenersStarted = false;
+    console.warn('meeting event listen failed:', rejected.map((r) => r.reason));
+  }
 }

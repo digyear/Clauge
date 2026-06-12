@@ -75,6 +75,49 @@ export const WORKSPACE_EVENT = {
   NEW_BOARD: 'workspace:new-board',
 } as const;
 
+/** Tauri backend → frontend events from the meeting recorder, model
+ *  manager, and call detector. Mirrored in
+ *  `src-tauri/src/modes/workspace/meetings/` + `shared/transcribe/`. */
+export const MEETING_EVENT = {
+  /** Detail: `{ meetingId, startedAt, sourceApp, systemAudio }`. */
+  RECORDING_STARTED: 'meetings:recording-started',
+  /** Detail: `{ meetingId }`. */
+  RECORDING_STOPPED: 'meetings:recording-stopped',
+  /** Detail: `{ meetingId }` — the recorder was stopped automatically
+   *  because the detected call ended (the meeting app released the mic).
+   *  Fired IN ADDITION to RECORDING_STOPPED, which handles the refresh. */
+  RECORDING_AUTOSTOPPED: 'meetings:recording-autostopped',
+  /** Detail: `{ meetingId, message }`. */
+  RECORDING_ERROR: 'meetings:recording-error',
+  /** Detail: `{ meetingId, message }`. */
+  RECORDING_WARNING: 'meetings:recording-warning',
+  /** Detail: `{ meetingId, segment: TranscriptSegment }`. */
+  TRANSCRIPT_SEGMENT: 'meetings:transcript-segment',
+  /** Detail: `{ name, downloaded, total }` — `total` 0 = indeterminate. */
+  MODEL_DOWNLOAD_PROGRESS: 'meetings:model-download-progress',
+  /** Detail: `{ meetingId, done, total }` — emitted only when notes
+   *  generation needs multiple summarization chunks. */
+  NOTES_PROGRESS: 'meetings:notes-progress',
+  /** Detail: `{ meetingId }`. */
+  NOTES_READY: 'meetings:notes-ready',
+  /** Detail: `{ meetingId, message }` — emitted for every notes-generation
+   *  failure past the in-flight guard, alongside the command rejection. */
+  NOTES_ERROR: 'meetings:notes-error',
+  /** Detail: `{ app }`. */
+  CALL_DETECTED: 'meetings:call-detected',
+  CALL_ENDED: 'meetings:call-ended',
+  /** Detail: `{ app }` — a NEW call started while a recording was already
+   *  in progress, so call detection (the widget) stayed suppressed. Fired
+   *  at most once per recording session. */
+  CALL_SUPPRESSED: 'meetings:call-suppressed',
+  /** Emitted by the floating widget right before it disables call
+   *  detection — the main window toasts how to re-enable it. */
+  DETECT_DISABLED: 'meetings:detect-disabled',
+  /** Emitted by the floating widget when its settings shortcut is
+   *  clicked — main window opens workspace Settings. */
+  OPEN_SETTINGS: 'meetings:open-settings',
+} as const;
+
 export const APP_EVENT = {
   TAB_CLOSE_PROMPT: 'clauge:tab-close-prompt',
   SQL_SAVE: 'clauge:sql-save',

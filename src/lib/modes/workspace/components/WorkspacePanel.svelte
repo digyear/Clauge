@@ -3,6 +3,7 @@
   // mode is 'workspace' decides what we show:
   //   key starts with 'note:'  → NoteView
   //   key starts with 'board:' → BoardView
+  //   key starts with 'meeting:' → MeetingView
   //   no workspace tab active  → empty pane
   //
   // The actual content lives in NoteView / BoardView; this file is just
@@ -12,6 +13,7 @@
   import { activeWorkspace, workspaces } from '../stores';
   import NoteView from './NoteView.svelte';
   import BoardView from './BoardView.svelte';
+  import MeetingView from './MeetingView.svelte';
   import InboxView from './InboxView.svelte';
   import CoworkersView from './CoworkersView.svelte';
   import { WORKSPACE_EVENT } from '$lib/shared/constants/events';
@@ -23,6 +25,7 @@
     if (k === 'coworkers') return 'coworkers' as const;
     if (k.startsWith('note:')) return 'note' as const;
     if (k.startsWith('board:')) return 'board' as const;
+    if (k.startsWith('meeting:')) return 'meeting' as const;
     return null;
   });
   const activeId = $derived.by(() => {
@@ -52,6 +55,8 @@
   <NoteView noteId={activeId} />
 {:else if activeKind === 'board' && activeId}
   <BoardView boardId={activeId} />
+{:else if activeKind === 'meeting' && activeId}
+  <MeetingView meetingId={activeId} />
 {:else if $workspaces.length === 0}
   <div class="ws-empty-pane">
     <svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="var(--t4)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">

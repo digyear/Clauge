@@ -87,6 +87,27 @@ axum = { version = "0.8.4", default-features = false, features = ["tokio", "http
 rand = "0.10"
 local-ip-address = "0.6"
 toml_edit = "0.25.5"
+# Meeting call detection (workspace/meetings/detect.rs): per-tick process-name
+# snapshot only — default features off keeps disk/network/component probes out.
+# 0.39.x raised MSRV to rustc 1.95; 0.38 is the newest line our toolchain builds.
+sysinfo = { version = "0.38", default-features = false, features = ["system"] }
+# Meeting-notes audio kernel (shared/audio/).
+# cpal ships default = [] — without the "pulseaudio" feature the Linux host is
+# bare ALSA, which exposes no "<sink>.monitor" capture sources. The feature is
+# inert off Linux: cpal target-gates both the dep and the host module to
+# linux/BSD. PipeWire systems are reached through pipewire-pulse, so the
+# native "pipewire" feature (which needs libpipewire at build time) stays off.
+cpal = { version = "0.18", features = ["pulseaudio"] }
+rubato = "3.0"
+audioadapter-buffers = "3.0"
+# Local Whisper transcription (shared/transcribe/). whisper-rs compiles
+# whisper.cpp through cmake; CUDA/Vulkan stay off — CPU everywhere, with
+# Metal+CoreML layered on for macOS below (features are additive per-target).
+# CoreML builds with WHISPER_COREML_ALLOW_FALLBACK=1, so missing .mlmodelc
+# files degrade to Metal/CPU instead of failing context load.
+# log_backend routes whisper.cpp/GGML stderr spam into the `log` crate
+# (picked up by our rolling file logger) via install_logging_hooks().
+whisper-rs = { version = "0.16", features = ["log_backend"] }
 # Credential store — per-OS dispatch in shared/platform/credential_store.rs:
 #   macOS   → shell-out to /usr/bin/security (implicitly trusted by Keychain,
 #             avoids re-signing prompts).
@@ -107,6 +128,12 @@ hkdf = "0.12"
 cocoa = "0.26"
 objc = "0.2"
 window-vibrancy = "0.7"
+# System-audio capture via Core Audio process taps (shared/audio/system/macos.rs).
+# crates.io 0.15.2 matches the repo HEAD, so no git pin is needed. Default
+# features pull every Apple framework binding (tokio, metal, ...) — trimmed to
+# the Core Audio surface. macos_14_2 gates TapGuard (the tap API's floor).
+cidre = { version = "0.15.2", default-features = false, features = ["core_audio", "at", "av", "cat", "cf", "cm", "ns", "macos_14_2"] }
+whisper-rs = { version = "0.16", features = ["metal", "coreml", "log_backend"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
@@ -114,7 +141,10 @@ window-vibrancy = "0.7"
 # Match the windows-rs major Tauri 2.10 pulls in to avoid shipping two
 # copies of the crate. HWND is the same shape in both, so the cast in
 # appearance/window_chrome.rs works either way.
-windows = { version = "0.61", features = ["Win32_Graphics_Dwm", "Win32_Foundation"] }
+# Win32_Media_Audio + Win32_System_Com power meeting detection's WASAPI
+# session walk (IMMDeviceEnumerator → IAudioSessionManager2). StructuredStorage
+# is pulled in by IMMDevice::Activate's PROPVARIANT parameter type.
+windows = { version = "0.61", features = ["Win32_Graphics_Dwm", "Win32_Foundation", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
 
 # Single-instance enforcement on Linux + Windows. macOS .app bundles
 # are single-instance natively, so this plugin is gated to other OSes.
@@ -123,3 +153,7 @@ windows = { version = "0.61", features = ["Win32_Graphics_Dwm", "Win32_Foundatio
 # spawning a fresh instance.
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[dev-dependencies]
+# WAV reader for the transcription smoke test (shared/transcribe/engine.rs).
+hound = "3.5"

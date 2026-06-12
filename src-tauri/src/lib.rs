@@ -84,6 +84,11 @@ pub fn run() {
                 let _ = shared::logger::init(&log_dir);
             }
 
+            // Route whisper.cpp/GGML native logging into the `log` crate
+            // (log_backend feature) instead of spamming stderr on every
+            // transcription. Safe to call once; permanent for the process.
+            whisper_rs::install_logging_hooks();
+
             // Apply advanced/diagnostic settings from `settings.json`
             // (lives next to the SQLite DB in app_config_dir). This is
             // the hidden knob for log verbosity + future feature flags.
@@ -121,6 +126,19 @@ pub fn run() {
             tauri::async_runtime::block_on(async {
                 db::legacy_import::run_if_needed(&pool).await;
             });
+
+            // Meetings left at status='recording' mean the app died
+            // mid-recording. Finalize them now, before the detect poller
+            // starts — no recording can be active at boot.
+            match tauri::async_runtime::block_on(
+                modes::workspace::meetings::repo::recover_interrupted(&pool),
+            ) {
+                Ok(n) if n > 0 => {
+                    log::info!("[meetings] recovered {} interrupted meeting(s)", n)
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("[meetings] recover_interrupted: {}", e),
+            }
 
             // Load saved vibrancy material before managing pool (which moves it)
             let saved_material = tauri::async_runtime::block_on(async {
@@ -225,6 +243,15 @@ pub fn run() {
             // Workspace MCP server state — single global handle.
             // Started/stopped via workspace_mcp_start/stop commands.
             app.manage(modes::workspace::commands::McpServerState::default());
+            app.manage(modes::workspace::meetings::recorder::RecorderState::default());
+
+            // Meeting call detection — polls mic-in-use + process names and
+            // emits meetings:call-detected / meetings:call-ended for the
+            // floating widget. The poller loads the persisted
+            // `workspace_meeting_detect_enabled` setting itself (default on)
+            // and stays silent while the recorder is busy.
+            app.manage(modes::workspace::meetings::detect::DetectState::default());
+            modes::workspace::meetings::detect::start_poller(app.handle().clone());
 
             // Auto-start the workspace MCP server in the background so
             // agents can connect without the user opening Settings.
@@ -596,6 +623,25 @@ pub fn run() {
             modes::workspace::commands::workspace_mcp_new_token,
             modes::workspace::commands::workspace_scan_project_issues,
             modes::workspace::commands::workspace_scan_project_issues_by_url,
+            modes::workspace::meetings::commands::workspace_meeting_list,
+            modes::workspace::meetings::commands::workspace_meeting_get,
+            modes::workspace::meetings::commands::workspace_meeting_update_title,
+            modes::workspace::meetings::commands::workspace_meeting_update_notes,
+            modes::workspace::meetings::commands::workspace_meeting_generate_notes,
+            modes::workspace::meetings::commands::workspace_meeting_delete,
+            modes::workspace::meetings::commands::workspace_meeting_models_list,
+            modes::workspace::meetings::commands::workspace_meeting_model_download,
+            modes::workspace::meetings::commands::workspace_meeting_model_delete,
+            modes::workspace::meetings::commands::workspace_meeting_start,
+            modes::workspace::meetings::commands::workspace_meeting_stop,
+            modes::workspace::meetings::commands::workspace_meeting_recording_status,
+            modes::workspace::meetings::commands::workspace_meeting_detect_set_enabled,
+            modes::workspace::meetings::commands::workspace_meeting_detect_get_enabled,
+            modes::workspace::meetings::commands::workspace_meeting_autostop_set_enabled,
+            modes::workspace::meetings::commands::workspace_meeting_autostop_get_enabled,
+            modes::workspace::meetings::commands::workspace_meeting_detect_dismiss,
+            modes::workspace::meetings::commands::workspace_meeting_detect_status,
+            modes::workspace::meetings::permissions::workspace_meeting_request_permissions,
 
             // Companion (mobile) server
             companion::server::companion_status,
@@ -665,6 +711,32 @@ pub fn run() {
                     api.prevent_exit();
                     let ah = _app_handle.clone();
                     tauri::async_runtime::spawn(async move {
+                        // Stop an active recording first so the last buffered
+                        // segments flush to the DB instead of dying with the
+                        // process. Bounded: a wedged stop must not block quit —
+                        // the crash-recovery sweep finalizes the meeting at
+                        // next boot if this can't finish in time.
+                        let recorder = ah
+                            .state::<modes::workspace::meetings::recorder::RecorderState>();
+                        if recorder.status().recording {
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(8),
+                                modes::workspace::meetings::recorder::stop_recording(ah.clone()),
+                            )
+                            .await
+                            {
+                                Ok(Ok(id)) => {
+                                    log::info!("[meetings] recording {id} stopped on quit")
+                                }
+                                Ok(Err(e)) => {
+                                    log::warn!("[meetings] stop on quit failed: {e}")
+                                }
+                                Err(_) => log::warn!(
+                                    "[meetings] stop on quit timed out — crash recovery \
+                                     finalizes the meeting at next boot"
+                                ),
+                            }
+                        }
                         persist_pending_sync(&ah).await;
                         ah.exit(0);
                     });

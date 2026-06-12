@@ -1,0 +1,469 @@
+use sqlx::SqlitePool;
+
+use crate::modes::workspace::models::{TranscriptSegment, WorkspaceMeeting};
+
+fn now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+fn new_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+fn json_err(e: serde_json::Error) -> sqlx::Error {
+    sqlx::Error::Decode(Box::new(e))
+}
+
+pub async fn insert_meeting(
+    pool: &SqlitePool,
+    title: &str,
+    source_app: Option<&str>,
+    language: &str,
+) -> Result<WorkspaceMeeting, sqlx::Error> {
+    let id = new_id();
+    let now = now_rfc3339();
+    sqlx::query(
+        "INSERT INTO workspace_meetings \
+         (id, title, source_app, started_at, language, status, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, 'recording', ?, ?)",
+    )
+    .bind(&id)
+    .bind(title)
+    .bind(source_app)
+    .bind(&now)
+    .bind(language)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+    get_meeting(pool, &id).await?.ok_or(sqlx::Error::RowNotFound)
+}
+
+pub async fn list_meetings(pool: &SqlitePool) -> Result<Vec<WorkspaceMeeting>, sqlx::Error> {
+    sqlx::query_as::<_, WorkspaceMeeting>(
+        "SELECT * FROM workspace_meetings ORDER BY started_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_meeting(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<Option<WorkspaceMeeting>, sqlx::Error> {
+    sqlx::query_as::<_, WorkspaceMeeting>("SELECT * FROM workspace_meetings WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+}
+
+pub async fn update_title(pool: &SqlitePool, id: &str, title: &str) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("UPDATE workspace_meetings SET title = ?, updated_at = ? WHERE id = ?")
+        .bind(title)
+        .bind(now_rfc3339())
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// AI generation passes `provider`/`model` and stamps
+/// `notes_generated_at`; manual edits pass `None` and leave the
+/// provenance columns untouched.
+pub async fn update_notes(
+    pool: &SqlitePool,
+    id: &str,
+    notes_md: &str,
+    provider: Option<&str>,
+    model: Option<&str>,
+) -> Result<u64, sqlx::Error> {
+    let now = now_rfc3339();
+    let result = if provider.is_some() {
+        sqlx::query(
+            "UPDATE workspace_meetings \
+             SET notes_md = ?, notes_provider = ?, notes_model = ?, \
+                 notes_generated_at = ?, updated_at = ? \
+             WHERE id = ?",
+        )
+        .bind(notes_md)
+        .bind(provider)
+        .bind(model)
+        .bind(&now)
+        .bind(&now)
+        .bind(id)
+        .execute(pool)
+        .await?
+    } else {
+        sqlx::query("UPDATE workspace_meetings SET notes_md = ?, updated_at = ? WHERE id = ?")
+            .bind(notes_md)
+            .bind(&now)
+            .bind(id)
+            .execute(pool)
+            .await?
+    };
+    Ok(result.rows_affected())
+}
+
+/// Lifecycle transitions outside the recorder ('notes_ready' after a
+/// successful notes generation). The recorder owns 'recording' →
+/// 'transcribed' via `insert_meeting`/`finish_meeting`.
+pub async fn set_status(pool: &SqlitePool, id: &str, status: &str) -> Result<u64, sqlx::Error> {
+    let result =
+        sqlx::query("UPDATE workspace_meetings SET status = ?, updated_at = ? WHERE id = ?")
+            .bind(status)
+            .bind(now_rfc3339())
+            .bind(id)
+            .execute(pool)
+            .await?;
+    Ok(result.rows_affected())
+}
+
+/// Read-modify-write on the transcript JSON. Assumes a single writer
+/// per meeting (one recorder flush task); concurrent appends to the
+/// same meeting would lose segments.
+pub async fn append_segments(
+    pool: &SqlitePool,
+    id: &str,
+    segments: &[TranscriptSegment],
+) -> Result<(), sqlx::Error> {
+    let transcript: String =
+        sqlx::query_scalar("SELECT transcript FROM workspace_meetings WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await?;
+    let mut all: Vec<TranscriptSegment> =
+        serde_json::from_str(&transcript).map_err(json_err)?;
+    all.extend_from_slice(segments);
+    // Segments arrive in transcription-completion order: mic and system
+    // chunks covering the same 20s window finish back to back, so arrival
+    // order interleaves whole chunks. Keep the stored transcript in
+    // timeline order.
+    all.sort_by(|a, b| {
+        (a.start_ms, a.end_ms, a.source.as_str()).cmp(&(b.start_ms, b.end_ms, b.source.as_str()))
+    });
+    let json = serde_json::to_string(&all).map_err(json_err)?;
+    sqlx::query("UPDATE workspace_meetings SET transcript = ?, updated_at = ? WHERE id = ?")
+        .bind(json)
+        .bind(now_rfc3339())
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn finish_meeting(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    let now = now_rfc3339();
+    sqlx::query(
+        "UPDATE workspace_meetings \
+         SET ended_at = ?, status = 'transcribed', updated_at = ? \
+         WHERE id = ?",
+    )
+    .bind(&now)
+    .bind(&now)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Boot-time sweep for meetings the app died on mid-recording.
+/// Segments are flushed as they arrive, so the transcript is intact —
+/// only the status/ended_at finalization was missed. Safe to run at
+/// startup because no recording can be active yet.
+pub async fn recover_interrupted(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
+    let now = now_rfc3339();
+    let result = sqlx::query(
+        "UPDATE workspace_meetings \
+         SET status = 'transcribed', ended_at = COALESCE(ended_at, ?), updated_at = ? \
+         WHERE status = 'recording'",
+    )
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn delete_meeting(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM workspace_meetings WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory sqlite");
+        crate::db::migrator::MIGRATOR
+            .run(&pool)
+            .await
+            .expect("run migrations");
+        pool
+    }
+
+    fn seg(start_ms: u64, end_ms: u64, text: &str) -> TranscriptSegment {
+        TranscriptSegment {
+            start_ms,
+            end_ms,
+            source: "mic".into(),
+            text: text.into(),
+        }
+    }
+
+    fn parsed(m: &WorkspaceMeeting) -> Vec<TranscriptSegment> {
+        serde_json::from_str(&m.transcript).expect("transcript json")
+    }
+
+    #[tokio::test]
+    async fn meeting_insert_defaults() {
+        let pool = test_pool().await;
+        let m = insert_meeting(&pool, "Standup", Some("zoom"), "auto")
+            .await
+            .unwrap();
+        assert_eq!(m.title, "Standup");
+        assert_eq!(m.source_app.as_deref(), Some("zoom"));
+        assert_eq!(m.language, "auto");
+        assert_eq!(m.status, "recording");
+        assert_eq!(m.transcript, "[]");
+        assert!(m.ended_at.is_none());
+        assert!(m.workspace_id.is_none());
+        assert!(!m.started_at.is_empty());
+    }
+
+    #[tokio::test]
+    async fn meeting_append_finish_notes_delete() {
+        let pool = test_pool().await;
+        let m = insert_meeting(&pool, "Design sync", None, "en")
+            .await
+            .unwrap();
+
+        append_segments(&pool, &m.id, &[seg(0, 1000, "hello")])
+            .await
+            .unwrap();
+        append_segments(
+            &pool,
+            &m.id,
+            &[seg(1000, 2000, "from"), seg(2000, 3000, "clauge")],
+        )
+        .await
+        .unwrap();
+
+        let got = get_meeting(&pool, &m.id).await.unwrap().unwrap();
+        let segs = parsed(&got);
+        assert_eq!(segs.len(), 3);
+        assert_eq!(
+            segs,
+            vec![
+                seg(0, 1000, "hello"),
+                seg(1000, 2000, "from"),
+                seg(2000, 3000, "clauge"),
+            ]
+        );
+
+        finish_meeting(&pool, &m.id).await.unwrap();
+        let got = get_meeting(&pool, &m.id).await.unwrap().unwrap();
+        assert_eq!(got.status, "transcribed");
+        assert!(got.ended_at.is_some());
+
+        assert_eq!(set_status(&pool, &m.id, "notes_ready").await.unwrap(), 1);
+        let got = get_meeting(&pool, &m.id).await.unwrap().unwrap();
+        assert_eq!(got.status, "notes_ready");
+        assert_eq!(set_status(&pool, "missing", "notes_ready").await.unwrap(), 0);
+
+        update_notes(&pool, &m.id, "# Notes", Some("anthropic"), Some("opus"))
+            .await
+            .unwrap();
+        let got = get_meeting(&pool, &m.id).await.unwrap().unwrap();
+        assert_eq!(got.notes_md.as_deref(), Some("# Notes"));
+        assert_eq!(got.notes_provider.as_deref(), Some("anthropic"));
+        assert_eq!(got.notes_model.as_deref(), Some("opus"));
+        assert!(got.notes_generated_at.is_some());
+
+        delete_meeting(&pool, &m.id).await.unwrap();
+        assert!(get_meeting(&pool, &m.id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn meeting_manual_notes_edit_keeps_provenance() {
+        let pool = test_pool().await;
+        let m = insert_meeting(&pool, "Retro", None, "auto").await.unwrap();
+
+        update_notes(&pool, &m.id, "draft", None, None).await.unwrap();
+        let got = get_meeting(&pool, &m.id).await.unwrap().unwrap();
+        assert_eq!(got.notes_md.as_deref(), Some("draft"));
+        assert!(got.notes_provider.is_none());
+        assert!(got.notes_generated_at.is_none());
+
+        update_notes(&pool, &m.id, "# AI", Some("clauge"), Some("haiku"))
+            .await
+            .unwrap();
+        update_notes(&pool, &m.id, "# AI, edited", None, None)
+            .await
+            .unwrap();
+        let got = get_meeting(&pool, &m.id).await.unwrap().unwrap();
+        assert_eq!(got.notes_md.as_deref(), Some("# AI, edited"));
+        assert_eq!(got.notes_provider.as_deref(), Some("clauge"));
+        assert_eq!(got.notes_model.as_deref(), Some("haiku"));
+        assert!(got.notes_generated_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn meeting_append_sorts_interleaved_sources_by_time() {
+        let pool = test_pool().await;
+        let m = insert_meeting(&pool, "Sync", None, "auto").await.unwrap();
+
+        fn src(start_ms: u64, source: &str, text: &str) -> TranscriptSegment {
+            TranscriptSegment {
+                start_ms,
+                end_ms: start_ms + 1000,
+                source: source.into(),
+                text: text.into(),
+            }
+        }
+        // Arrival order: mic chunk 0, then system chunk 0 covering the
+        // same window, then mic chunk 1 — not timeline order.
+        append_segments(&pool, &m.id, &[src(0, "mic", "a"), src(15_000, "mic", "b")])
+            .await
+            .unwrap();
+        append_segments(
+            &pool,
+            &m.id,
+            &[src(5_000, "system", "c"), src(18_000, "system", "d")],
+        )
+        .await
+        .unwrap();
+        append_segments(&pool, &m.id, &[src(21_000, "mic", "e")])
+            .await
+            .unwrap();
+
+        let got = get_meeting(&pool, &m.id).await.unwrap().unwrap();
+        let order: Vec<(u64, String)> = parsed(&got)
+            .iter()
+            .map(|s| (s.start_ms, s.source.clone()))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                (0, "mic".into()),
+                (5_000, "system".into()),
+                (15_000, "mic".into()),
+                (18_000, "system".into()),
+                (21_000, "mic".into()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn meeting_list_orders_by_started_at_desc() {
+        let pool = test_pool().await;
+        let a = insert_meeting(&pool, "First", None, "auto").await.unwrap();
+        let b = insert_meeting(&pool, "Second", None, "auto").await.unwrap();
+        sqlx::query("UPDATE workspace_meetings SET started_at = ? WHERE id = ?")
+            .bind("2026-06-10T00:00:00.000Z")
+            .bind(&a.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE workspace_meetings SET started_at = ? WHERE id = ?")
+            .bind("2026-06-11T00:00:00.000Z")
+            .bind(&b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let list = list_meetings(&pool).await.unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, b.id);
+        assert_eq!(list[1].id, a.id);
+    }
+
+    async fn fts_ids(pool: &SqlitePool, query: &str) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT meeting_id FROM workspace_meetings_fts WHERE workspace_meetings_fts MATCH ?",
+        )
+        .bind(query)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn meeting_fts_indexes_transcript_text_not_json() {
+        let pool = test_pool().await;
+        let m = insert_meeting(&pool, "Sync", None, "en").await.unwrap();
+        append_segments(
+            &pool,
+            &m.id,
+            &[seg(0, 1000, "the xylophone budget"), seg(1000, 2000, "is approved")],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(fts_ids(&pool, "xylophone").await, vec![m.id.clone()]);
+        assert!(fts_ids(&pool, "startms").await.is_empty());
+        assert!(fts_ids(&pool, "source").await.is_empty());
+        assert!(fts_ids(&pool, "mic").await.is_empty());
+
+        delete_meeting(&pool, &m.id).await.unwrap();
+        assert!(fts_ids(&pool, "xylophone").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn meeting_update_title() {
+        let pool = test_pool().await;
+        let m = insert_meeting(&pool, "Untitled", None, "auto").await.unwrap();
+        let rows = update_title(&pool, &m.id, "Q3 planning").await.unwrap();
+        assert_eq!(rows, 1);
+        let got = get_meeting(&pool, &m.id).await.unwrap().unwrap();
+        assert_eq!(got.title, "Q3 planning");
+    }
+
+    #[tokio::test]
+    async fn meeting_recover_interrupted_finalizes_only_stuck_rows() {
+        let pool = test_pool().await;
+        let stuck = insert_meeting(&pool, "Crashed", None, "auto").await.unwrap();
+        let done = insert_meeting(&pool, "Finished", None, "auto").await.unwrap();
+        finish_meeting(&pool, &done.id).await.unwrap();
+        let done_before = get_meeting(&pool, &done.id).await.unwrap().unwrap();
+
+        assert_eq!(recover_interrupted(&pool).await.unwrap(), 1);
+
+        let got = get_meeting(&pool, &stuck.id).await.unwrap().unwrap();
+        assert_eq!(got.status, "transcribed");
+        assert!(got.ended_at.is_some());
+
+        let done_after = get_meeting(&pool, &done.id).await.unwrap().unwrap();
+        assert_eq!(done_after.status, done_before.status);
+        assert_eq!(done_after.ended_at, done_before.ended_at);
+        assert_eq!(done_after.updated_at, done_before.updated_at);
+
+        assert_eq!(recover_interrupted(&pool).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn meeting_update_missing_id_reports_not_found() {
+        let pool = test_pool().await;
+        assert_eq!(update_title(&pool, "missing", "New title").await.unwrap(), 0);
+        assert_eq!(
+            update_notes(&pool, "missing", "# Notes", None, None)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            update_notes(&pool, "missing", "# Notes", Some("anthropic"), Some("opus"))
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(get_meeting(&pool, "missing").await.unwrap().is_none());
+    }
+}
