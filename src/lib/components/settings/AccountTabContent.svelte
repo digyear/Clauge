@@ -587,19 +587,19 @@
         return groups;
     });
 
-    // Resolve the device label for a cloud history entry. Never surface a
-    // raw "unknown device": fall back to this device's own name (from the
-    // remote-state row for the kind, or the local device-name field) and
-    // finally "unknown".
-    function historyDeviceLabel(
-        h: SyncHistoryEntry,
-        kind: string,
-    ): string {
-        const own = (h.deviceName ?? "").trim();
-        if (own) return own;
-        const row = remoteState.find((r) => r.kind === kind);
-        const fallback = (row?.deviceName ?? deviceNameInput ?? "").trim();
-        return fallback || "unknown";
+    // Build a display label for each entry in a kind's history list.
+    // Named entries keep their real name; unnamed entries get "Device N"
+    // numbered in display order (N resets per kind, per render).
+    function labelHistoryEntries(
+        entries: SyncHistoryEntry[],
+    ): { entry: SyncHistoryEntry; deviceLabel: string }[] {
+        let counter = 0;
+        return entries.map((h) => {
+            const own = (h.deviceName ?? "").trim();
+            if (own) return { entry: h, deviceLabel: own };
+            counter += 1;
+            return { entry: h, deviceLabel: `Device ${counter}` };
+        });
     }
 
     // Kinds whose last export exceeded the worker's payload limit — the
@@ -1667,7 +1667,8 @@
                                                 synced kind.
                                             </p>
                                         {:else}
-                                            {#each histCache[k] as h (h.contentHash)}
+                                            {@const labeledEntries = labelHistoryEntries(histCache[k])}
+                                            {#each labeledEntries as { entry: h, deviceLabel } (h.contentHash)}
                                                 {#snippet histSub()}
                                                     {fmtHistoryTime(h.replacedAt)}
                                                     <span class="acc-sub-dot">·</span
@@ -1675,7 +1676,7 @@
                                                     {h.contentHash.slice(0, 8)}
                                                 {/snippet}
                                                 {@render accEntryRow(
-                                                    historyDeviceLabel(h, k),
+                                                    deviceLabel,
                                                     histSub,
                                                     restoringHistory ===
                                                         h.contentHash,
