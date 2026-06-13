@@ -311,6 +311,7 @@
   let notifyLastTime = 0;
   let notifyBufferTimer: ReturnType<typeof setTimeout> | null = null;
   let notifySoundInterval: ReturnType<typeof setInterval> | null = null;
+  let dockBounceActive = false;
   let unlistenFileDrop: (() => void) | null = null;
 
   const actionPatterns = [
@@ -341,6 +342,7 @@
         import('@tauri-apps/api/window').then(({ getCurrentWindow, UserAttentionType }) => {
           getCurrentWindow().requestUserAttention(UserAttentionType.Critical);
         }).catch(() => {});
+        dockBounceActive = true;
       }
 
       // Sound chime + repeat
@@ -351,12 +353,39 @@
           if (document.hasFocus()) {
             clearInterval(notifySoundInterval!);
             notifySoundInterval = null;
+            dockBounceActive = false;
             return;
           }
           playChime();
         }, AGENT_NOTIFY_REPEAT_MS);
       }
     }
+  }
+
+  // Stop an active action-required notification once the agent resumes. The
+  // desktop window clears it on focus, but when the user takes the action from
+  // the MOBILE companion app the window never refocuses — instead the agent's
+  // continuation output arrives over the shared PTY and lands here. Treat fresh,
+  // non-prompt output as "the action was taken" and silence the alert.
+  function clearActionNotification() {
+    if (notifySoundInterval) { clearInterval(notifySoundInterval); notifySoundInterval = null; }
+    if (dockBounceActive) {
+      dockBounceActive = false;
+      import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+        getCurrentWindow().requestUserAttention(null);
+      }).catch(() => {});
+    }
+    notifyLastTime = 0; // let a later prompt notify immediately
+  }
+
+  function maybeClearNotification(text: string) {
+    if (!notifySoundInterval && !dockBounceActive) return;
+    // Ignore the prompt's own trailing chunks (they arrive within ~1s of firing);
+    // a real response only comes seconds later.
+    if (Date.now() - notifyLastTime < 1200) return;
+    // Prompt still on screen (being redrawn) — keep alerting.
+    if (actionPatterns.some(p => p.test(text))) return;
+    clearActionNotification();
   }
 
   function playChime() {
@@ -385,6 +414,10 @@
       const raw = atob(base64Data);
       const text = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
       notifyOutputBuffer += text;
+
+      // Silence an active alert as soon as the agent resumes (e.g. the user
+      // approved from mobile — the window never refocuses to clear it).
+      maybeClearNotification(text);
 
       // Check on every chunk if unfocused (timers may be throttled in background)
       if (!document.hasFocus()) checkNotifyBuffer();
