@@ -4,13 +4,13 @@
 // statics (same shape as cloud/scheduler.rs) because the publishers are
 // the PTY reader threads / russh tasks, which have no AppHandle.
 //
-// Resize rule (phone-authoritative-while-attached): when a phone client
-// is attached the PTY is driven by the phone's viewport (min over phones
-// for the rare multi-phone case) so the phone fills its own screen.
-// The desktop adopts that size while the phone is connected and restores
-// its own size the moment the phone detaches (only the "desktop" client
-// remains). Desktop-only sessions use the desktop size. A phone-only
-// session (no desktop tab) uses the phone size.
+// Resize rule (desktop-authoritative): the desktop's viewport drives the
+// PTY. Phones NEVER resize it — resizing the shared PTY makes agent TUIs
+// (Codex/Antigravity/OpenCode) redraw at the phone's width and breaks them.
+// The phone instead adopts the desktop's reported size and renders that
+// desktop view fitted-to-width with native pinch-zoom. With no desktop
+// attached (a phone-only session), the PTY falls back to the min over the
+// remaining clients so a phone-spawned session is still usable.
 // Recomputed on attach/detach/resize; `set_client_size`/`remove_client`
 // return the new effective size only when it actually changed, so
 // callers never fire redundant resizes.
@@ -168,25 +168,20 @@ pub fn looks_like_prompt(tail: &[u8]) -> bool {
 /// The PTY size the hub should be driven at, given every client's
 /// reported viewport.
 ///
-/// Phone-authoritative-while-attached: a phone fills its own screen, so
-/// its size drives the PTY (both dimensions). The desktop adopts it
-/// while the phone is attached and restores its own size on detach (only
-/// the "desktop" client remains). Desktop-only sessions use the desktop
-/// size. For the rare multi-phone case, the min over all phones is used.
+/// Desktop-authoritative: the desktop's size drives the PTY. Phones never
+/// resize it (resizing the shared PTY makes agent TUIs redraw at the phone's
+/// width and breaks them); the phone adopts the desktop size and renders it
+/// fitted-to-width with native pinch-zoom. With no desktop attached, fall
+/// back to the min over the remaining clients (phone-only edge case).
 fn effective(sizes: &HashMap<String, (u16, u16)>) -> Option<(u16, u16)> {
-    // Phone-authoritative while attached: a phone fills its own screen, so its
-    // size drives the PTY (both dimensions). The desktop adopts it while the
-    // phone is attached and restores its own size on detach (only the
-    // "desktop" client remains). Desktop-only sessions use the desktop size.
-    let phone = sizes
-        .iter()
-        .filter(|(k, _)| k.as_str() != DESKTOP_CLIENT)
-        .map(|(_, v)| *v)
-        .reduce(|(ac, ar), (c, r)| (ac.min(c), ar.min(r)));
-    if let Some(p) = phone {
-        return Some(p);
+    // Desktop-authoritative: the desktop's size drives the PTY. Phones NEVER
+    // resize it (resizing the shared PTY makes agent TUIs redraw at the phone's
+    // width and breaks them). With no desktop attached, fall back to min over
+    // the remaining clients.
+    if let Some(&d) = sizes.get(DESKTOP_CLIENT) {
+        return Some(d);
     }
-    sizes.get(DESKTOP_CLIENT).copied().or_else(|| sizes.values().next().copied())
+    sizes.values().copied().reduce(|(ac, ar), (c, r)| (ac.min(c), ar.min(r)))
 }
 
 /// Create the hub for a freshly spawned terminal. Must run before the
@@ -425,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn phone_authoritative_while_attached_restores_desktop_on_detach() {
+    fn desktop_authoritative_phone_never_changes_pty_size() {
         let id = "fanout-test-size";
         register(id, TermKind::Ssh, "test");
         assert_eq!(effective_size(id), None);
@@ -438,21 +433,19 @@ mod tests {
         // Same size again → no change → no resize to fire.
         assert_eq!(set_client_size(id, DESKTOP_CLIENT, 120, 40), None);
 
-        // Phone attaches with a SMALLER viewport than the desktop: phone is
-        // authoritative, so PTY drops to the phone size.
-        assert_eq!(set_client_size(id, "phone-1", 80, 24), Some((80, 24)));
-        assert_eq!(effective_size(id), Some((80, 24)));
+        // Phone attaches with a SMALLER viewport: it must NOT change the
+        // effective size — the desktop stays authoritative.
+        assert_eq!(set_client_size(id, "phone-1", 80, 24), None);
+        assert_eq!(effective_size(id), Some((120, 40)));
 
-        // A second, larger phone: effective = min over phones = first phone
-        // still wins on both dims → no change in effective size.
+        // A second, larger phone: still no effect on the PTY size.
         assert_eq!(set_client_size(id, "phone-2", 200, 50), None);
-        assert_eq!(effective_size(id), Some((80, 24)));
+        assert_eq!(effective_size(id), Some((120, 40)));
 
-        // Larger phone leaves → only phone-1 remains as the phone authority.
+        // Phones leave → desktop size unchanged throughout.
         assert_eq!(remove_client(id, "phone-2"), None);
         assert_eq!(remove_client(id, "ghost"), None);
-        // Last phone detaches → desktop is the only client, restores its size.
-        assert_eq!(remove_client(id, "phone-1"), Some((120, 40)));
+        assert_eq!(remove_client(id, "phone-1"), None);
         assert_eq!(effective_size(id), Some((120, 40)));
 
         // The desktop's own resize still drives the PTY exactly.
@@ -467,25 +460,24 @@ mod tests {
         unregister(id);
     }
 
-    /// Bug regression: desktop has FEWER rows than the phone.
-    /// With the old min semantics, the desktop's shorter height constrained
-    /// the PTY and the phone showed a gap at the bottom.
-    /// With phone-authoritative sizing the phone's (larger) rows must win.
+    /// A phone that is taller or wider than the desktop must NOT enlarge the
+    /// PTY: the desktop's size is authoritative so agent TUIs never redraw at
+    /// the phone's dimensions. The phone adopts the desktop view fitted-to-width.
     #[test]
-    fn phone_rows_win_when_desktop_has_fewer_rows() {
+    fn phone_does_not_resize_when_larger_than_desktop() {
         let id = "fanout-test-size-phone-taller";
         register(id, TermKind::Ssh, "test");
 
         // Desktop is narrow and SHORT (e.g. a half-height window).
         assert_eq!(set_client_size(id, DESKTOP_CLIENT, 120, 20), Some((120, 20)));
 
-        // Phone attaches with more rows than the desktop → phone must drive
-        // the PTY so the phone fills its whole screen (no bottom gap).
-        assert_eq!(set_client_size(id, "phone-1", 80, 40), Some((80, 40)));
-        assert_eq!(effective_size(id), Some((80, 40)));
+        // Phone attaches with more rows than the desktop → no change: the
+        // desktop stays authoritative.
+        assert_eq!(set_client_size(id, "phone-1", 80, 40), None);
+        assert_eq!(effective_size(id), Some((120, 20)));
 
-        // Phone detaches → desktop size restored.
-        assert_eq!(remove_client(id, "phone-1"), Some((120, 20)));
+        // Phone detaches → desktop size unchanged.
+        assert_eq!(remove_client(id, "phone-1"), None);
         assert_eq!(effective_size(id), Some((120, 20)));
 
         unregister(id);
@@ -512,25 +504,22 @@ mod tests {
     }
 
     #[test]
-    fn phone_drives_pty_and_desktop_restores_after_churn() {
+    fn desktop_size_is_stable_through_phone_churn() {
         let id = "fanout-test-size-churn";
         register(id, TermKind::Agent, "test");
 
         assert_eq!(set_client_size(id, DESKTOP_CLIENT, 150, 45), Some((150, 45)));
 
-        // Phone attaches smaller than the desktop → phone is authoritative.
-        assert_eq!(set_client_size(id, "phone-1", 40, 20), Some((40, 20)));
-        // Phone resizes larger than the desktop in both dims → still
-        // phone-authoritative, so effective = phone's new size.
-        assert_eq!(set_client_size(id, "phone-1", 200, 80), Some((200, 80)));
-        // A second, smaller phone joins → min over phones wins.
-        assert_eq!(set_client_size(id, "phone-2", 30, 10), Some((30, 10)));
-        assert_eq!(effective_size(id), Some((30, 10)));
+        // Phones attach, resize, and join in any combination → none of it
+        // moves the PTY size off the desktop's.
+        assert_eq!(set_client_size(id, "phone-1", 40, 20), None);
+        assert_eq!(set_client_size(id, "phone-1", 200, 80), None);
+        assert_eq!(set_client_size(id, "phone-2", 30, 10), None);
+        assert_eq!(effective_size(id), Some((150, 45)));
 
-        // phone-1 detaches (phone-2 still present) → min is now phone-2's size.
+        // Phones detach in any order → desktop size unchanged throughout.
         assert_eq!(remove_client(id, "phone-1"), None);
-        // All phones detach → the lone desktop client restores its size.
-        assert_eq!(remove_client(id, "phone-2"), Some((150, 45)));
+        assert_eq!(remove_client(id, "phone-2"), None);
         assert_eq!(effective_size(id), Some((150, 45)));
 
         unregister(id);
