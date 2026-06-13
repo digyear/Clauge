@@ -20,6 +20,7 @@
 
     const ANDROID_RELEASES_URL =
         "https://github.com/ClaugeHQ/clauge-android/releases/latest";
+    const IOS_REPO_URL = "https://github.com/ClaugeHQ/clauge-ios";
 
     let status = $state<CompanionStatus>({ running: false, port: null });
     let toggling = $state(false);
@@ -248,7 +249,7 @@
                 </svg>
             </span>
             <div class="stg-card-titles">
-                <h3 class="stg-card-title">Clauge for Android</h3>
+                <h3 class="stg-card-title">Get the app</h3>
                 <p class="stg-card-sub">
                     Drive your desktop sessions from your phone.
                 </p>
@@ -269,6 +270,12 @@
                         onclick={() => openExternal(ANDROID_RELEASES_URL)}
                     >
                         Download for Android
+                    </button>
+                    <button
+                        class="stg-btn"
+                        onclick={() => openExternal(IOS_REPO_URL)}
+                    >
+                        Download for iOS
                     </button>
                 </div>
             </div>
