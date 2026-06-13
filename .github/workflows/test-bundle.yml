@@ -81,7 +81,8 @@ jobs:
             libasound2-dev \
             patchelf \
             pkg-config \
-            rpm
+            rpm \
+            xdg-utils
 
       - uses: oven-sh/setup-bun@v2
 
