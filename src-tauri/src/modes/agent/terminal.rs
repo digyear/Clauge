@@ -110,13 +110,14 @@ pub(crate) async fn spawn_agent_terminal_impl(
     let provider = provider.unwrap_or_else(|| "claude".to_string());
     let cli: &dyn CliRunner = runner_for(&provider);
 
-    // Hook-driven attention (Phase 1, claude/codex). On by default; the user
-    // opts out with `agent_hooks_enabled = "false"`. We only inject when the
-    // always-on hook endpoint has bound (`hook_url()` is Some) — otherwise
-    // the agent would POST nowhere, so fall back to the pure heuristic.
+    // Hook-driven attention. OFF by default — injecting hook flags/env
+    // (codex `-c notify`/TUI-log, opencode config-dir) was observed to break
+    // session resume, so we no longer alter agent spawn unless the user
+    // explicitly opts in with `agent_hooks_enabled = "true"`. When off, every
+    // agent spawns clean and attention falls back to the output heuristic.
     let hooks_enabled = match settings_repo::get_by_key(pool, "agent_hooks_enabled").await {
-        Ok(Some(s)) => !s.value.eq_ignore_ascii_case("false"),
-        _ => true,
+        Ok(Some(s)) => s.value.eq_ignore_ascii_case("true"),
+        _ => false,
     };
     let hook_url = if hooks_enabled {
         crate::modes::agent::hooks::hook_url()
@@ -179,15 +180,12 @@ pub(crate) async fn spawn_agent_terminal_impl(
         // own delivery mechanism without ever mutating the user's global agent
         // config. claude/codex completion already arrive via notify.sh (Phase 1).
         match provider.as_str() {
-            // OpenCode loads our notify plugin from a Clauge-scoped config dir.
-            // OPENCODE_CONFIG_DIR is *merged* with the user's real config, so
-            // ~/.config/opencode and auth are untouched. The plugin POSTs
-            // permission.ask / session.status events to CLAUGE_HOOK_URL.
-            "opencode" => {
-                if let Some(oc_dir) = crate::modes::agent::hooks::opencode_config_dir_path() {
-                    cmd.env("OPENCODE_CONFIG_DIR", oc_dir);
-                }
-            }
+            // OpenCode: do NOT redirect OPENCODE_CONFIG_DIR. Pointing it at a
+            // Clauge-scoped dir was observed to break session resume (OpenCode
+            // did not merge the user's real config as expected), so OpenCode runs
+            // with its own config untouched and falls back to the output-heuristic
+            // for attention. (Revisit only if config-dir merge is confirmed safe.)
+            "opencode" => {}
             // Codex: record a per-spawn TUI session log to a unique temp file
             // and tail it for permission/start events (the -c notify flag from
             // Phase 1 still handles completion; both coexist). The watcher is
