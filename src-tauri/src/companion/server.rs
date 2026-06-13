@@ -156,7 +156,11 @@ pub async fn companion_start(
     super::push::start(app, handle.shutdown.subscribe());
     *g = Some(handle);
     // Remember the preference so the server auto-starts on the next launch.
-    let _ = crate::shared::repos::settings::upsert(pool.inner(), "companion_enabled", "true").await;
+    // Best-effort: the server is already running, so a persist failure must
+    // not fail the command — just surface it in the log.
+    if let Err(e) = crate::shared::repos::settings::upsert(pool.inner(), "companion_enabled", "true").await {
+        log::warn!("[companion] failed to persist enabled=true: {e}");
+    }
     Ok(CompanionStatus { running: true, port: Some(port) })
 }
 
@@ -171,8 +175,10 @@ pub async fn companion_stop(
         let _ = h.shutdown.send(true);
         log::info!("[companion] server stopped");
     }
-    // Persist so it stays off on the next launch.
-    let _ = crate::shared::repos::settings::upsert(pool.inner(), "companion_enabled", "false").await;
+    // Persist so it stays off on the next launch (best-effort; see above).
+    if let Err(e) = crate::shared::repos::settings::upsert(pool.inner(), "companion_enabled", "false").await {
+        log::warn!("[companion] failed to persist enabled=false: {e}");
+    }
     Ok(CompanionStatus { running: false, port: None })
 }
 

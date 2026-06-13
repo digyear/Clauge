@@ -66,7 +66,13 @@ pub async fn start(
                 let router = Router::new()
                     .route("/mcp", post(handle_mcp))
                     .route("/agent-hook", post(handle_agent_hook))
-                    .route("/healthz", axum::routing::get(|| async { "ok" }))
+                    // The `x-clauge-mcp` marker lets a restarting instance
+                    // tell our own server apart from a foreign port squatter
+                    // (see `is_our_mcp`) before adopting the port.
+                    .route(
+                        "/healthz",
+                        axum::routing::get(|| async { ([("x-clauge-mcp", "1")], "ok") }),
+                    )
                     .with_state(Arc::new(state));
 
                 // Publish the loopback hook endpoint so the agent spawn path
@@ -96,6 +102,13 @@ pub async fn start(
                 // of walking to a new port — moving would strand agent
                 // configs pinned to the old port.
                 if is_our_mcp(port).await {
+                    // The adopted server serves /agent-hook, but set_hook_url
+                    // is a per-process global the bind path never reached in
+                    // this instance — publish it so agent spawns get a hook.
+                    crate::modes::agent::hooks::set_hook_url(format!(
+                        "http://127.0.0.1:{}/agent-hook",
+                        port
+                    ));
                     log::info!(
                         target: "workspace::mcp",
                         "adopting existing server on 127.0.0.1:{port}"
@@ -141,7 +154,9 @@ async fn is_our_mcp(port: u16) -> bool {
         .send()
         .await
     {
-        Ok(r) => r.status().is_success(),
+        // Require the marker header — a foreign process answering 200 on
+        // /healthz must not be mistaken for our MCP and adopted.
+        Ok(r) => r.status().is_success() && r.headers().contains_key("x-clauge-mcp"),
         Err(_) => false,
     }
 }
