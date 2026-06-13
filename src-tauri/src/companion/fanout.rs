@@ -95,6 +95,11 @@ struct TermHub {
     /// attach/detach gates push without touching the desktop-authoritative
     /// sizing logic.
     viewers: HashSet<String>,
+    /// This terminal's agent reports lifecycle hooks (claude/codex Phase 1).
+    /// Set on the first `set_hook_event`; once true the output heuristic is
+    /// disabled for this hub (the hook is authoritative — the heuristic must
+    /// not fight it). Reset to false on `register` for a fresh hub.
+    hook_driven: bool,
 }
 
 /// Everything a WS connection needs at attach time, captured under one
@@ -225,8 +230,78 @@ pub fn note_input(terminal_id: &str) {
 pub fn is_awaiting(terminal_id: &str) -> bool {
     let map = hubs().lock();
     match map.get(terminal_id) {
+        // Hook-driven hubs carry an authoritative signal — no idle debounce.
+        // The agent told us it's waiting, so reflect it the instant the dot
+        // is queried rather than waiting out ATTENTION_IDLE.
+        Some(hub) if hub.hook_driven => hub.prompt_flag,
         Some(hub) => hub.prompt_flag && hub.last_output.elapsed() >= ATTENTION_IDLE,
         None => false,
+    }
+}
+
+/// Apply an authoritative agent lifecycle event to a terminal's awaiting
+/// state (Phase 1: claude/codex). Marks the hub `hook_driven` (which
+/// disables the output heuristic for it) and then maps the event:
+///   - needs-user events  → awaiting ON  (`prompt_flag = true`)
+///   - clear events       → awaiting OFF (like `note_input`)
+/// Unknown events are ignored (no state change). Case-insensitive.
+/// `agent-attention-cleared` is emitted only on a real awaiting→clear
+/// transition, with the hubs lock dropped.
+pub fn set_hook_event(terminal_id: &str, event: &str) {
+    #[derive(PartialEq)]
+    enum Kind {
+        NeedsUser,
+        Clear,
+        Unknown,
+    }
+    let lower = event.trim().to_ascii_lowercase();
+    let kind = match lower.as_str() {
+        // Claude: Notification + PreToolUse mean the agent is asking the
+        // user (permission prompt / idle notification). Codex emits
+        // *_approval_request / request_user_input.
+        "notification" | "pretooluse" | "permissionrequest" | "request_user_input" => {
+            Kind::NeedsUser
+        }
+        // Claude lifecycle resume/turn boundaries + Codex task lifecycle —
+        // all mean "not waiting on the user".
+        "stop" | "start" | "userpromptsubmit" | "posttooluse" | "sessionstart"
+        | "sessionend" | "task_complete" | "task_started" => Kind::Clear,
+        other => {
+            // Codex approval requests carry an agent-specific prefix
+            // (`exec_approval_request`, `apply_patch_approval_request`, …).
+            if other.ends_with("_approval_request") {
+                Kind::NeedsUser
+            } else {
+                Kind::Unknown
+            }
+        }
+    };
+    if kind == Kind::Unknown {
+        return;
+    }
+    let cleared = {
+        let mut map = hubs().lock();
+        let Some(hub) = map.get_mut(terminal_id) else {
+            return;
+        };
+        hub.hook_driven = true;
+        match kind {
+            Kind::NeedsUser => {
+                hub.prompt_flag = true;
+                hub.last_output = Instant::now();
+                false
+            }
+            Kind::Clear => {
+                let was_awaiting = hub.prompt_flag || hub.notified;
+                hub.prompt_flag = false;
+                hub.notified = false;
+                was_awaiting
+            }
+            Kind::Unknown => false,
+        }
+    };
+    if cleared {
+        emit_cleared(terminal_id);
     }
 }
 
@@ -326,6 +401,7 @@ pub fn register(terminal_id: &str, kind: TermKind, title: &str) {
             prompt_flag: false,
             notified: false,
             viewers: HashSet::new(),
+            hook_driven: false,
         },
     );
 }
@@ -350,13 +426,19 @@ pub fn publish(terminal_id: &str, bytes: &[u8]) {
         hub.scrollback.drain(..len - SCROLLBACK_CAP);
     }
     // Attention bookkeeping: fresh output resets the idle clock and the
-    // notified latch, and re-evaluates the prompt flag against the tail.
+    // notified latch. For heuristic-driven hubs it also re-evaluates the
+    // prompt flag against the tail. Hook-driven hubs (claude/codex) own
+    // their awaiting state via `set_hook_event` / `note_input` / exit, so
+    // the heuristic must NOT recompute `prompt_flag` here — otherwise it
+    // would fight the authoritative signal and resurrect false positives.
     hub.last_output = Instant::now();
     hub.notified = false;
-    let (a, b) = hub.scrollback.as_slices();
-    let combined = [a, b].concat();
-    let tail = &combined[combined.len().saturating_sub(PROMPT_TAIL_BYTES)..];
-    hub.prompt_flag = looks_like_prompt(tail);
+    if !hub.hook_driven {
+        let (a, b) = hub.scrollback.as_slices();
+        let combined = [a, b].concat();
+        let tail = &combined[combined.len().saturating_sub(PROMPT_TAIL_BYTES)..];
+        hub.prompt_flag = looks_like_prompt(tail);
+    }
     let _ = hub.tx.send(FanoutEvent::Out(bytes.to_vec()));
 }
 
@@ -475,11 +557,10 @@ pub fn remove_client(terminal_id: &str, client: &str) -> Option<(u16, u16)> {
 pub fn sweep_attention() {
     let mut map = hubs().lock();
     for (id, hub) in map.iter_mut() {
-        if hub.prompt_flag
-            && !hub.notified
-            && !phone_attached(hub)
-            && hub.last_output.elapsed() >= ATTENTION_IDLE
-        {
+        // Hook-driven hubs skip the idle debounce: the agent's event is
+        // authoritative, so a pending prompt should push on the next sweep.
+        let idle_ok = hub.hook_driven || hub.last_output.elapsed() >= ATTENTION_IDLE;
+        if hub.prompt_flag && !hub.notified && !phone_attached(hub) && idle_ok {
             hub.notified = true;
             emit_push(PushTrigger::Attention {
                 terminal_id: id.clone(),

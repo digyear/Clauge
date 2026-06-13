@@ -257,6 +257,14 @@ pub fn run() {
             app.manage(modes::workspace::meetings::detect::DetectState::default());
             modes::workspace::meetings::detect::start_poller(app.handle().clone());
 
+            // Generate the agent hook assets (notify.sh + the Claude
+            // --settings file) under ~/.clauge/hooks once at boot. The
+            // spawn path injects them per-launch when agent_hooks_enabled.
+            // Best-effort: log + continue so a write failure can't block boot.
+            if let Err(e) = modes::agent::hooks::ensure_hook_assets() {
+                log::warn!(target: "agent::hooks", "ensure_hook_assets failed: {e}");
+            }
+
             // Auto-start the workspace MCP server in the background so
             // agents can connect without the user opening Settings.
             // Opt-out via the `workspace_mcp_enabled = "false"` setting.

@@ -65,8 +65,16 @@ pub async fn start(
                 let state = McpAppState { pool, token, app };
                 let router = Router::new()
                     .route("/mcp", post(handle_mcp))
+                    .route("/agent-hook", post(handle_agent_hook))
                     .route("/healthz", axum::routing::get(|| async { "ok" }))
                     .with_state(Arc::new(state));
+
+                // Publish the loopback hook endpoint so the agent spawn path
+                // can inject `CLAUGE_HOOK_URL`. Localhost-only; no auth.
+                crate::modes::agent::hooks::set_hook_url(format!(
+                    "http://127.0.0.1:{}/agent-hook",
+                    port
+                ));
 
                 let (tx, rx) = oneshot::channel::<()>();
                 tokio::spawn(async move {
@@ -171,4 +179,29 @@ async fn handle_mcp(
         }
     };
     (StatusCode::OK, JsonResponse(response)).into_response()
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentHookBody {
+    terminal_id: String,
+    event_type: String,
+    #[serde(default)]
+    session_ref: Option<String>,
+}
+
+/// Always-on, unauthenticated loopback endpoint that the per-launch
+/// `notify.sh` POSTs agent lifecycle events to. It hands the (normalized
+/// downstream) event to fanout, which owns the per-terminal awaiting state.
+/// Localhost-bound; no auth is needed and a missing/garbage body is a no-op.
+async fn handle_agent_hook(Json(body): Json<AgentHookBody>) -> impl IntoResponse {
+    if !body.terminal_id.is_empty() && !body.event_type.is_empty() {
+        log::debug!(
+            target: "agent::hooks",
+            "hook event terminal={} type={} ref={:?}",
+            body.terminal_id, body.event_type, body.session_ref
+        );
+        crate::companion::fanout::set_hook_event(&body.terminal_id, &body.event_type);
+    }
+    (StatusCode::OK, JsonResponse(json!({ "ok": true })))
 }

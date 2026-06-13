@@ -109,6 +109,30 @@ pub(crate) async fn spawn_agent_terminal_impl(
     // session row). Unknown / missing → Claude via runner_for's default.
     let provider = provider.unwrap_or_else(|| "claude".to_string());
     let cli: &dyn CliRunner = runner_for(&provider);
+
+    // Hook-driven attention (Phase 1, claude/codex). On by default; the user
+    // opts out with `agent_hooks_enabled = "false"`. We only inject when the
+    // always-on hook endpoint has bound (`hook_url()` is Some) — otherwise
+    // the agent would POST nowhere, so fall back to the pure heuristic.
+    let hooks_enabled = match settings_repo::get_by_key(pool, "agent_hooks_enabled").await {
+        Ok(Some(s)) => !s.value.eq_ignore_ascii_case("false"),
+        _ => true,
+    };
+    let hook_url = if hooks_enabled {
+        crate::modes::agent::hooks::hook_url()
+    } else {
+        None
+    };
+
+    let cli_settings_path = hook_url
+        .as_ref()
+        .filter(|_| provider == "claude")
+        .and_then(|_| crate::modes::agent::hooks::claude_settings_path());
+    let cli_notify_path = hook_url
+        .as_ref()
+        .filter(|_| provider == "codex")
+        .and_then(|_| crate::modes::agent::hooks::notify_script_path());
+
     let spawn_cmd = cli.build_spawn_command(&SpawnOpts {
         resume_session_id,
         system_prompt: context_prompt,
@@ -118,6 +142,8 @@ pub(crate) async fn spawn_agent_terminal_impl(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string),
+        claude_settings_path: cli_settings_path,
+        notify_script_path: cli_notify_path,
     });
 
     let (shell_path, shell_kind) = default_user_shell();
@@ -134,6 +160,20 @@ pub(crate) async fn spawn_agent_terminal_impl(
     cmd.env("TERM", "xterm-256color");
     if let Some(ref name) = git_name { cmd.env("GIT_AUTHOR_NAME", name); cmd.env("GIT_COMMITTER_NAME", name); }
     if let Some(ref email) = git_email { cmd.env("GIT_AUTHOR_EMAIL", email); cmd.env("GIT_COMMITTER_EMAIL", email); }
+
+    // Hook-driven attention identity. notify.sh reads these to POST the
+    // agent's lifecycle events to the always-on local endpoint, which sets
+    // this terminal's awaiting state authoritatively (claude/codex). Only
+    // injected when hooks are enabled AND the endpoint has bound.
+    if let Some(ref url) = hook_url {
+        cmd.env("CLAUGE_HOOK_URL", url);
+        cmd.env("CLAUGE_TERMINAL_ID", &terminal_id);
+        cmd.env(
+            "CLAUGE_SESSION_REF",
+            session_ref.as_deref().unwrap_or(""),
+        );
+        cmd.env("CLAUGE_AGENT_ID", &provider);
+    }
 
     // Codex registers the workspace MCP with `--bearer-token-env-var
     // CLAUGE_WORKSPACE_TOKEN` (see modes/workspace/commands.rs
