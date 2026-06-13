@@ -32,6 +32,11 @@ pub async fn agent_spawn_terminal(
     state: State<'_, TerminalState>,
     pool: State<'_, SqlitePool>,
     session_id: Option<String>,
+    // Canonical session row id. Used as the entry's `session_ref` so the
+    // companion can match this live terminal to its row for ALL providers
+    // (codex/opencode never produce a resume id, so `session_id` is null
+    // for them — without this they'd show as idle on mobile).
+    row_id: Option<String>,
     project_path: String,
     context_prompt: Option<String>,
     skip_permissions: Option<bool>,
@@ -49,12 +54,15 @@ pub async fn agent_spawn_terminal(
     workspace_mcp_token: Option<String>,
     on_output: Channel<TerminalOutputPayload>,
 ) -> Result<String, String> {
-    // The desktop only knows the claude resume id at this point, so
-    // that doubles as the entry's session_ref (see TerminalEntry).
+    // Stamp the canonical row id as session_ref when supplied (every
+    // provider), and pass the resume id (claude/antigravity only)
+    // separately for `--resume`. Fall back to the resume id for the ref
+    // so legacy callers that omit row_id keep matching as before.
+    let session_ref = row_id.or_else(|| session_id.clone());
     spawn_agent_terminal_impl(
         &state,
         pool.inner(),
-        session_id.clone(),
+        session_ref,
         session_id,
         project_path,
         context_prompt,

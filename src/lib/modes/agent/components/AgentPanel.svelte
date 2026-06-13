@@ -1247,6 +1247,7 @@
       spawning = true;
       const termId = await agentSpawnTerminal({
         sessionId: resumeId,
+        rowId: session.id,
         projectPath: spawnPath,
         contextPrompt: purposePrompt || undefined,
         skipPermissions: session.skipPermissions === 1 || undefined,
