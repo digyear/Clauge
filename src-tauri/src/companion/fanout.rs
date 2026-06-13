@@ -4,17 +4,18 @@
 // statics (same shape as cloud/scheduler.rs) because the publishers are
 // the PTY reader threads / russh tasks, which have no AppHandle.
 //
-// Resize rule (phone-authoritative when a phone is the active driver):
-// while a phone is attached and the desktop isn't focused on this session,
-// the shared PTY adopts the PHONE's fit size (smallest fits all phones).
-// The desktop reclaims its size when the phone leaves (after a detach
-// grace) OR the moment the desktop is focused on the session. All size
-// application + the client size-echo flow through `reconcile`, the single
-// chokepoint: it diffs the desired size against the applied size and, when
-// they differ, resizes the real PTY master through the terminal registry
-// and broadcasts a `FanoutEvent::Size` so every client renders at it.
-// Debounced both ends (detach grace + blur debounce) so blips/app-switches
-// don't thrash. The PTY resize + broadcast NEVER run under the hubs lock.
+// Resize rule (phone-always-wins while attached): whenever a phone is
+// attached and has reported a valid size, the shared PTY adopts the
+// PHONE's fit size (smallest fits all phones). Desktop focus does NOT
+// influence the size. The desktop reclaims its size only when every phone
+// has left (after a detach grace that holds the last phone size so a quick
+// reconnect doesn't churn). All size application + the client size-echo
+// flow through `reconcile`, the single chokepoint: it diffs the desired
+// size against the applied size and, when they differ, resizes the real
+// PTY master through the terminal registry, broadcasts a `FanoutEvent::Size`
+// so every client renders at it, and emits a `terminal-size` Tauri event so
+// the desktop frontend adopts the applied size. The PTY resize + broadcasts
+// NEVER run under the hubs lock.
 
 use parking_lot::Mutex;
 use portable_pty::PtySize;
@@ -76,10 +77,6 @@ pub enum FanoutEvent {
 /// Public so ws.rs can schedule the post-grace reconcile with it.
 pub const DETACH_GRACE: Duration = Duration::from_secs(4);
 
-/// How long desktop ownership survives a blur, so a transient focus loss
-/// (alt-tab, clicking a dialog) doesn't hand the PTY to the phone.
-pub const BLUR_DEBOUNCE: Duration = Duration::from_secs(3);
-
 /// Safe floor for any size we push to a PTY. Phones reporting zero/garbage
 /// dimensions are ignored upstream; this clamps the rest.
 const MIN_COLS: u16 = 10;
@@ -123,12 +120,6 @@ struct TermHub {
     /// disabled for this hub (the hook is authoritative — the heuristic must
     /// not fight it). Reset to false on `register` for a fresh hub.
     hook_driven: bool,
-    /// The desktop is focused on this session right now. While true the
-    /// desktop owns the PTY size (the scenario-8 reclaim).
-    desktop_focused: bool,
-    /// When the desktop last blurred this session. Desktop ownership is
-    /// held until `blur_at + BLUR_DEBOUNCE` so a flicker doesn't hand off.
-    blur_at: Option<Instant>,
     /// The most recent phone-owned size, held through the detach grace so a
     /// reconnecting phone re-adopts it instantly (no wide→narrow churn).
     last_phone_size: Option<(u16, u16)>,
@@ -222,19 +213,25 @@ fn emit_cleared(terminal_id: &str) {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SizeOwnerPayload {
+struct TerminalSizePayload {
     terminal_id: String,
+    cols: u16,
+    rows: u16,
     phone_owned: bool,
 }
 
-/// Emit `terminal-size-owner` to the frontend. MUST be called with the
-/// hubs lock dropped — never while holding it.
-fn emit_size_owner(terminal_id: &str, phone_owned: bool) {
+/// Emit `terminal-size` to the desktop frontend so it adopts the applied
+/// PTY size (cols/rows) — `phone_owned` tells it whether the size came
+/// from a phone (true) or is the desktop fallback (false). MUST be called
+/// with the hubs lock dropped — never while holding it.
+fn emit_terminal_size(terminal_id: &str, cols: u16, rows: u16, phone_owned: bool) {
     if let Some(handle) = app_handle().lock().as_ref() {
         let _ = handle.emit(
-            "terminal-size-owner",
-            SizeOwnerPayload {
+            "terminal-size",
+            TerminalSizePayload {
                 terminal_id: terminal_id.to_string(),
+                cols,
+                rows,
                 phone_owned,
             },
         );
@@ -465,34 +462,23 @@ fn min_phone_size(hub: &TermHub) -> Option<(u16, u16)> {
         .reduce(|(ac, ar), (c, r)| (ac.min(c), ar.min(r)))
 }
 
-/// The PTY size the hub should be driven at right now — phone-authoritative
-/// when a phone is the active driver.
+/// The PTY size the hub should be driven at right now — phone-always-wins
+/// while attached. Desktop focus does NOT influence the result.
 ///
-/// - The desktop keeps ownership while focused, and through the blur
-///   debounce after losing focus (desktop present/focused wins — scenario 8).
-/// - Otherwise an attached phone owns the size: the min over all phones, so
-///   the smallest viewport fits all. Cached in `last_phone_size`.
-/// - When the last phone has just left, the held phone size is kept through
-///   the detach grace so a quick reconnect re-adopts it instantly.
-/// - Otherwise the desktop's size drives the PTY (default / fully restored).
+/// - If any attached phone has a valid size → the min over all phones, so
+///   the smallest viewport fits all. Phone wins. Cached in `last_phone_size`.
+/// - Else if within the detach grace and a `last_phone_size` is held → the
+///   held phone size (a quick reconnect re-adopts it instantly, no churn).
+/// - Else → the desktop's size drives the PTY (default / fully restored).
 ///
 /// Mutates `last_phone_size` / honours `last_phone_detach_at`, so it takes
 /// `&mut TermHub`. Result is clamped to the safe floor.
 ///
 /// Returns `(desired_size, phone_owned)`. `phone_owned` is `true` when the
 /// result came from a live phone or the detach-grace hold of a phone size
-/// (i.e. the desktop did NOT win the size decision).
+/// (i.e. the desktop fallback was NOT used).
 fn desired_size(hub: &mut TermHub, now: Instant) -> (Option<(u16, u16)>, bool) {
     let desktop = hub.sizes.get(DESKTOP_CLIENT).copied();
-
-    let effective_focused = hub.desktop_focused
-        || hub
-            .blur_at
-            .map_or(false, |t| now < t + BLUR_DEBOUNCE);
-
-    if effective_focused {
-        return (desktop.map(clamp_size), false);
-    }
 
     if let Some(phone) = min_phone_size(hub) {
         hub.last_phone_size = Some(phone);
@@ -515,11 +501,6 @@ fn desired_size(hub: &mut TermHub, now: Instant) -> (Option<(u16, u16)>, bool) {
 /// `desired_size` but without mutating `last_phone_size`.
 fn desired_size_readonly(hub: &TermHub, now: Instant) -> Option<(u16, u16)> {
     let desktop = hub.sizes.get(DESKTOP_CLIENT).copied();
-    let effective_focused = hub.desktop_focused
-        || hub.blur_at.map_or(false, |t| now < t + BLUR_DEBOUNCE);
-    if effective_focused {
-        return desktop.map(clamp_size);
-    }
     if let Some(phone) = min_phone_size(hub) {
         return Some(clamp_size(phone));
     }
@@ -551,8 +532,6 @@ pub fn register(terminal_id: &str, kind: TermKind, title: &str) {
             notified: false,
             viewers: HashSet::new(),
             hook_driven: false,
-            desktop_focused: false,
-            blur_at: None,
             last_phone_size: None,
             last_phone_detach_at: None,
             applied_size: None,
@@ -601,7 +580,7 @@ pub fn publish(terminal_id: &str, bytes: &[u8]) {
 /// detached thread for the timer because callers include the PTY
 /// reader thread, which has no tokio runtime context.
 pub fn publish_exit(terminal_id: &str) {
-    let (was_notified, was_phone_owned) = {
+    let (was_notified, restore_size) = {
         let mut map = hubs().lock();
         let Some(hub) = map.get_mut(terminal_id) else {
             return;
@@ -620,16 +599,27 @@ pub fn publish_exit(terminal_id: &str) {
         let was_notified = hub.notified;
         hub.prompt_flag = false;
         hub.notified = false;
-        // If the terminal was phone-owned, clear the size-owner badge.
-        let was_phone_owned = hub.size_owner == Some(true);
+        // If the terminal was phone-owned, emit a final `terminal-size` with
+        // phoneOwned=false so the desktop stops adopting and resumes fitting.
+        // Use the desktop's known size, falling back to the last applied size
+        // when the desktop size is unknown.
+        let restore_size = if hub.size_owner == Some(true) {
+            hub.sizes
+                .get(DESKTOP_CLIENT)
+                .copied()
+                .map(clamp_size)
+                .or(hub.applied_size)
+        } else {
+            None
+        };
         hub.size_owner = Some(false);
-        (was_notified, was_phone_owned)
+        (was_notified, restore_size)
     };
     if was_notified {
         emit_cleared(terminal_id);
     }
-    if was_phone_owned {
-        emit_size_owner(terminal_id, false);
+    if let Some((cols, rows)) = restore_size {
+        emit_terminal_size(terminal_id, cols, rows, false);
     }
     let id = terminal_id.to_string();
     std::thread::spawn(move || {
@@ -695,19 +685,11 @@ pub fn remove_client(terminal_id: &str, client: &str) {
     }
 }
 
-/// Set the desktop-focus flag for a session. On focus → instant reclaim
-/// of the desktop size. On blur → stamp `blur_at` so ownership survives
-/// the debounce. The caller fires the reconcile (now on focus,
-/// after BLUR_DEBOUNCE on blur). No-op if the hub is gone.
-pub fn set_desktop_focused(terminal_id: &str, focused: bool) {
-    let mut map = hubs().lock();
-    if let Some(hub) = map.get_mut(terminal_id) {
-        hub.desktop_focused = focused;
-        if !focused {
-            hub.blur_at = Some(Instant::now());
-        }
-    }
-}
+/// Retained so the `companion_set_terminal_focus` IPC command doesn't
+/// break, but a no-op: the sizing engine is phone-always-wins-while-attached
+/// and desktop focus no longer influences the PTY size. Kept as a stub so
+/// the frontend can keep calling it without effect.
+pub fn set_desktop_focused(_terminal_id: &str, _focused: bool) {}
 
 /// True if the hub exists (so a command can skip its reconcile/spawn for a
 /// stale terminal id).
@@ -720,14 +702,18 @@ pub fn hub_exists(terminal_id: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Compute the desired size for a terminal and, if it differs from the
-/// size currently applied to the PTY, push the resize and broadcast the
-/// new size to every client. Idempotent: desired == applied → no-op.
+/// size currently applied to the PTY, push the resize, broadcast the new
+/// size to every WS client, and emit a `terminal-size` Tauri event so the
+/// desktop frontend adopts the applied size. Idempotent: desired == applied
+/// → no-op.
 ///
-/// Also tracks size ownership (phone-driven vs desktop-driven) and emits
-/// a `terminal-size-owner` Tauri event on every ownership transition —
-/// with the hubs lock DROPPED (never emit under the lock).
+/// The `terminal-size` event fires on EVERY applied-size change (attach,
+/// detach, rotate, two-phone min shifts), not just ownership flips, so the
+/// desktop stays in sync. `phoneOwned` reflects whether the applied size
+/// came from a phone (or its detach-grace hold). All emits happen with the
+/// hubs lock DROPPED (never emit under the lock).
 pub fn reconcile_now(terminal_id: &str) {
-    let (to_apply, owner_changed) = {
+    let to_apply = {
         let mut map = hubs().lock();
         let Some(hub) = map.get_mut(terminal_id) else {
             return;
@@ -735,34 +721,22 @@ pub fn reconcile_now(terminal_id: &str) {
         let now = Instant::now();
         let (desired, phone_owned) = desired_size(hub, now);
 
-        // Detect ownership transition (only when we have a usable size).
-        let owner_changed = if desired.is_some() && hub.size_owner != Some(phone_owned) {
-            hub.size_owner = Some(phone_owned);
-            Some(phone_owned)
-        } else {
-            None
-        };
-
-        let to_apply = match desired {
+        match desired {
             Some(size) if Some(size) != hub.applied_size => {
                 hub.applied_size = Some(size);
-                Some((hub.kind, size))
+                hub.size_owner = Some(phone_owned);
+                Some((hub.kind, size, phone_owned))
             }
             // No desired size yet (no client reported one), or already
             // applied — nothing to do.
             _ => None,
-        };
-        (to_apply, owner_changed)
+        }
     };
 
-    // Emit size-owner transition event (lock already dropped).
-    if let Some(phone_owned) = owner_changed {
-        emit_size_owner(terminal_id, phone_owned);
-    }
-
-    if let Some((kind, (cols, rows))) = to_apply {
+    if let Some((kind, (cols, rows), phone_owned)) = to_apply {
         apply_pty_resize(terminal_id, kind, cols, rows);
         broadcast_size(terminal_id, cols, rows);
+        emit_terminal_size(terminal_id, cols, rows, phone_owned);
     }
 }
 
@@ -925,8 +899,6 @@ mod tests {
             notified: false,
             viewers: HashSet::new(),
             hook_driven: false,
-            desktop_focused: false,
-            blur_at: None,
             last_phone_size: None,
             last_phone_detach_at: None,
             applied_size: None,
@@ -965,17 +937,6 @@ mod tests {
     }
 
     #[test]
-    fn desired_phone_plus_focused_desktop_wins() {
-        let now = Instant::now();
-        let mut hub = test_hub();
-        hub.sizes.insert(DESKTOP_CLIENT.to_string(), (120, 40));
-        attach_phone(&mut hub, "phone-1", 80, 24);
-        // Desktop focused on the session → it reclaims (scenario 8).
-        hub.desktop_focused = true;
-        assert_eq!(desired_size(&mut hub, now), (Some((120, 40)), false));
-    }
-
-    #[test]
     fn desired_two_phones_min() {
         let now = Instant::now();
         let mut hub = test_hub();
@@ -1003,19 +964,14 @@ mod tests {
     }
 
     #[test]
-    fn desired_blur_debounce_holds_desktop() {
+    fn desired_phone_always_wins_regardless_of_focus() {
         let now = Instant::now();
         let mut hub = test_hub();
         hub.sizes.insert(DESKTOP_CLIENT.to_string(), (120, 40));
         attach_phone(&mut hub, "phone-1", 80, 24);
-        // Desktop just blurred (not focused, but within the debounce).
-        hub.desktop_focused = false;
-        hub.blur_at = Some(now);
-        // Within the debounce → desktop keeps ownership despite the phone.
-        assert_eq!(desired_size(&mut hub, now), (Some((120, 40)), false));
-        // Past the debounce → the still-attached phone takes over.
-        let later = now + BLUR_DEBOUNCE + Duration::from_secs(1);
-        assert_eq!(desired_size(&mut hub, later), (Some((80, 24)), true));
+        // Focus no longer exists as an input: an attached phone always owns
+        // the size while attached.
+        assert_eq!(desired_size(&mut hub, now), (Some((80, 24)), true));
     }
 
     #[test]
@@ -1204,8 +1160,11 @@ mod tests {
         }
         assert_eq!(hub.size_owner, Some(true));
 
-        // Desktop focused → reclaims ownership.
-        hub.desktop_focused = true;
+        // Phone detaches (no viewers, no held size, past any grace) → the
+        // desktop reclaims ownership. Focus is no longer an input.
+        hub.viewers.clear();
+        hub.sizes.remove("phone-1");
+        hub.last_phone_size = None;
         let (_, phone_owned) = desired_size(&mut hub, now);
         assert!(!phone_owned);
         if hub.size_owner != Some(phone_owned) {
