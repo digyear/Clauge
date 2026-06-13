@@ -270,7 +270,6 @@
                     >
                         Download for Android
                     </button>
-                    <span class="get-app-soon">iOS — coming soon</span>
                 </div>
             </div>
         </div>
@@ -696,11 +695,6 @@
         flex-direction: column;
         align-items: flex-start;
         gap: 8px;
-    }
-    .get-app-soon {
-        font-size: 11px;
-        color: var(--t4);
-        font-family: var(--ui);
     }
 
     /* ------- Server host line ------- */
