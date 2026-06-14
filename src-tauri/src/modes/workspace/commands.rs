@@ -1618,8 +1618,18 @@ fn sync_codex_registration(port: u16, token: &str) -> Result<(), String> {
     }
     // Already pointing at the right port → skip the `codex mcp add` shell-out
     // (this now runs on every server start, so avoid the redundant subprocess).
-    if raw.contains(&format!("localhost:{port}/mcp")) {
-        return Ok(());
+    // Scope the check to the clauge-workspace block (its table header up to the
+    // next table header) so an unrelated MCP server that happens to use the same
+    // port can't falsely short-circuit and strand clauge-workspace on a stale port.
+    let block_start = raw
+        .find("[mcp_servers.clauge-workspace]")
+        .or_else(|| raw.find("clauge-workspace"));
+    if let Some(start) = block_start {
+        let after = &raw[start..];
+        let end = after.find("\n[").map(|i| i + 1).unwrap_or(after.len());
+        if after[..end].contains(&format!("localhost:{port}/mcp")) {
+            return Ok(());
+        }
     }
     register_codex(port, token)
 }
