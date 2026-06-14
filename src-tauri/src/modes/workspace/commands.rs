@@ -1104,11 +1104,12 @@ pub async fn workspace_mcp_start(
             &bound_port.to_string(),
         )
         .await;
-        // Configs were registered (or will be) against the requested
-        // port; rewrite every provider that has a Clauge entry so none
-        // strands at the old port.
-        sync_all_registrations(bound_port, &token);
     }
+    // Re-point every provider that already has a Clauge entry at the actual
+    // bound port — UNCONDITIONALLY, so a registration left on a stale fallback
+    // port (e.g. from an earlier walk) self-heals once the server is back on
+    // the canonical port. Safe: only rewrites entries that already exist.
+    sync_all_registrations(bound_port, &token);
     Ok(McpStatus { running: true, port: Some(bound_port) })
 }
 
@@ -1615,6 +1616,11 @@ fn sync_codex_registration(port: u16, token: &str) -> Result<(), String> {
     if !raw.contains("clauge-workspace") {
         return Ok(());
     }
+    // Already pointing at the right port → skip the `codex mcp add` shell-out
+    // (this now runs on every server start, so avoid the redundant subprocess).
+    if raw.contains(&format!("localhost:{port}/mcp")) {
+        return Ok(());
+    }
     register_codex(port, token)
 }
 
@@ -1670,11 +1676,13 @@ pub async fn maybe_autostart_mcp(app: tauri::AppHandle, pool: SqlitePool) {
             drop(g);
             if bound != port {
                 let _ = settings_repo::upsert(&pool, "workspace_mcp_port", &bound.to_string()).await;
-                // Re-point any already-registered provider configs at the
-                // bound port so a fallback doesn't break Codex/Gemini/
-                // OpenCode (Claude is force-registered just below).
-                sync_all_registrations(bound, &token);
             }
+            // Re-point existing provider configs at the actual bound port —
+            // UNCONDITIONALLY, so a registration stranded on an old fallback
+            // port self-heals once the server is back on the canonical port
+            // (Claude is also force-registered just below). Safe: only
+            // rewrites entries that already exist.
+            sync_all_registrations(bound, &token);
             // Register Claude on first boot so a fresh install picks
             // up the entry without the user opening Settings. We DO
             // NOT auto-register Codex / OpenCode here — that would
