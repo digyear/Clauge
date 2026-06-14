@@ -153,6 +153,13 @@ async fn handle_trigger(app: &tauri::AppHandle, trigger: PushTrigger) {
 /// mismatch", "stale token", etc. Throwaway debug tool.
 #[tauri::command]
 pub async fn companion_send_test_push(app: tauri::AppHandle) -> Result<String, String> {
+    // Backend gate matching the UI: this debug affordance is reachable over
+    // IPC regardless of whether the button is shown, so enforce the same
+    // `notify` diagnostics flag here rather than relying on the hidden button.
+    if !crate::shared::app_config::diagnostics_enabled("notify") {
+        return Err("Test push is available only when diagnostics has \"notify\" enabled in settings.json.".into());
+    }
+
     let pool = app.state::<SqlitePool>();
     let pool = pool.inner();
 
