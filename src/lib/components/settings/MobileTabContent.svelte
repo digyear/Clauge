@@ -20,12 +20,14 @@
 
     const ANDROID_RELEASES_URL =
         "https://github.com/ClaugeHQ/clauge-android/releases/latest";
-    const IOS_REPO_URL = "https://github.com/ClaugeHQ/clauge-ios";
+    const IOS_RELEASES_URL =
+        "https://github.com/ClaugeHQ/clauge-ios/releases/latest";
 
     let status = $state<CompanionStatus>({ running: false, port: null });
     let toggling = $state(false);
     let devices = $state<CompanionDevice[]>([]);
     let androidQrDataUrl = $state("");
+    let iosQrDataUrl = $state("");
 
     // Pairing flow state.
     let pairInfo = $state<PairCodeInfo | null>(null);
@@ -219,8 +221,13 @@
                 width: 160,
                 color: { dark: "#0b0a16", light: "#ffffff" },
             });
+            iosQrDataUrl = await QRCode.toDataURL(IOS_RELEASES_URL, {
+                margin: 1,
+                width: 160,
+                color: { dark: "#0b0a16", light: "#ffffff" },
+            });
         } catch (e) {
-            console.warn("[companion] android QR failed:", e);
+            console.warn("[companion] app QR failed:", e);
         }
     });
 
@@ -257,28 +264,60 @@
         </header>
         <div class="stg-card-body">
             <div class="get-app">
-                {#if androidQrDataUrl}
-                    <img
-                        class="get-app-qr"
-                        src={androidQrDataUrl}
-                        alt="Android releases QR"
-                    />
-                {/if}
-                <div class="get-app-main">
-                    <button
-                        class="stg-btn primary"
-                        onclick={() => openExternal(ANDROID_RELEASES_URL)}
-                    >
-                        Download for Android
-                    </button>
-                    <button
-                        class="stg-btn"
-                        onclick={() => openExternal(IOS_REPO_URL)}
-                    >
-                        Download for iOS
-                    </button>
-                </div>
+                <button
+                    class="get-app-tile"
+                    onclick={() => openExternal(ANDROID_RELEASES_URL)}
+                >
+                    {#if androidQrDataUrl}
+                        <img
+                            class="get-app-qr"
+                            src={androidQrDataUrl}
+                            alt="Android download QR"
+                        />
+                    {/if}
+                    <span class="get-app-foot">
+                        <svg
+                            class="get-app-logo"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            aria-hidden="true"
+                        >
+                            <path
+                                d="M16.6 15.15a.83.83 0 1 1 0-1.67.83.83 0 0 1 0 1.67m-9.2 0a.83.83 0 1 1 0-1.67.83.83 0 0 1 0 1.67m9.5-5.2 1.67-2.9a.35.35 0 0 0-.6-.34l-1.69 2.93A10.2 10.2 0 0 0 12 8.66c-1.28 0-2.46.25-3.96.91L6.35 6.64a.35.35 0 0 0-.6.34l1.67 2.9C4.43 11.42 2.5 14.3 2.5 17.5h19c0-3.2-1.93-6.08-4.59-7.55Z"
+                            />
+                        </svg>
+                        <span class="get-app-name">Android</span>
+                    </span>
+                </button>
+                <button
+                    class="get-app-tile"
+                    onclick={() => openExternal(IOS_RELEASES_URL)}
+                >
+                    {#if iosQrDataUrl}
+                        <img
+                            class="get-app-qr"
+                            src={iosQrDataUrl}
+                            alt="iOS download QR"
+                        />
+                    {/if}
+                    <span class="get-app-foot">
+                        <svg
+                            class="get-app-logo"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            aria-hidden="true"
+                        >
+                            <path
+                                d="M16.36 1.43c.08 1-.32 2-.94 2.74-.66.78-1.74 1.4-2.79 1.31-.1-1 .39-2.04.95-2.7.63-.73 1.74-1.3 2.78-1.35M18.5 8.4c-1.53-.09-2.83.87-3.56.87-.74 0-1.86-.83-3.06-.81-1.57.02-3.02.91-3.83 2.32-1.63 2.83-.42 7.01 1.17 9.31.78 1.13 1.7 2.4 2.91 2.35 1.17-.05 1.61-.76 3.02-.76s1.81.76 3.06.73c1.26-.02 2.06-1.15 2.83-2.28a9.7 9.7 0 0 0 1.28-2.62c-.03-.01-2.45-.94-2.48-3.74-.02-2.34 1.91-3.46 2-3.52-1.09-1.6-2.79-1.78-3.4-1.83Z"
+                            />
+                        </svg>
+                        <span class="get-app-name">iOS</span>
+                    </span>
+                </button>
             </div>
+            <p class="get-app-hint">
+                Scan with your phone, or click a tile to open the download page.
+            </p>
         </div>
     </section>
 
@@ -684,24 +723,59 @@
 
     /* ------- Get the app ------- */
     .get-app {
-        display: flex;
-        align-items: center;
-        gap: 16px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
         padding-top: 6px;
     }
-    .get-app-qr {
-        width: 96px;
-        height: 96px;
-        border-radius: 8px;
-        background: #fff;
-        padding: 6px;
-        flex-shrink: 0;
-    }
-    .get-app-main {
+    .get-app-tile {
         display: flex;
         flex-direction: column;
-        align-items: flex-start;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 12px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--b1);
+        background: var(--surface-hover);
+        font-family: var(--ui);
+        cursor: pointer;
+        transition:
+            border-color 0.12s,
+            transform 0.1s;
+    }
+    .get-app-tile:hover {
+        border-color: var(--acc);
+    }
+    .get-app-tile:active {
+        transform: scale(0.985);
+    }
+    .get-app-qr {
+        width: 120px;
+        height: 120px;
+        border-radius: 10px;
+        background: #fff;
+        padding: 6px;
+    }
+    .get-app-foot {
+        display: flex;
+        align-items: center;
         gap: 8px;
+    }
+    .get-app-logo {
+        width: 16px;
+        height: 16px;
+        color: var(--t1);
+    }
+    .get-app-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--t1);
+    }
+    .get-app-hint {
+        margin: 12px 0 0;
+        font-size: 11px;
+        color: var(--t3);
+        text-align: center;
     }
 
     /* ------- Server host line ------- */
