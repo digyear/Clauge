@@ -70,9 +70,11 @@ impl Transcriber {
         params.set_no_context(true); //       don't carry text across chunks → no repeat cascade
         params.set_temperature(0.0); //       deterministic first pass…
         params.set_temperature_inc(0.2); //   …with fallback ladder on low confidence
-        params.set_no_speech_thold(0.6); //   drop segments whisper itself marks as silence
         params.set_logprob_thold(-1.0); //    low avg-logprob → failed decode → fallback
         params.set_entropy_thold(2.4); //     compression-ratio analog → kills repetition loops
+        // (no_speech_thold is intentionally NOT set — it's a documented no-op
+        // in whisper-rs 0.16. Silent chunks are dropped upstream by the RMS
+        // gate in recorder.rs; a true VAD pass is the deferred follow-up.)
 
         state
             .full(params, samples_16k_mono)

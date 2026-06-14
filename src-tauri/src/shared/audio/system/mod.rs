@@ -8,14 +8,16 @@ use super::{CaptureEvent, DEVICE_CHANGED_PREFIX};
 /// How often the default-output watcher re-checks the OS default device.
 const DEVICE_POLL: Duration = Duration::from_millis(1500);
 
-/// Reads the OS default OUTPUT device name via cpal (independent of how each
-/// backend actually captures), so the watcher is fully cross-platform.
-fn current_output_name() -> Option<String> {
+/// Reads the OS default OUTPUT device's stable ID via cpal (independent of how
+/// each backend actually captures), so the watcher is fully cross-platform.
+/// Uses `id()` not the human-readable name — two devices can share a name, so
+/// a name compare would miss an unplug→replug of a same-named device.
+fn current_output_id() -> Option<String> {
     use cpal::traits::{DeviceTrait, HostTrait};
     cpal::default_host()
         .default_output_device()
-        .and_then(|d| d.description().ok())
-        .map(|desc| desc.name().to_string())
+        .and_then(|d| d.id().ok())
+        .map(|id| id.id().to_string())
 }
 
 /// Polls the OS default output device on a timer and, on a real change
@@ -35,22 +37,27 @@ impl DeviceWatch {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
         std::thread::spawn(move || {
-            let baseline = current_output_name();
+            let mut baseline = current_output_id();
             loop {
                 std::thread::sleep(DEVICE_POLL);
                 if flag.load(Ordering::Relaxed) {
                     return;
                 }
-                let now = current_output_name();
-                // Only fire on a real change to a KNOWN device — ignore a
-                // transient `None` while a device is being swapped, so we wait
-                // for the OS to settle on the new default rather than thrash.
-                if now.is_some() && now != baseline {
-                    let _ = tx.send(CaptureEvent::Error(format!(
-                        "{DEVICE_CHANGED_PREFIX}: default output is now {}",
-                        now.as_deref().unwrap_or("unknown")
-                    )));
-                    return;
+                let now = current_output_id();
+                // Fire only on a real switch between two KNOWN devices. A
+                // transient `None` (device mid-swap) is ignored; `None -> Some`
+                // just adopts the first resolvable device as the baseline
+                // rather than counting as a change — otherwise an unresolved
+                // default at startup would burn a needless rebind.
+                match (&baseline, &now) {
+                    (Some(prev), Some(curr)) if curr != prev => {
+                        let _ = tx.send(CaptureEvent::Error(format!(
+                            "{DEVICE_CHANGED_PREFIX}: default output is now {curr}"
+                        )));
+                        return;
+                    }
+                    (None, Some(_)) => baseline = now,
+                    _ => {}
                 }
             }
         });
