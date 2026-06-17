@@ -152,25 +152,32 @@ pub struct AgentSessionInfo {
     pub awaiting_input: bool,
 }
 
+/// One live terminal's identity, snapshotted under a single `terminals`
+/// lock so the list handler matches rows against it with pure in-memory
+/// work — one lock + one `try_wait` per terminal, instead of two locks
+/// per session row (which made a big session list O(rows × terminals)
+/// of `waitpid` syscalls under a contended mutex).
+struct TerminalSnapshot {
+    id: String,
+    session_ref: Option<String>,
+    running: bool,
+}
+
 /// Match a live terminal to a session row. Companion spawns stamp the
 /// row id on the entry; desktop spawns stamp the claude resume id —
 /// check both. Entry present but child reaped = the PTY died this run
 /// and nobody has closed the tab yet → "exited". No entry → "idle"
 /// (covers desktop-fresh spawns too until the D3 fan-out registers
 /// every terminal with the companion).
-fn agent_status(terminal_state: &TerminalState, session: &AgentSession) -> &'static str {
-    let mut terminals = terminal_state.terminals.lock();
-    for entry in terminals.values_mut() {
-        let Some(r) = entry.session_ref.as_deref() else {
+fn agent_status(terminals: &[TerminalSnapshot], session: &AgentSession) -> &'static str {
+    for t in terminals {
+        let Some(r) = t.session_ref.as_deref() else {
             continue;
         };
         if r != session.id && Some(r) != session.claude_session_id.as_deref() {
             continue;
         }
-        return match entry.child.try_wait() {
-            Ok(None) => "running",
-            _ => "exited",
-        };
+        return if t.running { "running" } else { "exited" };
     }
     "idle"
 }
@@ -182,34 +189,51 @@ fn agent_status(terminal_state: &TerminalState, session: &AgentSession) -> &'sta
 /// straight at an attachable stream. Multiple live matches are rare
 /// (one PTY per resume id); we take the last one iterated, which is the
 /// most recently surviving entry for that ref.
-fn live_agent_terminal_id(terminal_state: &TerminalState, session: &AgentSession) -> Option<String> {
-    let mut terminals = terminal_state.terminals.lock();
+fn live_agent_terminal_id(terminals: &[TerminalSnapshot], session: &AgentSession) -> Option<String> {
     let mut found = None;
-    for (tid, entry) in terminals.iter_mut() {
-        let Some(r) = entry.session_ref.as_deref() else {
+    for t in terminals {
+        let Some(r) = t.session_ref.as_deref() else {
             continue;
         };
         if r != session.id && Some(r) != session.claude_session_id.as_deref() {
             continue;
         }
-        if matches!(entry.child.try_wait(), Ok(None)) {
-            found = Some(tid.clone());
+        if t.running {
+            found = Some(t.id.clone());
         }
     }
     found
 }
 
 async fn list_agent_sessions(State(state): State<Arc<CompanionAppState>>) -> Response {
+    let started = std::time::Instant::now();
     let rows = match sessions_repo::list_sessions(&state.pool).await {
         Ok(rows) => rows,
         Err(e) => return internal("list agent sessions", e),
     };
-    let terminal_state = state.app.state::<TerminalState>();
+
+    // Snapshot every live terminal once (single lock, one `try_wait` each)
+    // so the per-row matching below is pure in-memory work and never
+    // re-acquires the terminals mutex per session.
+    let terminals: Vec<TerminalSnapshot> = {
+        let terminal_state = state.app.state::<TerminalState>();
+        let mut guard = terminal_state.terminals.lock();
+        guard
+            .iter_mut()
+            .map(|(tid, entry)| TerminalSnapshot {
+                id: tid.clone(),
+                session_ref: entry.session_ref.clone(),
+                running: matches!(entry.child.try_wait(), Ok(None)),
+            })
+            .collect()
+    };
+
+    let n_rows = rows.len();
     let list: Vec<AgentSessionInfo> = rows
         .into_iter()
         .map(|s| {
-            let status = agent_status(&terminal_state, &s).to_string();
-            let live_terminal_id = live_agent_terminal_id(&terminal_state, &s);
+            let status = agent_status(&terminals, &s).to_string();
+            let live_terminal_id = live_agent_terminal_id(&terminals, &s);
             let awaiting_input = live_terminal_id
                 .as_deref()
                 .map(crate::companion::fanout::is_awaiting)
@@ -227,6 +251,17 @@ async fn list_agent_sessions(State(state): State<Arc<CompanionAppState>>) -> Res
             }
         })
         .collect();
+
+    let elapsed = started.elapsed();
+    if elapsed >= Duration::from_millis(750) {
+        log::warn!(
+            "[companion] list_agent_sessions slow: {:?} ({} sessions, {} live terminals)",
+            elapsed,
+            n_rows,
+            terminals.len(),
+        );
+    }
+
     JsonResponse(list).into_response()
 }
 

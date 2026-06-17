@@ -363,6 +363,20 @@ export function attachSqlEditor(
     entry.headerSlot.style.display = 'none';
   }
 
+  // A different tab's container may already occupy this slot — the host is
+  // shared and reused as the active tab changes. appendChild only moves OUR
+  // container in; it won't evict a sibling, so a previous tab's editor would
+  // otherwise stay stacked beneath this one. Detach any other editor first.
+  for (const child of Array.from(slot.children)) {
+    if (
+      child !== entry.container &&
+      child instanceof HTMLElement &&
+      child.classList.contains('sql-editor-reparent-container')
+    ) {
+      slot.removeChild(child);
+    }
+  }
+
   slot.appendChild(entry.container);
 
   try {
