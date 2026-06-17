@@ -23,6 +23,7 @@
     import ConfirmDialog from "$lib/shared/primitives/ConfirmDialog.svelte";
     import { showToast } from "$lib/shared/primitives/toast";
     import { friendlyError } from "$lib/utils/errors";
+    import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
     const ANDROID_RELEASES_URL =
         "https://github.com/ClaugeHQ/clauge-android/releases/latest";
@@ -97,6 +98,9 @@
     const PAIR_TTL_SECONDS = 120;
     let secondsLeft = $state(0);
     let countdownTimer: ReturnType<typeof setInterval> | null = null;
+    // Poll the device list so `last_seen_at` (bumped server-side on each phone
+    // request, after pairing) stays current without a navigate-away-and-back.
+    let deviceRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
     let hosts = $derived(pairInfo?.hosts ?? []);
     let primaryHost = $derived(hosts[0] ?? null);
@@ -251,7 +255,10 @@
 
     function relativeTime(iso: string | null): string {
         if (!iso) return "never";
-        const then = new Date(iso.includes("T") ? iso : iso + "Z").getTime();
+        // SQLite datetime('now') is space-separated UTC ("YYYY-MM-DD HH:MM:SS"),
+        // which WKWebView won't parse — normalize to ISO 8601 (T + Z) first.
+        const normalized = iso.includes("T") ? iso : iso.replace(" ", "T") + "Z";
+        const then = new Date(normalized).getTime();
         if (Number.isNaN(then)) return iso;
         const diff = Date.now() - then;
         const min = Math.floor(diff / 60000);
@@ -272,7 +279,17 @@
         }
     }
 
+    let unlistenPaired: UnlistenFn | undefined;
+
     onMount(async () => {
+        // A device approved from the global pair dialog must appear here
+        // immediately, not only after navigating away and back.
+        unlistenPaired = await listen("companion:device-paired", () => {
+            void refreshDevices();
+        });
+        deviceRefreshTimer = setInterval(() => {
+            void refreshDevices();
+        }, 20000);
         await refreshStatus();
         await refreshDevices();
         await loadNotifPrefs();
@@ -299,6 +316,8 @@
 
     onDestroy(() => {
         if (countdownTimer) clearInterval(countdownTimer);
+        if (deviceRefreshTimer) clearInterval(deviceRefreshTimer);
+        unlistenPaired?.();
     });
 </script>
 

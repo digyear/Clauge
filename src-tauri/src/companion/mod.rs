@@ -30,6 +30,11 @@ pub const PORT_FALLBACK_RANGE: u16 = 5;
 /// `companion_approve_pair` / `companion_deny_pair`.
 pub const EVT_PAIR_REQUEST: &str = "companion:pair-request";
 
+/// Tauri event fired after a device is approved + persisted, so any open UI
+/// (Settings → Mobile) refreshes its paired-device list without a navigation
+/// round-trip.
+pub const EVT_DEVICE_PAIRED: &str = "companion:device-paired";
+
 /// Tauri event fired when a phone asks to open an Agent/SSH session.
 /// The frontend opens a real desktop tab and answers via
 /// `companion_report_opened` / `companion_report_open_failed`.

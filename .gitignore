@@ -31,3 +31,4 @@ vite.config.ts.timestamp-*
 .*-node-gyp/
 .*.node-gyp/
 CLAUDE.md
+.clauge-worktrees/

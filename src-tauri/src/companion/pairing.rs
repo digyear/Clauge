@@ -22,7 +22,7 @@ use tauri::Emitter;
 use tokio::sync::oneshot;
 
 use super::server::CompanionAppState;
-use super::{auth, devices, EVT_PAIR_REQUEST};
+use super::{auth, devices, EVT_DEVICE_PAIRED, EVT_PAIR_REQUEST};
 
 /// A code is single-use AND short-lived: whichever runs out first wins.
 const PAIR_CODE_TTL: Duration = Duration::from_secs(120);
@@ -192,6 +192,9 @@ pub async fn handle_pair(
         device_id,
         body.device_name
     );
+    // Let any open Settings → Mobile view refresh its list immediately
+    // instead of needing a navigate-away-and-back.
+    let _ = state.app.emit(EVT_DEVICE_PAIRED, &device_id);
 
     JsonResponse(PairResponse {
         device_token,
