@@ -643,15 +643,18 @@
     async function performMeetingModelDelete() {
         const name = modelDeleteName;
         if (!name) return;
-        if (modelDeleteNextDefault !== null) {
-            await setSetting(
-                "workspace_meeting_model",
-                modelDeleteNextDefault,
-            );
-        }
         deletingModel = name;
         try {
             await workspaceMeetingModelDelete(name);
+            // Only move the default once the delete actually succeeded —
+            // otherwise a failed delete would leave the model present but
+            // the default already changed (partial state).
+            if (modelDeleteNextDefault !== null) {
+                await setSetting(
+                    "workspace_meeting_model",
+                    modelDeleteNextDefault,
+                );
+            }
         } catch (e) {
             errorToast("Failed to delete model", e);
         } finally {

@@ -168,6 +168,10 @@ pub async fn ensure_vad_model(app: &AppHandle) -> Result<PathBuf, String> {
         let _ = std::fs::remove_file(&part_path);
         return Err("Downloaded VAD model is not a valid ggml file".into());
     }
+    // Windows `rename` fails if the destination exists. The early-return
+    // above already handled a *valid* existing file, so anything still here
+    // is invalid — remove it before finalizing.
+    let _ = std::fs::remove_file(&final_path);
     std::fs::rename(&part_path, &final_path)
         .map_err(|e| format!("Failed to finalize VAD model: {}", e))?;
     Ok(final_path)

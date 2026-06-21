@@ -213,10 +213,19 @@ pub async fn start_recording(
     // Built-in VAD: make sure the Silero model is present (best-effort,
     // one-time ~885 KB download). On failure we transcribe without VAD.
     let _ = whisper_models::ensure_vad_model(&app).await;
-    let vad_path = whisper_models::vad_model_path(&app)
-        .ok()
-        .filter(|p| p.is_file())
-        .map(|p| p.to_string_lossy().into_owned());
+    let vad_path = whisper_models::vad_model_path(&app).ok().and_then(|p| {
+        // Only enable VAD with a valid model — a stale/corrupt file (e.g. a
+        // failed download) would make whisper error instead of falling back
+        // to plain decode. Drop the bad file so the next run re-fetches.
+        if p.is_file() && whisper_models::validate_magic(&p) {
+            Some(p.to_string_lossy().into_owned())
+        } else {
+            if p.is_file() {
+                let _ = std::fs::remove_file(&p);
+            }
+            None
+        }
+    });
 
     let lang = language.clone();
     let transcriber = tauri::async_runtime::spawn_blocking(move || {
