@@ -257,7 +257,14 @@
     startWatch(r);
   });
 
-  onDestroy(stopWatch);
+  onDestroy(() => {
+    stopWatch();
+    if (refreshTimer) clearTimeout(refreshTimer);
+    // Drop any in-flight pointer-drag listeners (unmount mid-drag, e.g.
+    // a session switch) so they don't fire on a destroyed component.
+    window.removeEventListener('mousemove', onDragMove);
+    window.removeEventListener('mouseup', onDragUp);
+  });
 
   // ---- Resize handle --------------------------------------------------
 

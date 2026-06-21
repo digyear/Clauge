@@ -41,20 +41,31 @@ export function handleImageToggleClick(e: MouseEvent): boolean {
   e.stopPropagation();
   const src = btn.dataset.src ?? '';
   const alt = btn.dataset.alt ?? '';
+  // Build via DOM APIs (properties/textContent), never innerHTML with
+  // interpolated values — so a hostile src/alt can't inject markup.
   if (btn.classList.contains('th-img-toggle')) {
-    const img = document.createElement('span');
-    img.className = 'th-img-revealed';
-    img.dataset.src = src;
-    img.dataset.alt = alt;
-    img.innerHTML = `<img src="${src}" alt="${alt}"><span class="th-img-collapse">collapse</span>`;
-    btn.replaceWith(img);
+    const wrap = document.createElement('span');
+    wrap.className = 'th-img-revealed';
+    wrap.dataset.src = src;
+    wrap.dataset.alt = alt;
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = alt;
+    const collapse = document.createElement('span');
+    collapse.className = 'th-img-collapse';
+    collapse.textContent = 'collapse';
+    wrap.append(img, collapse);
+    btn.replaceWith(wrap);
   } else {
     const ph = document.createElement('button');
     ph.type = 'button';
     ph.className = 'th-img-toggle';
     ph.dataset.src = src;
     ph.dataset.alt = alt;
-    ph.innerHTML = `📎 ${alt} <span class="th-img-hint">· click to view</span>`;
+    const hint = document.createElement('span');
+    hint.className = 'th-img-hint';
+    hint.textContent = '· click to view';
+    ph.append(document.createTextNode(`📎 ${alt} `), hint);
     btn.replaceWith(ph);
   }
   return true;
