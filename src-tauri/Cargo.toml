@@ -94,6 +94,8 @@ toml_edit = "0.25.5"
 sysinfo = { version = "0.38", default-features = false, features = ["system", "disk"] }
 # Battery level for the System Monitor; gracefully optional when no battery is present.
 battery = { package = "starship-battery", version = "0.11" }
+# Listening-port enumeration for the mobile Ports inspector.
+netstat2 = "0.11"
 # Meeting-notes audio kernel (shared/audio/).
 # cpal ships default = [] — without the "pulseaudio" feature the Linux host is
 # bare ALSA, which exposes no "<sink>.monitor" capture sources. The feature is

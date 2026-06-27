@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json as JsonResponse, Response},
-    routing::{delete, get, post},
+    routing::{any, delete, get, post},
     Extension, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -61,6 +61,9 @@ pub fn routes() -> Router<Arc<CompanionAppState>> {
         .route("/fs/write", post(super::files::write))
         .route("/fs/upload", post(super::files::upload))
         .route("/fs/delete", delete(super::files::delete))
+        .route("/ports", get(super::ports::list_ports))
+        .route("/proxy/{port}", any(super::ports::proxy_root))
+        .route("/proxy/{port}/{*path}", any(super::ports::proxy_path))
 }
 
 // ---------------------------------------------------------------------------

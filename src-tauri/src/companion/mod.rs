@@ -10,6 +10,7 @@ pub mod fanout;
 pub mod files;
 pub mod lifecycle;
 pub mod pairing;
+pub mod ports;
 pub mod push;
 pub mod server;
 pub mod sysmon;
