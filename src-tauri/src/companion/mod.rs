@@ -7,6 +7,7 @@ pub mod api;
 pub mod auth;
 pub mod devices;
 pub mod fanout;
+pub mod files;
 pub mod lifecycle;
 pub mod pairing;
 pub mod push;

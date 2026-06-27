@@ -52,6 +52,14 @@ pub fn routes() -> Router<Arc<CompanionAppState>> {
         .route("/projects/recent", get(recent_projects))
         .route("/device/fcm", post(register_fcm_token))
         .route("/sys/metrics", get(super::sysmon::sys_metrics))
+        .route("/fs/list", get(super::files::list))
+        .route("/fs/read", get(super::files::read))
+        .route("/fs/download", get(super::files::download))
+        .route("/fs/search", get(super::files::search))
+        .route("/fs/mkdir", post(super::files::mkdir))
+        .route("/fs/write", post(super::files::write))
+        .route("/fs/upload", post(super::files::upload))
+        .route("/fs/delete", delete(super::files::delete))
 }
 
 // ---------------------------------------------------------------------------
