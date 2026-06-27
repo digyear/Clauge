@@ -11,6 +11,7 @@ pub mod lifecycle;
 pub mod pairing;
 pub mod push;
 pub mod server;
+pub mod sysmon;
 pub mod ws;
 
 use std::sync::Arc;

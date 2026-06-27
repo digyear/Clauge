@@ -51,6 +51,7 @@ pub fn routes() -> Router<Arc<CompanionAppState>> {
         .route("/term/{terminal_id}", delete(kill_terminal))
         .route("/projects/recent", get(recent_projects))
         .route("/device/fcm", post(register_fcm_token))
+        .route("/sys/metrics", get(super::sysmon::sys_metrics))
 }
 
 // ---------------------------------------------------------------------------
