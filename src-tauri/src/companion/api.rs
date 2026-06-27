@@ -48,6 +48,7 @@ pub fn routes() -> Router<Arc<CompanionAppState>> {
             "/sessions/ssh",
             get(list_ssh_profiles).post(spawn_ssh_session),
         )
+        .route("/sessions/shell", post(spawn_shell_session))
         .route("/term/{terminal_id}", delete(kill_terminal))
         .route("/projects/recent", get(recent_projects))
         .route("/device/fcm", post(register_fcm_token))
@@ -60,6 +61,32 @@ pub fn routes() -> Router<Arc<CompanionAppState>> {
         .route("/fs/write", post(super::files::write))
         .route("/fs/upload", post(super::files::upload))
         .route("/fs/delete", delete(super::files::delete))
+}
+
+// ---------------------------------------------------------------------------
+// POST /v1/sessions/shell — headless generic shell PTY for the Terminal tab
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SpawnShellBody {
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+async fn spawn_shell_session(
+    State(state): State<Arc<CompanionAppState>>,
+    JsonResponse(body): JsonResponse<SpawnShellBody>,
+) -> Response {
+    let cwd = body.cwd.filter(|c| !c.trim().is_empty()).unwrap_or_else(|| {
+        std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| "/".to_string())
+    });
+    let term_state = state.app.state::<TerminalState>();
+    match crate::modes::agent::terminal::spawn_companion_shell(&cwd, term_state.inner()) {
+        Ok(terminal_id) => JsonResponse(json!({ "terminalId": terminal_id })).into_response(),
+        Err(e) => internal("spawn shell", e),
+    }
 }
 
 // ---------------------------------------------------------------------------
