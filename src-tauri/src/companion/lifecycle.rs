@@ -9,7 +9,7 @@
 
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::sync::oneshot;
 
@@ -27,6 +27,11 @@ pub struct LifecycleState {
     /// by requestId. `report_opened` / `report_open_failed` take the
     /// sender; an unknown id means the 30s wait already timed out.
     pending: Mutex<HashMap<String, oneshot::Sender<OpenResult>>>,
+    /// Request ids the phone cancelled while the open was still queued.
+    /// A backgrounded/lidded desktop holds the `open-session` event until
+    /// it wakes, then opens the tab and reports it — for a cancelled id we
+    /// close that tab instead of leaving an unwanted session behind.
+    cancelled: Mutex<HashSet<String>>,
 }
 
 impl LifecycleState {
@@ -36,6 +41,19 @@ impl LifecycleState {
 
     pub fn remove_pending(&self, request_id: &str) {
         self.pending.lock().remove(request_id);
+    }
+
+    /// The phone cancelled an in-flight open. Drop any parked waiter and
+    /// remember the id so a late frontend report (after the lid reopens)
+    /// gets the just-opened tab closed instead of kept.
+    pub fn cancel(&self, request_id: &str) {
+        self.cancelled.lock().insert(request_id.to_string());
+        self.pending.lock().remove(request_id);
+    }
+
+    /// Check-and-clear: true if this request was cancelled by the phone.
+    pub fn take_cancelled(&self, request_id: &str) -> bool {
+        self.cancelled.lock().remove(request_id)
     }
 
     /// Answer a pending open request. Err when the id is unknown —

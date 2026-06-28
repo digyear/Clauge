@@ -49,6 +49,7 @@ pub fn routes() -> Router<Arc<CompanionAppState>> {
             get(list_ssh_profiles).post(spawn_ssh_session),
         )
         .route("/sessions/shell", post(spawn_shell_session))
+        .route("/sessions/cancel", post(cancel_open_session))
         .route("/term/{terminal_id}", delete(kill_terminal))
         .route("/projects/recent", get(recent_projects))
         .route("/device/fcm", post(register_fcm_token))
@@ -394,6 +395,9 @@ fn terminal_id_tail(terminal_id: &str) -> String {
 struct SpawnAgentBody {
     session_id: Option<String>,
     new_session: Option<NewAgentSession>,
+    /// Phone-generated id so the phone can cancel this open before it
+    /// resolves (POST /v1/sessions/cancel). Optional for back-compat.
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -494,7 +498,9 @@ async fn spawn_agent_session(
     request_open(
         &state,
         OpenSessionEvent {
-            request_id: uuid::Uuid::new_v4().to_string(),
+            request_id: body
+                .request_id
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             kind: "agent".into(),
             session_id: Some(session.id),
             profile_id: None,
@@ -511,6 +517,9 @@ async fn spawn_agent_session(
 #[serde(rename_all = "camelCase")]
 struct SpawnSshBody {
     profile_id: String,
+    /// Phone-generated id so the phone can cancel this open before it
+    /// resolves (POST /v1/sessions/cancel). Optional for back-compat.
+    request_id: Option<String>,
 }
 
 async fn spawn_ssh_session(
@@ -528,13 +537,35 @@ async fn spawn_ssh_session(
     request_open(
         &state,
         OpenSessionEvent {
-            request_id: uuid::Uuid::new_v4().to_string(),
+            request_id: body
+                .request_id
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             kind: "ssh".into(),
             session_id: None,
             profile_id: Some(body.profile_id),
         },
     )
     .await
+}
+
+// ---------------------------------------------------------------------------
+// POST /v1/sessions/cancel — phone aborts an in-flight open
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CancelOpenBody {
+    request_id: String,
+}
+
+async fn cancel_open_session(
+    State(state): State<Arc<CompanionAppState>>,
+    JsonResponse(body): JsonResponse<CancelOpenBody>,
+) -> Response {
+    // Drop the parked waiter now and remember the id: if the desktop was
+    // lidded and opens the tab later, companion_report_opened will close it.
+    state.lifecycle.cancel(&body.request_id);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 // ---------------------------------------------------------------------------
