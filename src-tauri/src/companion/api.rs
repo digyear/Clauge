@@ -63,6 +63,7 @@ pub fn routes() -> Router<Arc<CompanionAppState>> {
         .route("/fs/delete", delete(super::files::delete))
         .route("/ports", get(super::ports::list_ports))
         .route("/proxy/{port}", any(super::ports::proxy_root))
+        .route("/proxy/{port}/", any(super::ports::proxy_root))
         .route("/proxy/{port}/{*path}", any(super::ports::proxy_path))
 }
 
