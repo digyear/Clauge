@@ -907,6 +907,14 @@ fn broadcast_size(terminal_id: &str, cols: u16, rows: u16) {
 pub fn sweep_attention() {
     let mut map = hubs().lock();
     for (id, hub) in map.iter_mut() {
+        // SSH terminals never push from the idle-prompt heuristic: a shell
+        // prompt is the session's normal resting state, so every idle stretch
+        // (after auth, MOTD, each command) would otherwise re-fire "Needs your
+        // input". SSH's only legitimate attention is a real keyboard-interactive
+        // auth round, pushed explicitly from the auth path — not here.
+        if hub.kind != TermKind::Agent {
+            continue;
+        }
         // Hook-driven hubs skip the idle debounce: the agent's event is
         // authoritative, so a pending prompt should push on the next sweep.
         let idle_ok = hub.hook_driven || hub.last_output.elapsed() >= ATTENTION_IDLE;
