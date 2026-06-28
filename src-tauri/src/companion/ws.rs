@@ -233,7 +233,7 @@ fn handle_client_msg(
 /// task's command channel for SSH.
 fn write_input(state: &CompanionAppState, terminal_id: &str, kind: TermKind, bytes: &[u8]) {
     let delivered = match kind {
-        TermKind::Agent => {
+        TermKind::Agent | TermKind::Shell => {
             let terminal_state = state.app.state::<TerminalState>();
             let mut terminals = terminal_state.terminals.lock();
             match terminals.get_mut(terminal_id) {

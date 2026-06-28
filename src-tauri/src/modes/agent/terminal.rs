@@ -294,7 +294,7 @@ pub(crate) async fn spawn_agent_terminal_impl(
 fn spawn_shell_pty(
     cwd: &str,
     state: &TerminalState,
-    on_output: Channel<TerminalOutputPayload>,
+    on_output: Option<Channel<TerminalOutputPayload>>,
 ) -> Result<String, String> {
     let terminal_id = Uuid::new_v4().to_string();
     let pty_system = native_pty_system();
@@ -320,7 +320,7 @@ fn spawn_shell_pty(
     // agent_resize_terminal — registering keeps the size-indirection
     // path (set_client_size → effective_size) uniform for every entry
     // in TerminalState.
-    fanout::register(&terminal_id, fanout::TermKind::Agent, "Shell");
+    fanout::register(&terminal_id, fanout::TermKind::Shell, "Shell");
 
     let tid_clone = terminal_id.clone();
     std::thread::spawn(move || {
@@ -331,14 +331,18 @@ fn spawn_shell_pty(
                 Ok(0) => break,
                 Ok(n) => {
                     fanout::publish(&tid_clone, &buf[..n]);
-                    let data = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
-                    if on_output.send(TerminalOutputPayload { terminal_id: tid_clone.clone(), data, exit: None }).is_err() { break; }
+                    if let Some(ch) = &on_output {
+                        let data = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
+                        if ch.send(TerminalOutputPayload { terminal_id: tid_clone.clone(), data, exit: None }).is_err() { break; }
+                    }
                 }
                 Err(_) => break,
             }
         }
         fanout::publish_exit(&tid_clone);
-        let _ = on_output.send(TerminalOutputPayload { terminal_id: tid_clone.clone(), data: String::new(), exit: Some(true) });
+        if let Some(ch) = &on_output {
+            let _ = ch.send(TerminalOutputPayload { terminal_id: tid_clone.clone(), data: String::new(), exit: Some(true) });
+        }
     });
 
     state.terminals.lock().insert(terminal_id.clone(), TerminalEntry { master: pty_pair.master, writer, child, session_ref: None });
@@ -351,7 +355,7 @@ pub fn agent_spawn_shell(
     project_path: String,
     on_output: Channel<TerminalOutputPayload>,
 ) -> Result<String, String> {
-    spawn_shell_pty(&project_path, &*state, on_output)
+    spawn_shell_pty(&project_path, &*state, Some(on_output))
 }
 
 #[tauri::command]
@@ -362,7 +366,15 @@ pub fn canvas_shell_terminal_spawn(
     on_output: Channel<TerminalOutputPayload>,
 ) -> Result<String, String> {
     let _ = workspace_id; // reserved for future logging / multi-window scope
-    spawn_shell_pty(&cwd, &*state, on_output)
+    spawn_shell_pty(&cwd, &*state, Some(on_output))
+}
+
+/// Headless shell PTY for the mobile Terminal tab: no frontend Channel, so
+/// output flows only to the companion fan-out. The writer still lands in
+/// [TerminalState], so the existing `/v1/term/{id}/ws` mirrors output and
+/// forwards input (the PTY registers as `TermKind::Agent`).
+pub fn spawn_companion_shell(cwd: &str, state: &TerminalState) -> Result<String, String> {
+    spawn_shell_pty(cwd, state, None)
 }
 
 #[tauri::command]

@@ -7,10 +7,13 @@ pub mod api;
 pub mod auth;
 pub mod devices;
 pub mod fanout;
+pub mod files;
 pub mod lifecycle;
 pub mod pairing;
+pub mod ports;
 pub mod push;
 pub mod server;
+pub mod sysmon;
 pub mod ws;
 
 use std::sync::Arc;
@@ -77,7 +80,20 @@ pub fn companion_report_opened(
     request_id: String,
     terminal_id: String,
     state: tauri::State<'_, CompanionState>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
+    use tauri::Emitter;
+    // The phone cancelled this open while it was queued (typically the
+    // desktop was lidded/backgrounded). The frontend opened the tab anyway
+    // after waking, so close it — a cancelled request must never leave a
+    // live session on the desktop.
+    if state.lifecycle.take_cancelled(&request_id) {
+        let _ = app.emit(
+            EVT_CLOSE_SESSION,
+            lifecycle::CloseSessionEvent { terminal_id },
+        );
+        return Ok(());
+    }
     state.lifecycle.resolve(&request_id, Ok(terminal_id))
 }
 

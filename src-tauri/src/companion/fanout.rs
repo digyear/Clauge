@@ -59,6 +59,10 @@ const PROMPT_TAIL_BYTES: usize = 256;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TermKind {
     Agent,
+    /// Generic shell PTY (desktop terminal tabs, mobile Terminal tab). Lives in
+    /// TerminalState like Agent, but is NOT an AI agent — excluded from the
+    /// idle-prompt attention sweep so a shell prompt never pushes "needs input".
+    Shell,
     Ssh,
 }
 
@@ -865,7 +869,7 @@ fn apply_pty_resize(terminal_id: &str, kind: TermKind, cols: u16, rows: u16) {
         return;
     };
     match kind {
-        TermKind::Agent => {
+        TermKind::Agent | TermKind::Shell => {
             let state = app.state::<TerminalState>();
             let map = state.terminals.lock();
             if let Some(entry) = map.get(terminal_id) {
@@ -907,6 +911,14 @@ fn broadcast_size(terminal_id: &str, cols: u16, rows: u16) {
 pub fn sweep_attention() {
     let mut map = hubs().lock();
     for (id, hub) in map.iter_mut() {
+        // SSH terminals never push from the idle-prompt heuristic: a shell
+        // prompt is the session's normal resting state, so every idle stretch
+        // (after auth, MOTD, each command) would otherwise re-fire "Needs your
+        // input". SSH's only legitimate attention is a real keyboard-interactive
+        // auth round, pushed explicitly from the auth path — not here.
+        if hub.kind != TermKind::Agent {
+            continue;
+        }
         // Hook-driven hubs skip the idle debounce: the agent's event is
         // authoritative, so a pending prompt should push on the next sweep.
         let idle_ok = hub.hook_driven || hub.last_output.elapsed() >= ATTENTION_IDLE;

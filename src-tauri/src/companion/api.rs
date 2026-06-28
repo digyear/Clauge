@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json as JsonResponse, Response},
-    routing::{delete, get, post},
+    routing::{any, delete, get, post},
     Extension, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -48,9 +48,55 @@ pub fn routes() -> Router<Arc<CompanionAppState>> {
             "/sessions/ssh",
             get(list_ssh_profiles).post(spawn_ssh_session),
         )
+        .route("/sessions/shell", post(spawn_shell_session))
+        .route("/sessions/cancel", post(cancel_open_session))
         .route("/term/{terminal_id}", delete(kill_terminal))
         .route("/projects/recent", get(recent_projects))
         .route("/device/fcm", post(register_fcm_token))
+        .route("/sys/metrics", get(super::sysmon::sys_metrics))
+        .route("/fs/list", get(super::files::list))
+        .route("/fs/read", get(super::files::read))
+        .route("/fs/download", get(super::files::download))
+        .route("/fs/search", get(super::files::search))
+        .route("/fs/mkdir", post(super::files::mkdir))
+        .route("/fs/write", post(super::files::write))
+        .route(
+            "/fs/upload",
+            // Raise the body cap above axum's 2 MB default so real uploads fit.
+            post(super::files::upload)
+                .layer(axum::extract::DefaultBodyLimit::max(100 * 1024 * 1024)),
+        )
+        .route("/fs/delete", delete(super::files::delete))
+        .route("/ports", get(super::ports::list_ports))
+        .route("/proxy/{port}", any(super::ports::proxy_root))
+        .route("/proxy/{port}/", any(super::ports::proxy_root))
+        .route("/proxy/{port}/{*path}", any(super::ports::proxy_path))
+}
+
+// ---------------------------------------------------------------------------
+// POST /v1/sessions/shell — headless generic shell PTY for the Terminal tab
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SpawnShellBody {
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+async fn spawn_shell_session(
+    State(state): State<Arc<CompanionAppState>>,
+    JsonResponse(body): JsonResponse<SpawnShellBody>,
+) -> Response {
+    let cwd = body.cwd.filter(|c| !c.trim().is_empty()).unwrap_or_else(|| {
+        std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| "/".to_string())
+    });
+    let term_state = state.app.state::<TerminalState>();
+    match crate::modes::agent::terminal::spawn_companion_shell(&cwd, term_state.inner()) {
+        Ok(terminal_id) => JsonResponse(json!({ "terminalId": terminal_id })).into_response(),
+        Err(e) => internal("spawn shell", e),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +121,12 @@ fn internal(context: &str, e: impl std::fmt::Display) -> Response {
 async fn request_open(state: &CompanionAppState, ev: OpenSessionEvent) -> Response {
     let request_id = ev.request_id.clone();
     let (tx, rx) = oneshot::channel();
-    state.lifecycle.register_pending(request_id.clone(), tx);
+    if !state.lifecycle.register_pending(request_id.clone(), tx) {
+        return api_err(
+            StatusCode::CONFLICT,
+            "an open with this requestId is already in progress",
+        );
+    }
 
     // The frontend opens the tab, but a hidden/minimized window has a
     // suspended webview that never handles `open-session` (→ 504). Surface the
@@ -354,6 +405,9 @@ fn terminal_id_tail(terminal_id: &str) -> String {
 struct SpawnAgentBody {
     session_id: Option<String>,
     new_session: Option<NewAgentSession>,
+    /// Phone-generated id so the phone can cancel this open before it
+    /// resolves (POST /v1/sessions/cancel). Optional for back-compat.
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -454,7 +508,10 @@ async fn spawn_agent_session(
     request_open(
         &state,
         OpenSessionEvent {
-            request_id: uuid::Uuid::new_v4().to_string(),
+            request_id: body
+                .request_id
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             kind: "agent".into(),
             session_id: Some(session.id),
             profile_id: None,
@@ -471,6 +528,9 @@ async fn spawn_agent_session(
 #[serde(rename_all = "camelCase")]
 struct SpawnSshBody {
     profile_id: String,
+    /// Phone-generated id so the phone can cancel this open before it
+    /// resolves (POST /v1/sessions/cancel). Optional for back-compat.
+    request_id: Option<String>,
 }
 
 async fn spawn_ssh_session(
@@ -488,13 +548,36 @@ async fn spawn_ssh_session(
     request_open(
         &state,
         OpenSessionEvent {
-            request_id: uuid::Uuid::new_v4().to_string(),
+            request_id: body
+                .request_id
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             kind: "ssh".into(),
             session_id: None,
             profile_id: Some(body.profile_id),
         },
     )
     .await
+}
+
+// ---------------------------------------------------------------------------
+// POST /v1/sessions/cancel — phone aborts an in-flight open
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CancelOpenBody {
+    request_id: String,
+}
+
+async fn cancel_open_session(
+    State(state): State<Arc<CompanionAppState>>,
+    JsonResponse(body): JsonResponse<CancelOpenBody>,
+) -> Response {
+    // Drop the parked waiter now and remember the id: if the desktop was
+    // lidded and opens the tab later, companion_report_opened will close it.
+    state.lifecycle.cancel(&body.request_id);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 // ---------------------------------------------------------------------------
