@@ -35,20 +35,30 @@ pub struct LifecycleState {
 }
 
 impl LifecycleState {
-    pub fn register_pending(&self, request_id: String, tx: oneshot::Sender<OpenResult>) {
-        self.pending.lock().insert(request_id, tx);
+    /// Register a waiter. Returns false if an open with this id is already
+    /// pending — the caller should reject the request (409) rather than let a
+    /// reused/blank id silently replace another waiter.
+    pub fn register_pending(&self, request_id: String, tx: oneshot::Sender<OpenResult>) -> bool {
+        let mut map = self.pending.lock();
+        if map.contains_key(&request_id) {
+            return false;
+        }
+        map.insert(request_id, tx);
+        true
     }
 
     pub fn remove_pending(&self, request_id: &str) {
         self.pending.lock().remove(request_id);
     }
 
-    /// The phone cancelled an in-flight open. Drop any parked waiter and
-    /// remember the id so a late frontend report (after the lid reopens)
-    /// gets the just-opened tab closed instead of kept.
+    /// The phone cancelled an in-flight open. Drop the parked waiter and — only
+    /// if one was actually pending — tombstone the id so a late frontend report
+    /// (after the lid reopens) closes that tab. Gating on a real pending entry
+    /// avoids stale tombstones that could later close an unrelated reused id.
     pub fn cancel(&self, request_id: &str) {
-        self.cancelled.lock().insert(request_id.to_string());
-        self.pending.lock().remove(request_id);
+        if self.pending.lock().remove(request_id).is_some() {
+            self.cancelled.lock().insert(request_id.to_string());
+        }
     }
 
     /// Check-and-clear: true if this request was cancelled by the phone.

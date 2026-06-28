@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use axum::{
     body::{Body, Bytes},
-    extract::Path,
+    extract::{Path, RawQuery},
     http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Json, Response},
 };
@@ -73,33 +73,62 @@ fn collect_ports() -> Vec<PortInfo> {
 
 pub async fn proxy_root(
     Path(port): Path<u16>,
+    RawQuery(query): RawQuery,
     method: Method,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    forward(port, String::new(), method, headers, body).await
+    forward(port, String::new(), query, method, headers, body).await
 }
 
 pub async fn proxy_path(
     Path((port, path)): Path<(u16, String)>,
+    RawQuery(query): RawQuery,
     method: Method,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    forward(port, path, method, headers, body).await
+    forward(port, path, query, method, headers, body).await
 }
 
-async fn forward(port: u16, path: String, method: Method, headers: HeaderMap, body: Bytes) -> Response {
-    let url = format!("http://127.0.0.1:{port}/{path}");
-    let client = reqwest::Client::new();
+async fn forward(
+    port: u16,
+    path: String,
+    query: Option<String>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let q = query
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("?{s}"))
+        .unwrap_or_default();
+    let url = format!("http://127.0.0.1:{port}/{path}{q}");
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("proxy client build failed: {e}") })),
+            )
+                .into_response()
+        }
+    };
 
     let req_method = reqwest::Method::from_bytes(method.as_str().as_bytes())
         .unwrap_or(reqwest::Method::GET);
     let mut rb = client.request(req_method, &url);
     for (name, value) in headers.iter() {
-        // Host must reflect the upstream; hop-by-hop headers are dropped.
+        // Host/Connection are hop-by-hop. Authorization carries the companion's
+        // own bearer token — never forward it to the proxied localhost app.
         let n = name.as_str();
-        if n.eq_ignore_ascii_case("host") || n.eq_ignore_ascii_case("connection") {
+        if n.eq_ignore_ascii_case("host")
+            || n.eq_ignore_ascii_case("connection")
+            || n.eq_ignore_ascii_case("authorization")
+        {
             continue;
         }
         rb = rb.header(n, value.as_bytes());

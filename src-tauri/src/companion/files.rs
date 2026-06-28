@@ -18,8 +18,14 @@ use serde_json::json;
 /// Largest file we'll return inline to the text viewer (2 MB); larger files
 /// are reported as such so the phone offers download instead.
 const MAX_READ: u64 = 2_000_000;
+/// Cap on a single download so a huge file can't be buffered into memory and
+/// OOM the companion server.
+const MAX_DOWNLOAD: u64 = 100_000_000;
 const SEARCH_MAX_RESULTS: usize = 200;
 const SEARCH_MAX_DEPTH: usize = 8;
+/// Hard ceiling on directory entries a single search may visit, so a search
+/// rooted at a huge tree can't run unbounded.
+const SEARCH_MAX_VISITED: usize = 50_000;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,11 +47,36 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
-/// An explicit non-empty path wins; otherwise the home directory.
-fn resolve(path: &Option<String>) -> PathBuf {
+/// Reject non-absolute paths: every fs handler documents absolute host paths,
+/// and a relative path would resolve against the server's working directory.
+fn require_abs(path: &str) -> Result<PathBuf, Response> {
+    let p = PathBuf::from(path);
+    if p.is_absolute() {
+        Ok(p)
+    } else {
+        Err(err(StatusCode::BAD_REQUEST, "path must be absolute"))
+    }
+}
+
+/// An explicit non-empty (absolute) path wins; otherwise the home directory.
+fn resolve_checked(path: &Option<String>) -> Result<PathBuf, Response> {
     match path {
-        Some(p) if !p.trim().is_empty() => PathBuf::from(p),
-        _ => home_dir(),
+        Some(p) if !p.trim().is_empty() => require_abs(p),
+        _ => Ok(home_dir()),
+    }
+}
+
+/// A safe upload filename: exactly one normal path component (no separators,
+/// no `.`/`..`) so an upload can't escape its destination directory.
+fn safe_filename(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut comps = Path::new(trimmed).components();
+    match (comps.next(), comps.next()) {
+        (Some(std::path::Component::Normal(c)), None) => Some(c.to_string_lossy().to_string()),
+        _ => None,
     }
 }
 
@@ -58,7 +89,10 @@ pub struct ListQuery {
 }
 
 pub async fn list(Query(q): Query<ListQuery>) -> Response {
-    let dir = resolve(&q.path);
+    let dir = match resolve_checked(&q.path) {
+        Ok(d) => d,
+        Err(r) => return r,
+    };
     let show_hidden = q.hidden.unwrap_or(false);
 
     let read = match std::fs::read_dir(&dir) {
@@ -105,7 +139,10 @@ pub struct PathQuery {
 }
 
 pub async fn read(Query(q): Query<PathQuery>) -> Response {
-    let path = PathBuf::from(&q.path);
+    let path = match require_abs(&q.path) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
     let meta = match std::fs::metadata(&path) {
         Ok(m) => m,
         Err(e) => return err(StatusCode::NOT_FOUND, &format!("not found: {e}")),
@@ -135,7 +172,17 @@ pub async fn read(Query(q): Query<PathQuery>) -> Response {
 // -- GET /v1/fs/download ----------------------------------------------------
 
 pub async fn download(Query(q): Query<PathQuery>) -> Response {
-    let path = PathBuf::from(&q.path);
+    let path = match require_abs(&q.path) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    match std::fs::metadata(&path) {
+        Ok(m) if m.len() > MAX_DOWNLOAD => {
+            return err(StatusCode::PAYLOAD_TOO_LARGE, "file too large to download");
+        }
+        Ok(_) => {}
+        Err(e) => return err(StatusCode::NOT_FOUND, &format!("not found: {e}")),
+    }
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
         Err(e) => return err(StatusCode::NOT_FOUND, &format!("not found: {e}")),
@@ -165,6 +212,9 @@ pub struct MkdirBody {
 }
 
 pub async fn mkdir(JsonResponse(b): JsonResponse<MkdirBody>) -> Response {
+    if let Err(r) = require_abs(&b.path) {
+        return r;
+    }
     match std::fs::create_dir_all(&b.path) {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &format!("mkdir failed: {e}")),
@@ -178,6 +228,9 @@ pub struct WriteBody {
 }
 
 pub async fn write(JsonResponse(b): JsonResponse<WriteBody>) -> Response {
+    if let Err(r) = require_abs(&b.path) {
+        return r;
+    }
     if let Some(parent) = Path::new(&b.path).parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -196,7 +249,14 @@ pub struct UploadQuery {
 }
 
 pub async fn upload(Query(q): Query<UploadQuery>, body: Bytes) -> Response {
-    let dest = PathBuf::from(&q.path).join(&q.name);
+    let dir = match require_abs(&q.path) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let Some(name) = safe_filename(&q.name) else {
+        return err(StatusCode::BAD_REQUEST, "invalid file name");
+    };
+    let dest = dir.join(name);
     match std::fs::write(&dest, &body) {
         Ok(_) => JsonResponse(json!({ "path": dest.to_string_lossy() })).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &format!("upload failed: {e}")),
@@ -206,7 +266,10 @@ pub async fn upload(Query(q): Query<UploadQuery>, body: Bytes) -> Response {
 // -- DELETE /v1/fs/delete?path=<> -------------------------------------------
 
 pub async fn delete(Query(q): Query<PathQuery>) -> Response {
-    let path = PathBuf::from(&q.path);
+    let path = match require_abs(&q.path) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
     let meta = match std::fs::symlink_metadata(&path) {
         Ok(m) => m,
         Err(e) => return err(StatusCode::NOT_FOUND, &format!("not found: {e}")),
@@ -231,25 +294,37 @@ pub struct SearchQuery {
 }
 
 pub async fn search(Query(query): Query<SearchQuery>) -> Response {
-    let root = resolve(&query.path);
+    let root = match resolve_checked(&query.path) {
+        Ok(r) => r,
+        Err(r) => return r,
+    };
     let needle = query.q.trim().to_lowercase();
     if needle.is_empty() {
         return JsonResponse(json!({ "entries": Vec::<Entry>::new() })).into_response();
     }
-    let mut results: Vec<Entry> = Vec::new();
-    walk(&root, &needle, 0, &mut results);
+    // The walk is blocking and potentially large — run it off the async worker
+    // and bound how many entries it may visit.
+    let results = tokio::task::spawn_blocking(move || {
+        let mut results: Vec<Entry> = Vec::new();
+        let mut budget = SEARCH_MAX_VISITED;
+        walk(&root, &needle, 0, &mut results, &mut budget);
+        results
+    })
+    .await
+    .unwrap_or_default();
     JsonResponse(json!({ "entries": results })).into_response()
 }
 
-fn walk(dir: &Path, needle: &str, depth: usize, out: &mut Vec<Entry>) {
-    if depth > SEARCH_MAX_DEPTH || out.len() >= SEARCH_MAX_RESULTS {
+fn walk(dir: &Path, needle: &str, depth: usize, out: &mut Vec<Entry>, budget: &mut usize) {
+    if depth > SEARCH_MAX_DEPTH || out.len() >= SEARCH_MAX_RESULTS || *budget == 0 {
         return;
     }
     let Ok(read) = std::fs::read_dir(dir) else { return };
     for e in read.flatten() {
-        if out.len() >= SEARCH_MAX_RESULTS {
+        if out.len() >= SEARCH_MAX_RESULTS || *budget == 0 {
             return;
         }
+        *budget -= 1;
         let name = e.file_name().to_string_lossy().to_string();
         if name.starts_with('.') {
             continue;
@@ -265,7 +340,7 @@ fn walk(dir: &Path, needle: &str, depth: usize, out: &mut Vec<Entry>) {
             });
         }
         if is_dir {
-            walk(&e.path(), needle, depth + 1, out);
+            walk(&e.path(), needle, depth + 1, out, budget);
         }
     }
 }

@@ -59,6 +59,10 @@ const PROMPT_TAIL_BYTES: usize = 256;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TermKind {
     Agent,
+    /// Generic shell PTY (desktop terminal tabs, mobile Terminal tab). Lives in
+    /// TerminalState like Agent, but is NOT an AI agent — excluded from the
+    /// idle-prompt attention sweep so a shell prompt never pushes "needs input".
+    Shell,
     Ssh,
 }
 
@@ -865,7 +869,7 @@ fn apply_pty_resize(terminal_id: &str, kind: TermKind, cols: u16, rows: u16) {
         return;
     };
     match kind {
-        TermKind::Agent => {
+        TermKind::Agent | TermKind::Shell => {
             let state = app.state::<TerminalState>();
             let map = state.terminals.lock();
             if let Some(entry) = map.get(terminal_id) {

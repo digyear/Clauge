@@ -104,8 +104,10 @@ async fn collect() -> Metrics {
             }
         })
         .collect();
-    // Collapse duplicate mount points (macOS lists firmlinked volumes twice).
-    volumes.dedup_by(|a, b| a.mount_point == b.mount_point);
+    // Drop duplicate mount points (macOS lists firmlinked volumes twice).
+    // dedup_by only collapses *adjacent* dupes, so track seen mounts explicitly.
+    let mut seen_mounts = std::collections::HashSet::new();
+    volumes.retain(|v| seen_mounts.insert(v.mount_point.clone()));
 
     Metrics {
         server_name: tauri_plugin_os::hostname(),

@@ -320,7 +320,7 @@ fn spawn_shell_pty(
     // agent_resize_terminal — registering keeps the size-indirection
     // path (set_client_size → effective_size) uniform for every entry
     // in TerminalState.
-    fanout::register(&terminal_id, fanout::TermKind::Agent, "Shell");
+    fanout::register(&terminal_id, fanout::TermKind::Shell, "Shell");
 
     let tid_clone = terminal_id.clone();
     std::thread::spawn(move || {

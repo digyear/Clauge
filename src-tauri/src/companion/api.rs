@@ -60,7 +60,12 @@ pub fn routes() -> Router<Arc<CompanionAppState>> {
         .route("/fs/search", get(super::files::search))
         .route("/fs/mkdir", post(super::files::mkdir))
         .route("/fs/write", post(super::files::write))
-        .route("/fs/upload", post(super::files::upload))
+        .route(
+            "/fs/upload",
+            // Raise the body cap above axum's 2 MB default so real uploads fit.
+            post(super::files::upload)
+                .layer(axum::extract::DefaultBodyLimit::max(100 * 1024 * 1024)),
+        )
         .route("/fs/delete", delete(super::files::delete))
         .route("/ports", get(super::ports::list_ports))
         .route("/proxy/{port}", any(super::ports::proxy_root))
@@ -116,7 +121,12 @@ fn internal(context: &str, e: impl std::fmt::Display) -> Response {
 async fn request_open(state: &CompanionAppState, ev: OpenSessionEvent) -> Response {
     let request_id = ev.request_id.clone();
     let (tx, rx) = oneshot::channel();
-    state.lifecycle.register_pending(request_id.clone(), tx);
+    if !state.lifecycle.register_pending(request_id.clone(), tx) {
+        return api_err(
+            StatusCode::CONFLICT,
+            "an open with this requestId is already in progress",
+        );
+    }
 
     // The frontend opens the tab, but a hidden/minimized window has a
     // suspended webview that never handles `open-session` (→ 504). Surface the
@@ -500,6 +510,7 @@ async fn spawn_agent_session(
         OpenSessionEvent {
             request_id: body
                 .request_id
+                .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             kind: "agent".into(),
             session_id: Some(session.id),
@@ -539,6 +550,7 @@ async fn spawn_ssh_session(
         OpenSessionEvent {
             request_id: body
                 .request_id
+                .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             kind: "ssh".into(),
             session_id: None,
