@@ -142,7 +142,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "app"
-version = "3.4.5"
+version = "3.5.0"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -190,6 +190,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "shell-words",
+ "socket2 0.6.3",
  "sqlx",
  "starship-battery",
  "suppaftp",
