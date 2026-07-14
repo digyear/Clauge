@@ -362,10 +362,21 @@ pub async fn start_work(
         None => format!("card/{short_id}-{title_slug}"),
     };
 
+    let base_branch = crate::modes::agent::git::agent_git_branch(project_path.clone())?;
+    if base_branch.is_empty() || base_branch == "HEAD" {
+        return Err("Project is in detached HEAD state; check out a base branch first.".into());
+    }
     let project_path_owned = project_path.clone();
+    let session_id_owned = session.id.clone();
+    let base_branch_owned = base_branch.clone();
     let branch_owned = branch.clone();
     let worktree_path = tokio::task::spawn_blocking(move || {
-        crate::modes::agent::worktree::agent_create_worktree(project_path_owned, branch_owned)
+        crate::modes::agent::worktree::agent_create_worktree(
+            project_path_owned,
+            session_id_owned,
+            base_branch_owned,
+            branch_owned,
+        )
     })
     .await
     .map_err(|e| format!("worktree spawn_blocking failed: {e}"))??;
@@ -415,7 +426,7 @@ pub async fn release_card(
                 let proj = project_path.clone();
                 let wt_owned = wt.clone();
                 let _ = tokio::task::spawn_blocking(move || {
-                    crate::modes::agent::worktree::agent_remove_worktree(proj, wt_owned)
+                    crate::modes::agent::worktree::agent_remove_worktree(proj, wt_owned, true)
                 })
                 .await;
                 let _ = sqlx::query(

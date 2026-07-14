@@ -2,7 +2,6 @@
   import { agentSessions, activeAgentSession, agentContextUsage, agentSessionActivity, agentSessionAwaiting, agentClaudePlan } from '../stores';
   import { mode } from '$lib/stores/app';
   import { showContextMenu } from '$lib/shared/primitives/contextmenu';
-  import { showToast } from '$lib/shared/primitives/toast';
   import type { AgentSession } from '../types';
   import { tabs, addTab, activateTab } from '$lib/shared/stores/tabs';
   import { get } from 'svelte/store';
@@ -180,19 +179,23 @@
         icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>',
         danger: true,
         action: async () => {
-          // Preflight: a dirty worktree means the upcoming
-          // `git worktree remove --force` would discard the user's
-          // uncommitted code (modified, staged, AND untracked files).
-          // We refuse here and ask the user to clean up first rather
-          // than offering a "discard anyway" escape hatch — accidental
-          // data loss has no good recovery path, but committing or
-          // stashing takes seconds.
+          // Preflight so destructive deletion requires an explicit second
+          // confirmation. The backend still enforces force=false/true, which
+          // protects against changes appearing after this probe.
           let dirty = false;
           if (session.worktreePath) {
             try { dirty = await agentWorktreeIsDirty(session.worktreePath); } catch { /* probe error → treat as clean and let the normal flow run */ }
           }
           if (dirty) {
-            showToast(`"${session.title}" has uncommitted changes in ${session.worktreePath}. Commit or stash them, then try again.`, 'info');
+            showConfirm({
+              title: 'Force Delete Session?',
+              message: `"${session.title}" has uncommitted changes. Force deleting will permanently discard modified, staged, and untracked files in ${session.worktreePath}.`,
+              danger: true,
+              confirmText: 'Force Delete',
+              action: async () => {
+                window.dispatchEvent(new CustomEvent(AGENT_EVENT.DELETE_SESSION, { detail: { session, force: true } }));
+              },
+            });
             return;
           }
           showConfirm({
@@ -201,7 +204,7 @@
             danger: true,
             confirmText: 'Delete',
             action: async () => {
-              window.dispatchEvent(new CustomEvent(AGENT_EVENT.DELETE_SESSION, { detail: { session } }));
+              window.dispatchEvent(new CustomEvent(AGENT_EVENT.DELETE_SESSION, { detail: { session, force: false } }));
             },
           });
         },

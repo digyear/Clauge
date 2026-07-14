@@ -1,56 +1,149 @@
 use std::path::PathBuf;
 
-fn sanitize_branch_name(name: &str) -> String {
-    let sanitized: String = name.chars()
-        .filter(|c| c.is_alphanumeric() || *c == '/' || *c == '-' || *c == '_' || *c == '.')
-        .collect();
-    let sanitized = sanitized.replace("..", ".").replace(".lock", "")
-        .trim_matches(|c: char| c == '.' || c == '/' || c == '-').to_string();
-    if sanitized.is_empty() { return "clauge/unnamed".to_string(); }
-    sanitized.split('/').map(|seg| {
-        if seg.starts_with('-') { format!("x{}", seg) } else { seg.to_string() }
-    }).collect::<Vec<_>>().join("/")
+fn git_output(project_path: &str, args: &[&str]) -> Result<std::process::Output, String> {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(project_path)
+        .args(args)
+        .output()
+        .map_err(|e| format!("git failed to start: {e}"))
+}
+
+fn validate_new_branch(project_path: &str, branch_name: &str) -> Result<(), String> {
+    let branch_name = branch_name.trim();
+    if branch_name.is_empty() {
+        return Err("Branch name is required".to_string());
+    }
+
+    let format = git_output(project_path, &["check-ref-format", "--branch", branch_name])?;
+    if !format.status.success() {
+        return Err(format!("Invalid branch name: {branch_name}"));
+    }
+
+    let ref_name = format!("refs/heads/{branch_name}");
+    let existing = git_output(
+        project_path,
+        &["show-ref", "--verify", "--quiet", &ref_name],
+    )?;
+    if existing.status.success() {
+        return Err(format!("Branch \"{branch_name}\" already exists"));
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub fn agent_is_git_repo(path: String) -> Result<bool, String> {
-    let output = std::process::Command::new("git").args(["-C", &path, "rev-parse", "--is-inside-work-tree"]).output().map_err(|e| e.to_string())?;
+    let output = git_output(&path, &["rev-parse", "--is-inside-work-tree"])?;
     Ok(output.status.success())
 }
 
 #[tauri::command]
-pub fn agent_create_worktree(project_path: String, branch_name: String) -> Result<String, String> {
-    let branch_name = sanitize_branch_name(&branch_name);
-    let worktree_dir = PathBuf::from(&project_path).join(".clauge-worktrees").join(&branch_name);
-    let worktree_path = worktree_dir.to_string_lossy().to_string();
-    if worktree_dir.exists() { return Ok(worktree_path); }
-    let _ = std::fs::create_dir_all(worktree_dir.parent().unwrap_or(&worktree_dir));
-    let _ = std::process::Command::new("git").args(["-C", &project_path, "worktree", "prune"]).output();
-    let output = std::process::Command::new("git").args(["-C", &project_path, "worktree", "add", "-b", &branch_name, &worktree_path]).output().map_err(|e| format!("git worktree add failed: {}", e))?;
-    if !output.status.success() {
-        let output2 = std::process::Command::new("git").args(["-C", &project_path, "worktree", "add", &worktree_path, &branch_name]).output().map_err(|e| format!("git worktree add failed: {}", e))?;
-        if !output2.status.success() { return Err(format!("git worktree add failed: {}", String::from_utf8_lossy(&output2.stderr))); }
+pub fn agent_validate_worktree_branch(
+    project_path: String,
+    branch_name: String,
+) -> Result<(), String> {
+    validate_new_branch(&project_path, &branch_name)
+}
+
+#[tauri::command]
+pub fn agent_create_worktree(
+    project_path: String,
+    session_id: String,
+    base_branch: String,
+    branch_name: String,
+) -> Result<String, String> {
+    validate_new_branch(&project_path, &branch_name)?;
+
+    let base_branch = base_branch.trim();
+    if base_branch.is_empty() {
+        return Err("Base branch is required".to_string());
     }
+    let base_commit = format!("{base_branch}^{{commit}}");
+    let base = git_output(&project_path, &["rev-parse", "--verify", &base_commit])?;
+    if !base.status.success() {
+        return Err(format!("Base branch \"{base_branch}\" does not exist"));
+    }
+
+    let session_dir = session_id
+        .replace('-', "")
+        .chars()
+        .take(8)
+        .collect::<String>();
+    if session_dir.is_empty() {
+        return Err("Session ID is required".to_string());
+    }
+    let worktree_dir = PathBuf::from(&project_path)
+        .join(".clauge-worktrees")
+        .join(session_dir);
+    if worktree_dir.exists() {
+        return Err(format!(
+            "Worktree directory already exists: {}",
+            worktree_dir.to_string_lossy()
+        ));
+    }
+    let parent = worktree_dir
+        .parent()
+        .ok_or_else(|| "Invalid worktree directory".to_string())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("Failed to create worktree directory: {e}"))?;
+
+    let _ = git_output(&project_path, &["worktree", "prune"]);
+    let worktree_path = worktree_dir.to_string_lossy().to_string();
+    let output = git_output(
+        &project_path,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            branch_name.trim(),
+            &worktree_path,
+            base_branch,
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "git worktree add failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
     let gitignore = PathBuf::from(&project_path).join(".gitignore");
     if let Ok(contents) = std::fs::read_to_string(&gitignore) {
-        if !contents.contains(".clauge-worktrees") {
-            let _ = std::fs::write(&gitignore, format!("{}\n.clauge-worktrees/\n", contents.trim_end()));
+        if !contents
+            .lines()
+            .any(|line| line.trim() == ".clauge-worktrees/")
+        {
+            std::fs::write(
+                &gitignore,
+                format!("{}\n.clauge-worktrees/\n", contents.trim_end()),
+            )
+            .map_err(|e| format!("Failed to update .gitignore: {e}"))?;
         }
     } else {
-        let _ = std::fs::write(&gitignore, ".clauge-worktrees/\n");
+        std::fs::write(&gitignore, ".clauge-worktrees/\n")
+            .map_err(|e| format!("Failed to create .gitignore: {e}"))?;
     }
     Ok(worktree_path)
 }
 
 #[tauri::command]
-pub fn agent_remove_worktree(project_path: String, worktree_path: String) -> Result<(), String> {
+pub fn agent_remove_worktree(
+    project_path: String,
+    worktree_path: String,
+    force: bool,
+) -> Result<(), String> {
     use crate::shared::platform::path::{apply_user_path, find_binary};
-    let git_bin = find_binary("git").ok_or_else(|| "git is not installed or not on PATH".to_string())?;
+    let git_bin =
+        find_binary("git").ok_or_else(|| "git is not installed or not on PATH".to_string())?;
 
     let mut remove = std::process::Command::new(&git_bin);
     apply_user_path(&mut remove);
+    remove.args(["-C", &project_path, "worktree", "remove"]);
+    if force {
+        remove.arg("--force");
+    }
     let out = remove
-        .args(["-C", &project_path, "worktree", "remove", "--force", &worktree_path])
+        .arg(&worktree_path)
         .output()
         .map_err(|e| format!("git worktree remove failed to spawn: {e}"))?;
 
@@ -89,7 +182,8 @@ pub fn agent_remove_worktree(project_path: String, worktree_path: String) -> Res
 #[tauri::command]
 pub fn agent_worktree_is_dirty(worktree_path: String) -> Result<bool, String> {
     use crate::shared::platform::path::{apply_user_path, find_binary};
-    let git_bin = find_binary("git").ok_or_else(|| "git is not installed or not on PATH".to_string())?;
+    let git_bin =
+        find_binary("git").ok_or_else(|| "git is not installed or not on PATH".to_string())?;
     let mut cmd = std::process::Command::new(&git_bin);
     apply_user_path(&mut cmd);
     let out = cmd
@@ -103,4 +197,146 @@ pub fn agent_worktree_is_dirty(worktree_path: String) -> Result<bool, String> {
         return Ok(false);
     }
     Ok(!String::from_utf8_lossy(&out.stdout).trim().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn temp_repo(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("clauge-worktree-{name}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(Command::new("git")
+            .args(["init", "-b", "dev"])
+            .arg(&dir)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(dir.join("README.md"), "test\n").unwrap();
+        assert!(Command::new("git")
+            .args(["-C"])
+            .arg(&dir)
+            .args(["add", "."])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["-C"])
+            .arg(&dir)
+            .args([
+                "-c",
+                "user.name=Clauge Test",
+                "-c",
+                "user.email=test@clauge.local",
+                "commit",
+                "-m",
+                "initial",
+            ])
+            .status()
+            .unwrap()
+            .success());
+        dir
+    }
+
+    #[test]
+    fn creates_readable_branch_from_selected_base_in_session_directory() {
+        let repo = temp_repo("create");
+        let result = agent_create_worktree(
+            repo.to_string_lossy().to_string(),
+            "123e4567-e89b-12d3-a456-426614174000".into(),
+            "dev".into(),
+            "feature/add-user-login".into(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            PathBuf::from(&result),
+            repo.join(".clauge-worktrees").join("123e4567")
+        );
+        let branch = Command::new("git")
+            .args(["-C", &result, "branch", "--show-current"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&branch.stdout).trim(),
+            "feature/add-user-login"
+        );
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn rejects_existing_branch_instead_of_reusing_it() {
+        let repo = temp_repo("duplicate");
+        assert!(Command::new("git")
+            .args(["-C"])
+            .arg(&repo)
+            .args(["branch", "feature/existing"])
+            .status()
+            .unwrap()
+            .success());
+
+        let error = agent_create_worktree(
+            repo.to_string_lossy().to_string(),
+            "abcdef12-0000-0000-0000-000000000000".into(),
+            "dev".into(),
+            "feature/existing".into(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("already exists"), "{error}");
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn normal_remove_refuses_a_dirty_worktree() {
+        let repo = temp_repo("remove-dirty");
+        let worktree = agent_create_worktree(
+            repo.to_string_lossy().to_string(),
+            "11111111-0000-0000-0000-000000000000".into(),
+            "dev".into(),
+            "dev-11111111".into(),
+        )
+        .unwrap();
+        std::fs::write(
+            PathBuf::from(&worktree).join("uncommitted.txt"),
+            "keep me\n",
+        )
+        .unwrap();
+
+        let error =
+            agent_remove_worktree(repo.to_string_lossy().to_string(), worktree.clone(), false)
+                .unwrap_err();
+
+        assert!(
+            error.to_lowercase().contains("modified") || error.to_lowercase().contains("untracked"),
+            "{error}"
+        );
+        assert!(PathBuf::from(&worktree).exists());
+        let _ = agent_remove_worktree(repo.to_string_lossy().to_string(), worktree, true);
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn force_remove_discards_a_dirty_worktree() {
+        let repo = temp_repo("force-remove-dirty");
+        let worktree = agent_create_worktree(
+            repo.to_string_lossy().to_string(),
+            "22222222-0000-0000-0000-000000000000".into(),
+            "dev".into(),
+            "dev-22222222".into(),
+        )
+        .unwrap();
+        std::fs::write(
+            PathBuf::from(&worktree).join("uncommitted.txt"),
+            "discard me\n",
+        )
+        .unwrap();
+
+        agent_remove_worktree(repo.to_string_lossy().to_string(), worktree.clone(), true).unwrap();
+
+        assert!(!PathBuf::from(&worktree).exists());
+        let _ = std::fs::remove_dir_all(repo);
+    }
 }

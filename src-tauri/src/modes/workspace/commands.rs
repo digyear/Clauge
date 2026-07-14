@@ -325,7 +325,7 @@ pub async fn workspace_delete(
             let proj = w.project_path.clone();
             let session_id = w.session_id.clone();
             let _ = tokio::task::spawn_blocking(move || {
-                crate::modes::agent::worktree::agent_remove_worktree(proj, wt_path)
+                crate::modes::agent::worktree::agent_remove_worktree(proj, wt_path, true)
             })
             .await;
             let _ = repo::clear_session_worktree(pool, &session_id).await;

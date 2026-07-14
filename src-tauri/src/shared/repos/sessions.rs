@@ -124,9 +124,11 @@ pub async fn insert_session(
     last_used_at: &str,
     provider: &str,
     binary_path: Option<&str>,
+    base_branch: Option<&str>,
+    worktree_branch: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO agent_sessions (id, title, purpose, project_path, project_name, context_prompt, skip_permissions, git_name, git_email, created_at, last_used_at, provider, binary_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO agent_sessions (id, title, purpose, project_path, project_name, context_prompt, skip_permissions, git_name, git_email, created_at, last_used_at, provider, binary_path, base_branch, worktree_branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(title)
@@ -141,6 +143,8 @@ pub async fn insert_session(
     .bind(last_used_at)
     .bind(provider)
     .bind(binary_path)
+    .bind(base_branch)
+    .bind(worktree_branch)
     .execute(pool)
     .await?;
     Ok(())

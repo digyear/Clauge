@@ -8,6 +8,7 @@ export interface AgentSession {
   contextPrompt: string;
   worktreePath: string | null;
   worktreeBranch: string | null;
+  baseBranch: string | null;
   skipPermissions: number;
   gitName: string | null;
   gitEmail: string | null;

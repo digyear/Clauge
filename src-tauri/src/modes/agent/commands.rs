@@ -22,6 +22,8 @@ pub async fn agent_create_session(
     git_name: Option<String>, git_email: Option<String>,
     provider: Option<String>,
     binary_path: Option<String>,
+    base_branch: Option<String>,
+    branch_name: Option<String>,
 ) -> Result<AgentSession, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -54,6 +56,8 @@ pub async fn agent_create_session(
         &now,
         &provider,
         bin,
+        base_branch.as_deref(),
+        branch_name.as_deref(),
     )
     .await
     .map_err(|e| e.to_string())?;

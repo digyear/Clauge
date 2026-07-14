@@ -26,6 +26,10 @@ export const agentCreateSession = (params: {
   /** Absolute path to the CLI binary (when the user picked one in the
    *  Advanced section). Omit / empty string = use $PATH lookup. */
   binaryPath?: string;
+  /** Project-root branch/ref used as the starting point for the worktree. */
+  baseBranch?: string;
+  /** User-editable branch created for this session. */
+  branchName?: string;
 }) => invoke<AgentSession>('agent_create_session', params);
 export const agentUpdateSession = (params: {
   id: string;
@@ -115,8 +119,10 @@ export const agentFileReference = (provider: string, relPath: string) => invoke<
 
 // Worktree
 export const agentIsGitRepo = (path: string) => invoke<boolean>('agent_is_git_repo', { path });
-export const agentCreateWorktree = (projectPath: string, branchName: string) => invoke<string>('agent_create_worktree', { projectPath, branchName });
-export const agentRemoveWorktree = (projectPath: string, worktreePath: string) => invoke<void>('agent_remove_worktree', { projectPath, worktreePath });
+export const agentValidateWorktreeBranch = (projectPath: string, branchName: string) => invoke<void>('agent_validate_worktree_branch', { projectPath, branchName });
+export const agentCreateWorktree = (projectPath: string, sessionId: string, baseBranch: string, branchName: string) => invoke<string>('agent_create_worktree', { projectPath, sessionId, baseBranch, branchName });
+export const agentRemoveWorktree = (projectPath: string, worktreePath: string, force = false) =>
+  invoke<void>('agent_remove_worktree', { projectPath, worktreePath, force });
 export const agentWorktreeIsDirty = (worktreePath: string) => invoke<boolean>('agent_worktree_is_dirty', { worktreePath });
 
 // Git — all use projectPath (camelCase for Tauri v2 auto-conversion to project_path)

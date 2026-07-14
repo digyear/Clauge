@@ -21,6 +21,9 @@ pub struct AgentSession {
     pub context_prompt: String,
     pub worktree_path: Option<String>,
     pub worktree_branch: Option<String>,
+    /// Branch/ref used as the starting point when the lazy worktree is created.
+    /// For new manual sessions this is the project root's current branch.
+    pub base_branch: Option<String>,
     pub skip_permissions: i32,
     pub git_name: Option<String>,
     pub git_email: Option<String>,

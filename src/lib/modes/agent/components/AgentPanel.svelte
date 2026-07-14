@@ -36,6 +36,7 @@
     agentUpdateLastUsed,
     agentDiscoverSessions,
     agentIsGitRepo,
+    agentGitBranch,
     agentCreateWorktree,
     agentUpdateWorktree,
     agentListSessions,
@@ -59,6 +60,7 @@
   import { mode } from '$lib/stores/app';
   import { base64ToBytes, deferUntilFrame, loadWebGLAddon } from '$lib/shared/primitives/terminal-utils';
   import { getPurposePrompt } from '../ai/prompt';
+  import { defaultBranchName } from '../branch-name';
   import { AGENT_EVENT } from '$lib/shared/constants/events';
   import {
     AGENT_NOTIFY_REPEAT_MS,
@@ -1088,37 +1090,30 @@
         }
       } catch (_) {}
 
-      // Auto-create worktree for new sessions in git repos. Branch
-      // name includes a short prefix of this session's UUID so two
-      // sessions can never collide on the same worktree path
-      // regardless of title — that was the root cause of the
-      // "two Custom sessions, one loses context after restart" alpha
-      // report: identical title slugs produced the same branch name,
-      // `agent_create_worktree` reused the existing dir, both sessions
-      // ended up sharing one Claude projects directory, the capture
-      // loop then raced to claim the same `<id>.jsonl`. With UUID in
-      // the branch, each session gets its own dedicated worktree → its
-      // own encoded Claude dir → exactly one session file in there →
-      // capture is unambiguous and resume after restart always finds
-      // the right file. Title is kept as a readable suffix.
+      // Auto-create an isolated worktree for new sessions in git repos.
+      // The user-facing branch name is stored on the session; the UUID is
+      // used only for the internal worktree directory so it never pollutes
+      // merge history. Legacy rows without branch metadata fall back to a
+      // readable title slug and the project root's current branch.
       if (!session.worktreePath && !session.claudeSessionId) {
-        try {
-          const isGit = await agentIsGitRepo(session.projectPath);
-          if (isGit) {
-            const uuidShort = session.id.replace(/-/g, '').slice(0, 8);
-            const titleSlug = session.title.toLowerCase().replace(/\s+/g, '-');
-            const purposeSlug = session.purpose.toLowerCase().replace(/\s+/g, '-');
-            const rawBranch = `clauge/${purposeSlug}-${titleSlug}-${uuidShort}`;
-            const branchName = rawBranch.replace(/[^a-zA-Z0-9/_\-.]/g, '').replace(/\.{2,}/g, '.').replace(/\.lock/g, '');
-            const worktreePath = await agentCreateWorktree(session.projectPath, branchName);
-            spawnPath = worktreePath;
-            await agentUpdateWorktree(session.id, worktreePath, branchName);
-            session.worktreePath = worktreePath;
-            session.worktreeBranch = branchName;
-            await loadAgentSessions();
+        const isGit = await agentIsGitRepo(session.projectPath);
+        if (isGit) {
+          const branchName = session.worktreeBranch || defaultBranchName(session.title);
+          const baseBranch = session.baseBranch || await agentGitBranch(session.projectPath);
+          if (!branchName || !baseBranch || baseBranch === 'HEAD') {
+            throw new Error('Cannot create worktree: branch name or base branch is missing');
           }
-        } catch (e) {
-          console.warn('Worktree creation failed, using original path:', e);
+          const worktreePath = await agentCreateWorktree(
+            session.projectPath,
+            session.id,
+            baseBranch,
+            branchName,
+          );
+          spawnPath = worktreePath;
+          await agentUpdateWorktree(session.id, worktreePath, branchName);
+          session.worktreePath = worktreePath;
+          session.worktreeBranch = branchName;
+          await loadAgentSessions();
         }
       }
 
@@ -1695,6 +1690,7 @@
     const detail = (e as CustomEvent).detail;
     if (!detail?.session) return;
     const session = detail.session;
+    const force = detail.force === true;
 
     // Kill terminal
     const tIds = get(agentTerminalIds);
@@ -1730,14 +1726,14 @@
     agentTerminalIds.update(m => { m.delete(session.id); return new Map(m); });
     agentShellIds.update(m => { m.delete(session.id); return new Map(m); });
 
-    // Remove worktree if exists. Surface failures via toast — silently
-    // swallowing leaves an orphan directory on disk after the DB row is
-    // gone, with no signal to the user.
+    // Remove worktree if it exists. A failed cleanup keeps the Session row so
+    // the user can retry instead of losing the only pointer to an orphan.
     if (session.worktreePath) {
       try {
-        await agentRemoveWorktree(session.projectPath, session.worktreePath);
+        await agentRemoveWorktree(session.projectPath, session.worktreePath, force);
       } catch (e) {
-        showToast(`Worktree cleanup failed: ${friendlyError(e)}. The directory may remain at ${session.worktreePath}.`, 'error');
+        showToast(`Session was not deleted because worktree cleanup failed: ${friendlyError(e)}`, 'error');
+        return;
       }
     }
 

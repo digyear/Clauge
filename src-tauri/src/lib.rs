@@ -555,6 +555,7 @@ pub fn run() {
             modes::agent::terminal::agent_resize_terminal,
             modes::agent::terminal::agent_kill_terminal,
             modes::agent::worktree::agent_is_git_repo,
+            modes::agent::worktree::agent_validate_worktree_branch,
             modes::agent::worktree::agent_create_worktree,
             modes::agent::worktree::agent_remove_worktree,
             modes::agent::worktree::agent_worktree_is_dirty,

@@ -1,6 +1,6 @@
 <script lang="ts">
   import Modal from '$lib/shared/primitives/Modal.svelte';
-  import { agentCreateSession, agentDiscoverSessions, agentListContexts, agentAttachContext, agentUpdateSessionId, agentValidateBinary } from '../commands';
+  import { agentCreateSession, agentDiscoverSessions, agentListContexts, agentAttachContext, agentUpdateSessionId, agentValidateBinary, agentIsGitRepo, agentGitBranch, agentValidateWorktreeBranch } from '../commands';
   import type { AgentContext, DiscoveredSession, AgentProvider } from '../types';
   import { AGENT_PROVIDERS } from '../types';
   import { providerStatus, providerStatusReady, refreshProviderStatus } from '$lib/shared/stores/providerStatus';
@@ -27,6 +27,7 @@
   import { tabs as tabsStore, addTab, activateTab } from '$lib/shared/stores/tabs';
   import { showToast } from '$lib/shared/primitives/toast';
   import { SESSION_PURPOSES, getPurposeColor, getPurposePrompt } from '../ai/prompt';
+  import { defaultBranchName, sessionTitleAfterProjectSelection } from '../branch-name';
   import { get } from 'svelte/store';
 
   let { show = $bindable(false) } = $props();
@@ -35,6 +36,10 @@
   let projectPath = $state('');
   let title = $state('');
   let purpose = $state('');  // Empty by default — user must pick
+  let isGitProject = $state(false);
+  let baseBranch = $state('');
+  let branchName = $state('');
+  let branchNameEdited = $state(false);
   // Which CLI backs this session. Defaults to the footer-selected provider
   // (whichever the user last looked at usage for) so the typical
   // "open another session in the same CLI" flow is one click. Coerced to
@@ -76,11 +81,32 @@
 
   const purposes = SESSION_PURPOSES.map(p => ({ label: p.id, color: p.color }));
 
-  // Check if a purpose is already active for this project
-  function isPurposeUsed(purposeLabel: string): boolean {
-    if (!projectPath.trim()) return false;
-    const sessions = get(agentSessions);
-    return sessions.some(s => s.projectPath === projectPath.trim() && s.purpose === purposeLabel);
+  $effect(() => {
+    if (!branchNameEdited) branchName = defaultBranchName(title);
+  });
+
+  let gitProbeId = 0;
+  async function refreshProjectGit(path: string) {
+    const probeId = ++gitProbeId;
+    const trimmed = path.trim();
+    if (!trimmed) {
+      isGitProject = false;
+      baseBranch = '';
+      return;
+    }
+    try {
+      const git = await agentIsGitRepo(trimmed);
+      if (probeId !== gitProbeId) return;
+      isGitProject = git;
+      baseBranch = git ? await agentGitBranch(trimmed) : '';
+      if (probeId !== gitProbeId) return;
+      if (baseBranch === 'HEAD') baseBranch = '';
+    } catch (_) {
+      if (probeId === gitProbeId) {
+        isGitProject = false;
+        baseBranch = '';
+      }
+    }
   }
 
   async function loadDiscoveredSessions(path: string) {
@@ -170,8 +196,9 @@
       const selected = await open({ directory: true, multiple: false, title: 'Select Project Folder' });
       if (selected) {
         projectPath = selected as string;
-        if (!title) title = (selected as string).split('/').filter(Boolean).pop() || '';
+        title = sessionTitleAfterProjectSelection(title, selected as string);
         loadDiscoveredSessions(selected as string);
+        refreshProjectGit(selected as string);
       }
     } catch (_) {}
   }
@@ -209,6 +236,19 @@
 
     loading = true;
     try {
+      const gitProject = await agentIsGitRepo(projectPath.trim());
+      let selectedBaseBranch: string | undefined;
+      let selectedBranchName: string | undefined;
+      if (gitProject) {
+        selectedBaseBranch = baseBranch || await agentGitBranch(projectPath.trim());
+        selectedBranchName = branchName.trim() || defaultBranchName(title);
+        if (!selectedBaseBranch || selectedBaseBranch === 'HEAD') {
+          throw new Error('The project is in detached HEAD state; check out a base branch first.');
+        }
+        if (!selectedBranchName) throw new Error('Branch name is required.');
+        await agentValidateWorktreeBranch(projectPath.trim(), selectedBranchName);
+      }
+
       const session = await agentCreateSession({
         title: title.trim(),
         purpose,
@@ -223,6 +263,8 @@
         binaryPath: useCustomBinary && customBinaryPath.trim()
           ? customBinaryPath.trim()
           : undefined,
+        baseBranch: selectedBaseBranch,
+        branchName: selectedBranchName,
       });
 
       // Link resumed Claude session if selected
@@ -263,6 +305,7 @@
 
   function resetForm() {
     projectPath = ''; title = ''; purpose = ''; skipPermissions = false;
+    isGitProject = false; baseBranch = ''; branchName = ''; branchNameEdited = false;
     customPrompt = ''; gitEnabled = false; gitName = ''; gitEmail = '';
     discoveredSessions = []; selectedSessionId = '';
     contextEnabled = false; attachedContextNames = []; showContextDropdown = false;
@@ -276,6 +319,7 @@
     projectPath.trim() !== '' &&
     title.trim() !== '' &&
     purpose !== '' &&
+    (!isGitProject || (baseBranch.trim() !== '' && branchName.trim() !== '')) &&
     (!gitEnabled || (gitName.trim() !== '' && gitEmail.trim() !== ''))
   );
 </script>
@@ -370,7 +414,7 @@
                 type="text"
                 bind:value={projectPath}
                 placeholder="/path/to/project"
-                onblur={() => { if (projectPath.trim()) loadDiscoveredSessions(projectPath.trim()); }}
+                onblur={() => { if (projectPath.trim()) { loadDiscoveredSessions(projectPath.trim()); refreshProjectGit(projectPath.trim()); } }}
               />
               <button class="ns-btn-browse" onclick={pickFolder}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
@@ -384,14 +428,31 @@
             <input class="ns-input" type="text" bind:value={title} placeholder="e.g. Auth Refactor" />
           </label>
 
+          {#if isGitProject}
+            <div class="ns-row">
+              <label class="ns-field">
+                <span class="ns-label">Base Branch</span>
+                <input class="ns-input" type="text" value={baseBranch} readonly title="Current branch in the project folder" />
+              </label>
+              <label class="ns-field">
+                <span class="ns-label">Branch Name</span>
+                <input
+                  class="ns-input"
+                  type="text"
+                  value={branchName}
+                  placeholder="e.g. feature/auth-refactor"
+                  oninput={(event) => { branchName = event.currentTarget.value; branchNameEdited = true; }}
+                />
+              </label>
+            </div>
+          {/if}
+
           <div class="ns-field">
             <span class="ns-label">Purpose</span>
             <div class="ns-chips">
               {#each purposes as p}
                 {#if !projectPath.trim()}
                   <span class="ns-chip disabled">{p.label}</span>
-                {:else if p.label !== 'Custom' && isPurposeUsed(p.label)}
-                  <span class="ns-chip disabled" title="{p.label} already active for this project">{p.label}</span>
                 {:else}
                   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                   <span
