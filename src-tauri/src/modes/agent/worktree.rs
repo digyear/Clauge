@@ -58,6 +58,30 @@ fn ensure_worktree_ignored(project_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn portable_path_component(value: &str, fallback: &str) -> String {
+    let mut component = String::new();
+    let mut separator_pending = false;
+
+    for character in value.trim().chars() {
+        if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+            if separator_pending && !component.is_empty() && !component.ends_with('-') {
+                component.push('-');
+            }
+            component.push(character);
+            separator_pending = false;
+        } else {
+            separator_pending = true;
+        }
+    }
+
+    let component = component.trim_matches(['-', '.']);
+    if component.is_empty() {
+        fallback.to_string()
+    } else {
+        component.to_string()
+    }
+}
+
 #[tauri::command]
 pub fn agent_is_git_repo(path: String) -> Result<bool, String> {
     let output = git_output(&path, &["rev-parse", "--is-inside-work-tree"])?;
@@ -104,9 +128,10 @@ pub fn agent_create_worktree(
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.is_empty())
-        .unwrap_or("project")
-        .to_string();
-    let session_dir = format!("{project_name}-{session_short}");
+        .map(|name| portable_path_component(name, "project"))
+        .unwrap_or_else(|| "project".to_string());
+    let branch_component = portable_path_component(&branch_name, "branch");
+    let session_dir = format!("{project_name}-{branch_component}-{session_short}");
     let worktree_dir = PathBuf::from(&project_path)
         .join(".clauge-worktrees")
         .join(session_dir);
@@ -260,7 +285,16 @@ mod tests {
     }
 
     #[test]
-    fn creates_readable_branch_from_selected_base_in_session_directory() {
+    fn portable_path_components_only_expose_safe_ascii_characters() {
+        assert_eq!(
+            portable_path_component("lute_station/发布@rel 2026.07#", "project"),
+            "lute_station-rel-2026.07"
+        );
+        assert_eq!(portable_path_component("中文/🚀", "branch"), "branch");
+    }
+
+    #[test]
+    fn creates_readable_branch_from_selected_base_in_named_session_directory() {
         let repo = temp_repo("create");
         let project_name = repo.file_name().unwrap().to_string_lossy();
         let result = agent_create_worktree(
@@ -274,7 +308,7 @@ mod tests {
         assert_eq!(
             PathBuf::from(&result),
             repo.join(".clauge-worktrees")
-                .join(format!("{project_name}-123e4567"))
+                .join(format!("{project_name}-feature-add-user-login-123e4567"))
         );
         let branch = Command::new("git")
             .args(["-C", &result, "branch", "--show-current"])
