@@ -31,6 +31,33 @@ fn validate_new_branch(project_path: &str, branch_name: &str) -> Result<(), Stri
     Ok(())
 }
 
+fn ensure_worktree_ignored(project_path: &str) -> Result<(), String> {
+    let gitignore = PathBuf::from(project_path).join(".gitignore");
+    match std::fs::read_to_string(&gitignore) {
+        Ok(contents) => {
+            if contents
+                .lines()
+                .any(|line| line.trim() == ".clauge-worktrees/")
+            {
+                return Ok(());
+            }
+            let updated = if contents.trim_end().is_empty() {
+                ".clauge-worktrees/\n".to_string()
+            } else {
+                format!("{}\n.clauge-worktrees/\n", contents.trim_end())
+            };
+            std::fs::write(&gitignore, updated)
+                .map_err(|e| format!("Failed to update .gitignore: {e}"))?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::write(&gitignore, ".clauge-worktrees/\n")
+                .map_err(|e| format!("Failed to create .gitignore: {e}"))?;
+        }
+        Err(e) => return Err(format!("Failed to read .gitignore: {e}")),
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn agent_is_git_repo(path: String) -> Result<bool, String> {
     let output = git_output(&path, &["rev-parse", "--is-inside-work-tree"])?;
@@ -54,6 +81,9 @@ pub fn agent_create_worktree(
 ) -> Result<String, String> {
     validate_new_branch(&project_path, &branch_name)?;
 
+    let session_uuid =
+        uuid::Uuid::parse_str(session_id.trim()).map_err(|e| format!("Invalid session ID: {e}"))?;
+
     let base_branch = base_branch.trim();
     if base_branch.is_empty() {
         return Err("Base branch is required".to_string());
@@ -64,14 +94,19 @@ pub fn agent_create_worktree(
         return Err(format!("Base branch \"{base_branch}\" does not exist"));
     }
 
-    let session_dir = session_id
-        .replace('-', "")
+    let session_short = session_uuid
+        .simple()
+        .to_string()
         .chars()
         .take(8)
         .collect::<String>();
-    if session_dir.is_empty() {
-        return Err("Session ID is required".to_string());
-    }
+    let project_name = PathBuf::from(&project_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("project")
+        .to_string();
+    let session_dir = format!("{project_name}-{session_short}");
     let worktree_dir = PathBuf::from(&project_path)
         .join(".clauge-worktrees")
         .join(session_dir);
@@ -81,6 +116,7 @@ pub fn agent_create_worktree(
             worktree_dir.to_string_lossy()
         ));
     }
+    ensure_worktree_ignored(&project_path)?;
     let parent = worktree_dir
         .parent()
         .ok_or_else(|| "Invalid worktree directory".to_string())?;
@@ -105,23 +141,6 @@ pub fn agent_create_worktree(
             "git worktree add failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
-    }
-
-    let gitignore = PathBuf::from(&project_path).join(".gitignore");
-    if let Ok(contents) = std::fs::read_to_string(&gitignore) {
-        if !contents
-            .lines()
-            .any(|line| line.trim() == ".clauge-worktrees/")
-        {
-            std::fs::write(
-                &gitignore,
-                format!("{}\n.clauge-worktrees/\n", contents.trim_end()),
-            )
-            .map_err(|e| format!("Failed to update .gitignore: {e}"))?;
-        }
-    } else {
-        std::fs::write(&gitignore, ".clauge-worktrees/\n")
-            .map_err(|e| format!("Failed to create .gitignore: {e}"))?;
     }
     Ok(worktree_path)
 }
@@ -243,6 +262,7 @@ mod tests {
     #[test]
     fn creates_readable_branch_from_selected_base_in_session_directory() {
         let repo = temp_repo("create");
+        let project_name = repo.file_name().unwrap().to_string_lossy();
         let result = agent_create_worktree(
             repo.to_string_lossy().to_string(),
             "123e4567-e89b-12d3-a456-426614174000".into(),
@@ -253,7 +273,8 @@ mod tests {
 
         assert_eq!(
             PathBuf::from(&result),
-            repo.join(".clauge-worktrees").join("123e4567")
+            repo.join(".clauge-worktrees")
+                .join(format!("{project_name}-123e4567"))
         );
         let branch = Command::new("git")
             .args(["-C", &result, "branch", "--show-current"])
@@ -263,6 +284,65 @@ mod tests {
             String::from_utf8_lossy(&branch.stdout).trim(),
             "feature/add-user-login"
         );
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn rejects_invalid_session_id_before_creating_branch_or_worktree() {
+        let repo = temp_repo("invalid-session-id");
+
+        let error = agent_create_worktree(
+            repo.to_string_lossy().to_string(),
+            "not-a-uuid".into(),
+            "dev".into(),
+            "feature/invalid-session".into(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("Invalid session ID"), "{error}");
+        assert!(!repo.join(".clauge-worktrees").exists());
+        let branch = Command::new("git")
+            .args(["-C"])
+            .arg(&repo)
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/heads/feature/invalid-session",
+            ])
+            .status()
+            .unwrap();
+        assert!(!branch.success());
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn gitignore_failure_does_not_create_branch_or_worktree() {
+        let repo = temp_repo("gitignore-failure");
+        std::fs::create_dir(repo.join(".gitignore")).unwrap();
+
+        let error = agent_create_worktree(
+            repo.to_string_lossy().to_string(),
+            "33333333-0000-0000-0000-000000000000".into(),
+            "dev".into(),
+            "feature/gitignore-failure".into(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains(".gitignore"), "{error}");
+        assert!(!repo.join(".clauge-worktrees").exists());
+        let branch = Command::new("git")
+            .args(["-C"])
+            .arg(&repo)
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/heads/feature/gitignore-failure",
+            ])
+            .status()
+            .unwrap();
+        assert!(!branch.success());
         let _ = std::fs::remove_dir_all(repo);
     }
 
