@@ -4,7 +4,7 @@ import { AGENT_PROVIDERS, type AgentProvider } from '$lib/shared/agent/providers
 
 export type ProviderInstallMap = Record<AgentProvider, boolean>;
 
-const EMPTY: ProviderInstallMap = { claude: false, codex: false, gemini: false, opencode: false };
+const EMPTY: ProviderInstallMap = { claude: false, codex: false, gemini: false, opencode: false, hermes: false };
 
 /**
  * Live map of which agent CLIs are installed. Populated once at app boot

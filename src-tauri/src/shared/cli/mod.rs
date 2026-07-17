@@ -5,6 +5,7 @@
 pub mod claude;
 pub mod codex;
 pub mod gemini;
+pub mod hermes;
 pub mod opencode;
 pub mod registry;
 pub mod runner;

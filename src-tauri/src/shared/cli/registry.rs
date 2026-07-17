@@ -9,6 +9,7 @@
 use super::claude::CLAUDE;
 use super::codex::CODEX;
 use super::gemini::GEMINI;
+use super::hermes::HERMES;
 use super::opencode::OPENCODE;
 use super::runner::CliRunner;
 
@@ -17,6 +18,7 @@ pub fn runner_for(provider: &str) -> &'static dyn CliRunner {
     match provider {
         "codex" => &CODEX,
         "gemini" => &GEMINI,
+        "hermes" => &HERMES,
         "opencode" => &OPENCODE,
         _ => &CLAUDE,
     }
@@ -30,6 +32,7 @@ pub fn try_runner_for(provider: &str) -> Option<&'static dyn CliRunner> {
         "claude" => Some(&CLAUDE),
         "codex" => Some(&CODEX),
         "gemini" => Some(&GEMINI),
+        "hermes" => Some(&HERMES),
         "opencode" => Some(&OPENCODE),
         _ => None,
     }
@@ -38,4 +41,4 @@ pub fn try_runner_for(provider: &str) -> Option<&'static dyn CliRunner> {
 /// All providers Clauge currently supports, in display order. Drives
 /// the provider tab strip in the plugin manager and the picker in
 /// NewSessionModal. Keep Claude first so it stays the obvious default.
-pub const SUPPORTED_PROVIDERS: &[&str] = &["claude", "codex", "gemini", "opencode"];
+pub const SUPPORTED_PROVIDERS: &[&str] = &["claude", "codex", "gemini", "opencode", "hermes"];

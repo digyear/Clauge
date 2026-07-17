@@ -14,6 +14,7 @@
     codex: '/codex.svg',
     gemini: '/gemini.svg',
     opencode: '/opencode-dark.svg',
+    hermes: '/hermes.png',
   };
   // Vendor subtitles for the left-rail provider list. Surfaced only
   // for visual orientation — not stored, not sent to the backend.
@@ -22,6 +23,7 @@
     codex: 'OpenAI',
     gemini: 'Google',
     opencode: 'Open source',
+    hermes: 'Nous Research',
   };
   import { loadAgentSessions, agentSessions, activeAgentSession, agentFooterProvider } from '../stores';
   import { tabs as tabsStore, addTab, activateTab } from '$lib/shared/stores/tabs';
@@ -45,7 +47,7 @@
   // "open another session in the same CLI" flow is one click. Coerced to
   // an `AgentProvider` since the footer store can technically widen.
   let provider = $state<AgentProvider>(
-    (['claude', 'codex', 'gemini', 'opencode'] as const).includes(($agentFooterProvider as any))
+    (['claude', 'codex', 'gemini', 'opencode', 'hermes'] as const).includes(($agentFooterProvider as any))
       ? ($agentFooterProvider as AgentProvider)
       : 'claude',
   );
@@ -267,9 +269,13 @@
         branchName: selectedBranchName,
       });
 
-      // Link resumed Claude session if selected
+      // Persist the selected provider session id, and update the in-memory
+      // object before auto-opening it. Without the local assignment below,
+      // activeAgentSession received the stale create response (null id) and
+      // spawned a fresh CLI even though the database row had been linked.
       if (selectedSessionId) {
         await agentUpdateSessionId(session.id, selectedSessionId);
+        session.claudeSessionId = selectedSessionId;
       }
 
       // Attach selected contexts
@@ -466,26 +472,19 @@
             </div>
           </div>
 
-          {#if discoveredSessions.length > 0 && purpose !== 'Custom'}
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="ns-hint" onclick={() => { purpose = 'Custom'; }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--acc)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-              <span>{discoveredSessions.length} previous session{discoveredSessions.length > 1 ? 's' : ''} found — <strong style="color:var(--acc);cursor:pointer;">resume via Custom</strong></span>
-            </div>
+          {#if discoveredSessions.length > 0}
+            <label class="ns-field">
+              <span class="ns-label">Resume Existing Session <span class="ns-optional">(optional)</span></span>
+              <select class="ns-select" bind:value={selectedSessionId}>
+                <option value="">Start fresh</option>
+                {#each discoveredSessions as s}
+                  <option value={s.sessionId}>{s.preview || s.sessionId.slice(0, 8)} — {new Date(s.modifiedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</option>
+                {/each}
+              </select>
+            </label>
           {/if}
 
           {#if purpose === 'Custom'}
-            {#if discoveredSessions.length > 0}
-              <label class="ns-field">
-                <span class="ns-label">Resume Existing Session</span>
-                <select class="ns-select" bind:value={selectedSessionId}>
-                  <option value="">Start fresh</option>
-                  {#each discoveredSessions as s}
-                    <option value={s.sessionId}>{s.preview || s.sessionId.slice(0, 8)} — {new Date(s.modifiedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</option>
-                  {/each}
-                </select>
-              </label>
-            {/if}
             <label class="ns-field">
               <span class="ns-label">System Prompt <span class="ns-optional">(optional)</span></span>
               <textarea class="ns-textarea" bind:value={customPrompt} placeholder="Custom instructions for this session..." rows="2"></textarea>

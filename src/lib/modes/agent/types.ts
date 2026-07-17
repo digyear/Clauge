@@ -19,7 +19,7 @@ export interface AgentSession {
   origin: string;
   /** Backref to the card that owns this hidden session. null otherwise. */
   cardId: string | null;
-  /** 'claude' | 'codex' | 'gemini' | 'opencode'. */
+  /** 'claude' | 'codex' | 'gemini' | 'opencode' | 'hermes'. */
   provider: string;
   /** Per-session override of the CLI binary location. null/empty =
    *  fall back to the standard $PATH lookup. Used when the user has
@@ -28,7 +28,7 @@ export interface AgentSession {
 }
 
 /** Provider ids that map to a `CliRunner` in `runner_for`. */
-export type AgentProvider = 'claude' | 'codex' | 'gemini' | 'opencode';
+export type AgentProvider = 'claude' | 'codex' | 'gemini' | 'opencode' | 'hermes';
 export const AGENT_PROVIDERS: { id: AgentProvider; label: string }[] = [
   { id: 'claude', label: 'Claude' },
   { id: 'codex', label: 'Codex' },
@@ -36,6 +36,7 @@ export const AGENT_PROVIDERS: { id: AgentProvider; label: string }[] = [
   // Internal id stays so existing sessions and coworkers keep working.
   { id: 'gemini', label: 'Antigravity' },
   { id: 'opencode', label: 'OpenCode' },
+  { id: 'hermes', label: 'Hermes' },
 ];
 
 export interface AgentContext {

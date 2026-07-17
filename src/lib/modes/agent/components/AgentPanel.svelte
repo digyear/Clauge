@@ -382,7 +382,7 @@
   const _suppressedTerminalIds = new Set<string>();
 
   let showNotInstalled = $state(false);
-  let notInstalledProvider = $state<'claude' | 'codex' | 'gemini' | 'opencode'>('claude');
+  let notInstalledProvider = $state<'claude' | 'codex' | 'gemini' | 'opencode' | 'hermes'>('claude');
 
   // --- Notification system for action-required prompts (per-session) ---
   // Each session detects its own prompts and tracks its own re-alert guard so
@@ -962,6 +962,9 @@
 
   function startContextUsagePolling(session: any) {
     stopContextUsagePolling();
+    // Hermes support deliberately excludes token/statistics collection in
+    // phase one. Session discovery/resume still runs independently below.
+    if (session.provider === 'hermes') return;
     const projectPath = session.worktreePath || session.projectPath;
     contextUsageInterval = setInterval(() => {
       const s = get(activeAgentSession);
@@ -1026,7 +1029,7 @@
     // Each provider has its own install guide modal — using the Claude
     // one for a Codex/Gemini/OpenCode session would tell the user to
     // install the wrong tool.
-    const provider = (session.provider ?? 'claude') as 'claude' | 'codex' | 'gemini' | 'opencode';
+    const provider = (session.provider ?? 'claude') as 'claude' | 'codex' | 'gemini' | 'opencode' | 'hermes';
     try {
       const installed = provider === 'claude'
         ? await agentCheckClaudeInstalled()
@@ -1218,7 +1221,8 @@
           if (entry && entry._exitBuffer && !session.claudeSessionId) {
             const resumeMatch =
               entry._exitBuffer.match(/claude --resume ([a-f0-9-]{36})/) ||
-              entry._exitBuffer.match(/agy --conversation[ =]([a-f0-9-]{36})/);
+              entry._exitBuffer.match(/agy --conversation[ =]([a-f0-9-]{36})/) ||
+              entry._exitBuffer.match(/hermes --resume ([A-Za-z0-9_-]{8,128})/);
             if (resumeMatch) {
               session.claudeSessionId = resumeMatch[1];
               agentUpdateSessionId(session.id, resumeMatch[1]).catch(() => {});
@@ -1343,13 +1347,15 @@
 
                 // Start context usage polling now that we have a session ID
                 if (contextUsageInterval) clearInterval(contextUsageInterval);
-                contextUsageInterval = setInterval(() => {
-                  const s = get(activeAgentSession);
-                  if (s?.claudeSessionId) {
-                    const path = s.worktreePath || s.projectPath;
-                    refreshAgentContextUsage(s.id, path, s.claudeSessionId, s.provider || 'claude');
-                  }
-                }, AGENT_CONTEXT_USAGE_INTERVAL_MS);
+                if (session.provider !== 'hermes') {
+                  contextUsageInterval = setInterval(() => {
+                    const s = get(activeAgentSession);
+                    if (s?.claudeSessionId) {
+                      const path = s.worktreePath || s.projectPath;
+                      refreshAgentContextUsage(s.id, path, s.claudeSessionId, s.provider || 'claude');
+                    }
+                  }, AGENT_CONTEXT_USAGE_INTERVAL_MS);
+                }
               }
             } catch (_) {}
           }, AGENT_SESSION_CAPTURE_INTERVAL_MS);
@@ -1373,7 +1379,7 @@
       // other provider, so the call is safe to make unconditionally
       // and we keep the branch explicit only to skip the IPC round
       // trip on Claude/Codex.
-      if (session.provider === 'gemini' || session.provider === 'opencode') {
+      if (session.provider === 'gemini' || session.provider === 'opencode' || session.provider === 'hermes') {
         try {
           await agentInjectPurpose(spawnPath, session.provider, purposePrompt);
         } catch (e) {
@@ -1902,10 +1908,12 @@
         {@const _src = _prov === 'codex' ? '/codex.svg'
                      : _prov === 'gemini' ? '/gemini.svg'
                      : _prov === 'opencode' ? '/opencode-dark.svg'
+                     : _prov === 'hermes' ? '/hermes.png'
                      : '/code-in-action.svg'}
         {@const _name = _prov === 'codex' ? 'Codex'
                       : _prov === 'gemini' ? 'Antigravity'
                       : _prov === 'opencode' ? 'OpenCode'
+                      : _prov === 'hermes' ? 'Hermes Agent'
                       : 'Claude Code'}
         <div class="agent-loading">
           <img src={_src} alt="" class="loading-mascot" />

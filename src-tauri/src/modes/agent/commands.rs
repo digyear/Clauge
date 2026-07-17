@@ -191,7 +191,7 @@ const ALL_CONTEXT_FILES: &[&str] = &["CLAUDE.md", "AGENTS.md", "GEMINI.md"];
 
 fn context_file_for(provider: &str) -> &'static str {
     match provider {
-        "codex" | "opencode" => "AGENTS.md",
+        "codex" | "opencode" | "hermes" => "AGENTS.md",
         "gemini" => "GEMINI.md",
         _ => "CLAUDE.md",
     }
@@ -353,10 +353,9 @@ fn write_injected_purpose(path: &PathBuf, purpose_text: &str) -> Result<(), Stri
 /// Inject (or clear) the session's purpose prompt into the provider's
 /// project-level context file. Called BEFORE spawn from the frontend.
 ///
-/// Currently only meaningful for Gemini — every other provider has a
-/// real system-prompt flag and uses it directly in `build_spawn_command`.
-/// For the other providers this is a no-op so the frontend can fire
-/// it unconditionally without branching.
+/// Providers without a reliable system-prompt flag use a marker block in
+/// their project context file. Other providers are a no-op so the frontend
+/// can invoke this command unconditionally.
 #[tauri::command]
 pub fn agent_inject_purpose(
     project_path: String,
@@ -367,12 +366,11 @@ pub fn agent_inject_purpose(
     // written into the project's agent file pre-spawn. Claude / Codex
     // both have first-class flags (`--append-system-prompt` and `-c
     // instructions=`), so their persona travels via the spawn command
-    // instead — no file write needed. Currently that leaves Gemini (no
-    // prompt flag at all) and OpenCode (the prompt arg is silently
-    // dropped at spawn). They both write to a marker block in their
-    // respective context file (GEMINI.md / AGENTS.md), which doesn't
-    // collide with the contexts feature's own marker block.
-    if provider != "gemini" && provider != "opencode" {
+    // instead — no file write needed. Gemini, OpenCode, and Hermes write
+    // to a marker block in their respective context file (GEMINI.md /
+    // AGENTS.md), which doesn't collide with the contexts feature's own
+    // marker block.
+    if provider != "gemini" && provider != "opencode" && provider != "hermes" {
         return Ok(());
     }
     let filename = context_file_for(&provider);
@@ -472,7 +470,7 @@ pub fn agent_check_cli_installed(provider: String) -> bool {
 #[tauri::command]
 pub fn agent_check_clis_installed() -> std::collections::HashMap<String, bool> {
     let mut out = std::collections::HashMap::new();
-    for p in ["claude", "codex", "gemini", "opencode"] {
+    for p in ["claude", "codex", "gemini", "opencode", "hermes"] {
         let cli: &dyn CliRunner = runner_for(p);
         out.insert(p.to_string(), cli.resolve_binary_path() != cli.binary_name());
     }
@@ -496,4 +494,33 @@ pub fn agent_get_claude_plan() -> Result<String, String> {
         .and_then(|o| o.get("subscriptionType").and_then(|v| v.as_str()))
         .unwrap_or("")
         .to_string())
+}
+
+#[cfg(test)]
+mod purpose_tests {
+    use super::*;
+
+    #[test]
+    fn hermes_purpose_is_written_to_agents_md() {
+        let dir = std::env::temp_dir().join(format!(
+            "clauge-hermes-purpose-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("AGENTS.md"), "# Existing project guidance\n").unwrap();
+
+        agent_inject_purpose(
+            dir.to_string_lossy().into_owned(),
+            "hermes".into(),
+            "Review before editing".into(),
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(dir.join("AGENTS.md")).unwrap();
+        assert!(content.contains("# Existing project guidance"));
+        assert!(content.contains("<!-- CLAUGE-PURPOSE-START -->"));
+        assert!(content.contains("Review before editing"));
+        assert!(content.contains("<!-- CLAUGE-PURPOSE-END -->"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

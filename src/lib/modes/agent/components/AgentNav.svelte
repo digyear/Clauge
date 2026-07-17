@@ -276,6 +276,8 @@
                 <img src="/gemini.svg" alt="Antigravity" width="22" height="22" class="session-icon-img gemini" />
               {:else if session.provider === 'opencode'}
                 <img src="/opencode-dark.svg" alt="OpenCode" width="22" height="22" class="session-icon-img opencode" />
+              {:else if session.provider === 'hermes'}
+                <img src="/hermes.png" alt="Hermes" width="22" height="22" class="session-icon-img hermes" />
               {:else if activity === 'running'}
                 <img src="/code-in-action.svg" alt="Claude" width="36" height="26" />
               {:else}

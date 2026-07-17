@@ -575,6 +575,8 @@
             <img src="/gemini.svg" alt="" class="tab-agent-icon" />
           {:else if _prov === 'opencode'}
             <img src="/opencode-dark.svg" alt="" class="tab-agent-icon" />
+          {:else if _prov === 'hermes'}
+            <img src="/hermes.png" alt="" class="tab-agent-icon" />
           {:else}
             <img src="/code-no-action.svg" alt="" class="tab-agent-icon" />
           {/if}

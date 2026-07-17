@@ -392,6 +392,7 @@ pub fn agent_discover_sessions(
         "codex" => discover_codex_sessions(&project_path),
         "gemini" => discover_gemini_sessions(&project_path),
         "opencode" => discover_opencode_sessions(&project_path),
+        "hermes" => discover_hermes_sessions(&project_path),
         _ => discover_claude_sessions(&project_path),
     }
 }
@@ -415,6 +416,7 @@ pub fn agent_resolve_resume_id(
         "codex" => discover_codex_sessions(&project_path)?,
         "gemini" => discover_gemini_sessions(&project_path)?,
         "opencode" => discover_opencode_sessions(&project_path)?,
+        "hermes" => discover_hermes_sessions(&project_path)?,
         _ => return Ok(None),
     };
     // discover_*_sessions sort descending by modified_at, so the first
@@ -813,6 +815,196 @@ async fn query_opencode_sessions(
         .collect())
 }
 
+/// Hermes keeps session metadata in `<HERMES_HOME>/state.db`. Filter by
+/// exact cwd so the resume picker only offers conversations created in the
+/// selected project (or its selected worktree).
+fn discover_hermes_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>, String> {
+    let db_path = runner_for("hermes")
+        .sessions_root()
+        .ok_or("Cannot determine Hermes home directory")?
+        .join("state.db");
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let project_owned = project_path.to_string();
+    let runtime = tokio::runtime::Handle::try_current().ok();
+    match runtime {
+        Some(handle) => handle.block_on(query_hermes_sessions(&db_path, &project_owned)),
+        None => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| format!("Hermes discover runtime: {}", e))?;
+            rt.block_on(query_hermes_sessions(&db_path, &project_owned))
+        }
+    }
+}
+
+async fn query_hermes_sessions(
+    db_path: &std::path::Path,
+    project_path: &str,
+) -> Result<Vec<DiscoveredSession>, String> {
+    #[derive(Clone, sqlx::FromRow)]
+    struct HermesSessionNode {
+        root_id: String,
+        id: String,
+        parent_session_id: Option<String>,
+        title: String,
+        preview: String,
+        started_at: f64,
+        ended_at: Option<f64>,
+        end_reason: Option<String>,
+        last_active: f64,
+    }
+
+    let opts = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(true)
+        .immutable(false);
+    let pool = sqlx::SqlitePool::connect_with(opts)
+        .await
+        .map_err(|e| format!("Hermes state db open: {}", e))?;
+    // Mirror Hermes SessionDB.list_sessions_rich picker semantics:
+    // - show roots and explicit /branch children only
+    // - hide archived and delegate/subagent rows
+    // - walk compression continuations, then project each root to its live tip
+    let rows: Vec<HermesSessionNode> = sqlx::query_as(
+        r#"
+        WITH RECURSIVE roots(id) AS (
+            SELECT s.id
+            FROM sessions s
+            WHERE s.cwd = ?
+              AND s.archived = 0
+              AND json_extract(COALESCE(s.model_config, '{}'), '$._delegate_from') IS NULL
+              AND (
+                    s.parent_session_id IS NULL
+                    OR json_extract(COALESCE(s.model_config, '{}'), '$._branched_from') IS NOT NULL
+                    OR EXISTS (
+                        SELECT 1 FROM sessions p
+                        WHERE p.id = s.parent_session_id
+                          AND p.end_reason = 'branched'
+                          AND s.started_at >= p.ended_at
+                    )
+              )
+        ),
+        chain(root_id, cur_id, depth) AS (
+            SELECT id, id, 0 FROM roots
+            UNION ALL
+            SELECT c.root_id, child.id, c.depth + 1
+            FROM chain c
+            JOIN sessions parent ON parent.id = c.cur_id
+            JOIN sessions child ON child.parent_session_id = parent.id
+            WHERE c.depth < 100
+              AND parent.end_reason = 'compression'
+              AND json_extract(COALESCE(child.model_config, '{}'), '$._branched_from') IS NULL
+              AND json_extract(COALESCE(child.model_config, '{}'), '$._delegate_from') IS NULL
+              AND COALESCE(child.source, '') != 'tool'
+        )
+        SELECT c.root_id,
+               s.id,
+               s.parent_session_id,
+               COALESCE(s.title, '') AS title,
+               COALESCE((
+                   SELECT SUBSTR(REPLACE(REPLACE(m.content, X'0A', ' '), X'0D', ' '), 1, 80)
+                   FROM messages m
+                   WHERE m.session_id = s.id AND m.role = 'user' AND m.content IS NOT NULL
+                   ORDER BY m.timestamp, m.id LIMIT 1
+               ), '') AS preview,
+               CAST(s.started_at AS REAL) AS started_at,
+               CAST(s.ended_at AS REAL) AS ended_at,
+               s.end_reason,
+               CAST(COALESCE(
+                   (SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.session_id = s.id),
+                   s.started_at
+               ) AS REAL) AS last_active
+        FROM chain c
+        JOIN sessions s ON s.id = c.cur_id
+        "#,
+    )
+    .bind(project_path)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Hermes state db query: {}", e))?;
+    pool.close().await;
+
+    let mut by_root: std::collections::HashMap<String, Vec<HermesSessionNode>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        by_root.entry(row.root_id.clone()).or_default().push(row);
+    }
+
+    let mut discovered = Vec::with_capacity(by_root.len());
+    for (root_id, nodes) in by_root {
+        let Some(mut tip) = nodes.iter().find(|n| n.id == root_id).cloned() else {
+            continue;
+        };
+        let mut seen = std::collections::HashSet::from([tip.id.clone()]);
+        for _ in 0..100 {
+            if tip.end_reason.as_deref() != Some("compression") {
+                break;
+            }
+            let next = nodes
+                .iter()
+                .filter(|n| n.parent_session_id.as_deref() == Some(tip.id.as_str()))
+                .min_by(|a, b| {
+                    let rank = |n: &HermesSessionNode| {
+                        if n.end_reason.as_deref() == Some("compression") {
+                            0
+                        } else if n.ended_at.is_none() {
+                            1
+                        } else {
+                            2
+                        }
+                    };
+                    rank(a)
+                        .cmp(&rank(b))
+                        .then_with(|| b.last_active.total_cmp(&a.last_active))
+                        .then_with(|| b.started_at.total_cmp(&a.started_at))
+                        .then_with(|| b.id.cmp(&a.id))
+                })
+                .cloned();
+            let Some(next) = next else { break };
+            if !seen.insert(next.id.clone()) {
+                break;
+            }
+            tip = next;
+        }
+
+        let timestamp = tip.last_active;
+        let secs = timestamp.trunc() as i64;
+        let nanos = ((timestamp.fract().abs()) * 1_000_000_000.0) as u32;
+        let preview = if tip.title.trim().is_empty() {
+            tip.preview.trim()
+        } else {
+            tip.title.trim()
+        };
+        let preview = (!preview.is_empty()).then(|| preview.chars().take(80).collect());
+        discovered.push((
+            tip.last_active,
+            tip.started_at,
+            DiscoveredSession {
+                session_id: tip.id,
+                modified_at: chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nanos)
+                    .map(|d| d.to_rfc3339())
+                    .unwrap_or_default(),
+                preview,
+            },
+        ));
+    }
+    discovered.sort_by(|a, b| {
+        b.0.total_cmp(&a.0)
+            .then_with(|| b.1.total_cmp(&a.1))
+            .then_with(|| b.2.session_id.cmp(&a.2.session_id))
+    });
+    discovered.truncate(100);
+
+    Ok(discovered
+        .into_iter()
+        .map(|(_, _, session)| session)
+        .collect())
+}
+
 /// Antigravity (agy) stores conversations flat at
 /// `~/.gemini/antigravity-cli/conversations/<uuid>.db` (SQLite). The
 /// filename IS the conversation UUID, so resume discovery doesn't have
@@ -987,6 +1179,7 @@ pub fn agent_get_session_context_usage(
         "codex" => codex_context_usage(&session_id),
         "gemini" => gemini_context_usage(&session_id),
         "opencode" => opencode_context_usage(&session_id),
+        "hermes" => Err("Hermes context statistics are not enabled".into()),
         _ => claude_context_usage(&project_path, &session_id),
     }
 }
@@ -2330,4 +2523,57 @@ fn gemini_context_usage(session_id: &str) -> Result<ContextUsage, String> {
         model,
         compacted: false,
     })
+}
+
+#[cfg(test)]
+mod hermes_discovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn picker_hides_archived_and_delegate_rows_and_projects_compression_tip() {
+        let db_path = std::env::temp_dir().join(format!(
+            "clauge-hermes-sessions-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let opts = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true);
+        let pool = sqlx::SqlitePool::connect_with(opts).await.unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, source TEXT NOT NULL, model_config TEXT,
+                parent_session_id TEXT, started_at REAL NOT NULL, ended_at REAL,
+                end_reason TEXT, title TEXT, cwd TEXT, archived INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE messages (
+                id INTEGER PRIMARY KEY, session_id TEXT, role TEXT,
+                content TEXT, timestamp REAL
+             );",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        for statement in [
+            "INSERT INTO sessions VALUES ('root','cli','{}',NULL,1,2,'compression','Old','/repo',0)",
+            "INSERT INTO sessions VALUES ('mid','cli','{}','root',3,4,'compression','Middle','/repo',0)",
+            "INSERT INTO sessions VALUES ('tip','cli','{}','mid',5,NULL,NULL,'Live','/repo',0)",
+            "INSERT INTO sessions VALUES ('mid-stale','cli','{}','mid',200,201,NULL,'Stale child','/repo',0)",
+            "INSERT INTO sessions VALUES ('root-live','cli','{}','root',100,NULL,NULL,'Live sibling','/repo',0)",
+            "INSERT INTO sessions VALUES ('root-stale','cli','{}','root',101,102,NULL,'Stale sibling','/repo',0)",
+            "INSERT INTO sessions VALUES ('delegate','cli','{\"_delegate_from\":\"root\"}','root',350,NULL,NULL,'Worker','/repo',0)",
+            "INSERT INTO sessions VALUES ('branch','cli','{\"_branched_from\":\"root\"}','root',250,NULL,NULL,'Branch','/repo',0)",
+            "INSERT INTO sessions VALUES ('archived','cli','{}',NULL,400,NULL,NULL,'Archived','/repo',1)",
+            "INSERT INTO sessions VALUES ('regular','cli','{}',NULL,300,NULL,NULL,'Regular','/repo',0)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+        pool.close().await;
+
+        let rows = query_hermes_sessions(&db_path, "/repo").await.unwrap();
+        let ids: Vec<&str> = rows.iter().map(|r| r.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["regular", "branch", "tip"]);
+        assert_eq!(rows[2].preview.as_deref(), Some("Live"));
+        let _ = std::fs::remove_file(db_path);
+    }
 }

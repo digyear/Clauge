@@ -3,9 +3,9 @@
 // needs a user-facing name or per-OS install command. Single source of
 // truth — modals and pickers stay consistent.
 
-export type AgentProvider = 'claude' | 'codex' | 'gemini' | 'opencode';
+export type AgentProvider = 'claude' | 'codex' | 'gemini' | 'opencode' | 'hermes';
 
-export const AGENT_PROVIDERS: AgentProvider[] = ['claude', 'codex', 'gemini', 'opencode'];
+export const AGENT_PROVIDERS: AgentProvider[] = ['claude', 'codex', 'gemini', 'opencode', 'hermes'];
 
 export interface InstallCommand {
   label: string;
@@ -88,5 +88,12 @@ export const PROVIDER_INSTALL_INFO: Record<AgentProvider, ProviderInstallInfo> =
       { label: 'Arch Linux', cmd: 'sudo pacman -S opencode' },
       { label: 'npm', cmd: 'npm install -g opencode-ai' },
     ],
+  },
+  hermes: {
+    name: 'Hermes Agent',
+    docsUrl: 'https://hermes-agent.nousresearch.com/docs/',
+    mac: [{ label: 'Official installer', cmd: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash' }],
+    windows: [{ label: 'Official installer', cmd: 'iex (irm https://hermes-agent.nousresearch.com/install.ps1)' }],
+    linux: [{ label: 'Official installer', cmd: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash' }],
   },
 };
