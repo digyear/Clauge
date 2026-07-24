@@ -1600,7 +1600,7 @@ async fn query_hermes_sessions(
                    WHERE m.session_id = s.id AND m.role = 'user' AND m.content IS NOT NULL
                    ORDER BY m.timestamp, m.id LIMIT 1
                ), '') AS preview,
-               COALESCE(s.cwd, '') AS cwd,
+               COALESCE(NULLIF(s.cwd, ''), root_session.cwd, '') AS cwd,
                COALESCE(s.source, '') AS source,
                CAST(s.started_at AS REAL) AS started_at,
                CAST(s.ended_at AS REAL) AS ended_at,
@@ -1611,6 +1611,7 @@ async fn query_hermes_sessions(
                ) AS REAL) AS last_active
         FROM chain c
         JOIN sessions s ON s.id = c.cur_id
+        JOIN sessions root_session ON root_session.id = c.root_id
         "#,
         )
         .bind(project_path)
@@ -1662,7 +1663,7 @@ async fn query_hermes_sessions(
                    WHERE m.session_id = s.id AND m.role = 'user' AND m.content IS NOT NULL
                    ORDER BY m.timestamp, m.id LIMIT 1
                ), '') AS preview,
-               COALESCE(s.cwd, '') AS cwd,
+               COALESCE(NULLIF(s.cwd, ''), root_session.cwd, '') AS cwd,
                COALESCE(s.source, '') AS source,
                CAST(s.started_at AS REAL) AS started_at,
                CAST(s.ended_at AS REAL) AS ended_at,
@@ -1673,6 +1674,7 @@ async fn query_hermes_sessions(
                ) AS REAL) AS last_active
         FROM chain c
         JOIN sessions s ON s.id = c.cur_id
+        JOIN sessions root_session ON root_session.id = c.root_id
         "#,
         )
         .bind(limit as i64)
@@ -3771,6 +3773,41 @@ mod discovery_tests {
     }
 
     #[tokio::test]
+    async fn adopting_hermes_compression_tip_preserves_tip_id_and_inherited_cwd() {
+        let pool = adoption_test_pool().await;
+        let project = unique_test_dir("clauge-hermes-resume-project");
+        std::fs::create_dir_all(&project).unwrap();
+        let project_path = project.to_string_lossy().to_string();
+        let tip_id = "20260618_131330_4a79f5";
+        let discovered_id = format!("hermes:{}", tip_id);
+
+        sqlx::query(
+            "INSERT INTO agent_discovered_sessions (
+                id, provider, external_session_id, project_path, project_root, project_name,
+                title, created_at, updated_at, last_seen_at, session_kind
+             ) VALUES (?, 'hermes', ?, ?, ?, 'resume-project', 'Compressed Hermes session',
+                '2026-07-24T00:00:00Z', '2026-07-24T01:00:00Z',
+                '2026-07-24T02:00:00Z', 'cli')",
+        )
+        .bind(&discovered_id)
+        .bind(tip_id)
+        .bind(&project_path)
+        .bind(&project_path)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let adopted = adopt_discovered_session_by_id(&pool, &discovered_id)
+            .await
+            .unwrap();
+        assert_eq!(adopted.provider, "hermes");
+        assert_eq!(adopted.claude_session_id.as_deref(), Some(tip_id));
+        assert_eq!(adopted.project_path, project_path);
+        assert_eq!(adopted.worktree_path, None);
+        let _ = std::fs::remove_dir_all(project);
+    }
+
+    #[tokio::test]
     async fn picker_hides_archived_and_delegate_rows_and_projects_compression_tip() {
         let db_path = std::env::temp_dir().join(format!(
             "clauge-hermes-sessions-{}.db",
@@ -3797,8 +3834,11 @@ mod discovery_tests {
 
         for statement in [
             "INSERT INTO sessions VALUES ('root','cli','{}',NULL,1,2,'compression','Old','/repo',0)",
-            "INSERT INTO sessions VALUES ('mid','cli','{}','root',3,4,'compression','Middle','/repo',0)",
-            "INSERT INTO sessions VALUES ('tip','cli','{}','mid',5,NULL,NULL,'Live','/repo',0)",
+            // Older Hermes versions did not propagate cwd onto compression
+            // continuations. The resumable id is the live tip, but project
+            // ownership still comes from the listable lineage root's cwd.
+            "INSERT INTO sessions VALUES ('mid','cli','{}','root',3,4,'compression','Middle',NULL,0)",
+            "INSERT INTO sessions VALUES ('tip','cli','{}','mid',5,NULL,NULL,'Live',NULL,0)",
             "INSERT INTO sessions VALUES ('mid-stale','cli','{}','mid',200,201,NULL,'Stale child','/repo',0)",
             "INSERT INTO sessions VALUES ('root-live','cli','{}','root',100,NULL,NULL,'Live sibling','/repo',0)",
             "INSERT INTO sessions VALUES ('root-stale','cli','{}','root',101,102,NULL,'Stale sibling','/repo',0)",
@@ -3821,6 +3861,13 @@ mod discovery_tests {
         assert_eq!(ids, vec!["regular", "branch", "tip"]);
         assert_eq!(rows[2].preview.as_deref(), Some("Live"));
         assert_eq!(rows[2].project_path.as_deref(), Some("/repo"));
+
+        let global_rows = query_hermes_sessions(&db_path, None, 100).await.unwrap();
+        let global_tip = global_rows
+            .iter()
+            .find(|row| row.external_session_id == "tip")
+            .unwrap();
+        assert_eq!(global_tip.project_path.as_deref(), Some("/repo"));
         let _ = std::fs::remove_file(db_path);
     }
 }
