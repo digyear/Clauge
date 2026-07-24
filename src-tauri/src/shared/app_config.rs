@@ -18,9 +18,9 @@ use std::sync::OnceLock;
 /// Resolved location of the JSON file:
 ///   `<app_config_dir>/settings.json`
 /// where `app_config_dir` follows the Tauri convention per OS:
-///   macOS:   `~/Library/Application Support/com.digyear.zeroany.workbench/`
-///   Linux:   `~/.config/com.digyear.zeroany.workbench/`
-///   Windows: `%APPDATA%\com.digyear.zeroany.workbench\`
+///   macOS:   `~/Library/Application Support/com.zeroany.workbench/`
+///   Linux:   `~/.config/com.zeroany.workbench/`
+///   Windows: `%APPDATA%\com.zeroany.workbench\`
 pub fn config_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     use tauri::Manager;
     app.path().app_config_dir().ok().map(|d| d.join("settings.json"))

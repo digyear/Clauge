@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>com.digyear.zeroany.workbench</id>
+  <id>com.zeroany.workbench</id>
   <name>ZeroAny Workbench</name>
   <summary>Zero, one, any workspace</summary>
   <description>

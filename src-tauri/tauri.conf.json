@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "ZeroAny Workbench",
   "version": "3.5.0",
-  "identifier": "com.digyear.zeroany.workbench",
+  "identifier": "com.zeroany.workbench",
   "build": {
     "frontendDist": "../build",
     "devUrl": "http://localhost:5173",
@@ -41,13 +41,13 @@
       "deb": {
         "desktopTemplate": "ZeroAnyWorkbench.desktop",
         "files": {
-          "/usr/share/metainfo/com.digyear.zeroany.workbench.metainfo.xml": "com.digyear.zeroany.workbench.metainfo.xml"
+          "/usr/share/metainfo/com.zeroany.workbench.metainfo.xml": "com.zeroany.workbench.metainfo.xml"
         }
       },
       "rpm": {
         "desktopTemplate": "ZeroAnyWorkbench.desktop",
         "files": {
-          "/usr/share/metainfo/com.digyear.zeroany.workbench.metainfo.xml": "com.digyear.zeroany.workbench.metainfo.xml"
+          "/usr/share/metainfo/com.zeroany.workbench.metainfo.xml": "com.zeroany.workbench.metainfo.xml"
         }
       }
     }

@@ -19,7 +19,7 @@ const MAX_CONNECTIONS: u32 = 5;
 
 /// Open the ZeroAny Workbench SQLite pool, creating the file if missing.
 ///
-/// `app_data_dir` is `~/Library/Application Support/com.digyear.zeroany.workbench/`
+/// `app_data_dir` is `~/Library/Application Support/com.zeroany.workbench/`
 /// on macOS and the per-platform equivalent elsewhere — Tauri provides it
 /// via `app.path().app_data_dir()`.
 pub async fn init(app_data_dir: &Path) -> Result<SqlitePool, String> {
