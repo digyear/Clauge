@@ -22,12 +22,19 @@ pub async fn upsert_discovered_session(
 
     sqlx::query(
         "INSERT INTO agent_discovered_sessions (
-            id, provider, external_session_id, project_path, project_name,
+            id, provider, external_session_id, project_path, project_root, project_name,
             title, preview, created_at, updated_at, last_seen_at,
             parent_external_session_id, session_kind, source_path
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(provider, external_session_id) DO UPDATE SET
             project_path = COALESCE(excluded.project_path, agent_discovered_sessions.project_path),
+            project_root = CASE
+                WHEN agent_discovered_sessions.project_root IS NOT NULL
+                 AND agent_discovered_sessions.project_root != agent_discovered_sessions.project_path
+                 AND excluded.project_root = excluded.project_path
+                THEN agent_discovered_sessions.project_root
+                ELSE COALESCE(excluded.project_root, agent_discovered_sessions.project_root)
+            END,
             project_name = COALESCE(excluded.project_name, agent_discovered_sessions.project_name),
             title = COALESCE(excluded.title, agent_discovered_sessions.title),
             preview = COALESCE(excluded.preview, agent_discovered_sessions.preview),
@@ -44,6 +51,7 @@ pub async fn upsert_discovered_session(
     .bind(&item.provider)
     .bind(&item.external_session_id)
     .bind(&item.project_path)
+    .bind(&item.project_root)
     .bind(&item.project_name)
     .bind(&item.title)
     .bind(&item.preview)
@@ -106,16 +114,18 @@ pub async fn list_discovered_sessions(
                 OR external_session_id LIKE ?
                 OR COALESCE(project_name, '') LIKE ?
                 OR COALESCE(project_path, '') LIKE ?
+                OR COALESCE(project_root, '') LIKE ?
                 OR COALESCE(title, '') LIKE ?
                 OR COALESCE(preview, '') LIKE ?
            )
-         ORDER BY provider ASC, COALESCE(project_name, project_path, '') ASC, updated_at DESC",
+         ORDER BY provider ASC, COALESCE(project_root, project_name, project_path, '') ASC, updated_at DESC",
     )
     .bind(if include_hidden { 1 } else { 0 })
     .bind(provider)
     .bind(provider)
     .bind(project_path)
     .bind(project_path)
+    .bind(search_like.as_deref())
     .bind(search_like.as_deref())
     .bind(search_like.as_deref())
     .bind(search_like.as_deref())
@@ -157,6 +167,7 @@ mod tests {
                 provider TEXT NOT NULL,
                 external_session_id TEXT NOT NULL,
                 project_path TEXT,
+                project_root TEXT,
                 project_name TEXT,
                 title TEXT,
                 preview TEXT,
@@ -184,7 +195,8 @@ mod tests {
         let base = DiscoveredSessionUpsert {
             provider: "claude".into(),
             external_session_id: "sid-1".into(),
-            project_path: Some("/repo".into()),
+            project_path: Some("/repo/.clauge-worktrees/task".into()),
+            project_root: Some("/repo".into()),
             project_name: Some("repo".into()),
             title: Some("First".into()),
             preview: Some("hello".into()),
@@ -201,6 +213,9 @@ mod tests {
             preview: Some("updated".into()),
             updated_at: Some("2026-01-02T00:00:00Z".into()),
             last_seen_at: "2026-01-03T00:00:00Z".into(),
+            // Simulate a later scan after an arbitrary linked worktree was
+            // deleted and Git could only fall back to the original cwd.
+            project_root: Some("/repo/.clauge-worktrees/task".into()),
             ..base
         };
         let row = upsert_discovered_session(&pool, &second).await.unwrap();
@@ -219,6 +234,11 @@ mod tests {
         assert_eq!(first.id, row.id);
         assert_eq!(rows.len(), 1);
         assert_eq!(row.preview.as_deref(), Some("updated"));
+        assert_eq!(
+            row.project_path.as_deref(),
+            Some("/repo/.clauge-worktrees/task")
+        );
+        assert_eq!(row.project_root.as_deref(), Some("/repo"));
         assert_eq!(row.updated_at, "2026-01-02T00:00:00Z");
         assert_eq!(row.last_seen_at, "2026-01-03T00:00:00Z");
     }

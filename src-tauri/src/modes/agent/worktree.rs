@@ -1,13 +1,78 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn git_output(project_path: &str, args: &[&str]) -> Result<std::process::Output, String> {
-    std::process::Command::new("git")
+    use crate::shared::platform::path::{apply_user_path, find_binary};
+
+    let git =
+        find_binary("git").ok_or_else(|| "git is not installed or not on PATH".to_string())?;
+    let mut command = std::process::Command::new(git);
+    apply_user_path(&mut command);
+    command
         .arg("-C")
         .arg(project_path)
         .args(args)
         .output()
         .map_err(|e| format!("git failed to start: {e}"))
+}
+
+fn output_path(output: std::process::Output) -> Option<PathBuf> {
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8(output.stdout).ok())
+        .flatten()
+        .map(|value| PathBuf::from(value.trim()))
+        .filter(|value| !value.as_os_str().is_empty())
+}
+
+fn main_project_from_common_dir(common: &Path) -> Option<PathBuf> {
+    (common.file_name().and_then(|name| name.to_str()) == Some(".git"))
+        .then(|| common.parent().map(Path::to_path_buf))
+        .flatten()
+}
+
+/// Clauge worktrees live below `<project>/.clauge-worktrees/<session>`.
+/// Historical provider sessions remain in their native stores after that
+/// checkout is removed, so Git can no longer answer `rev-parse` for the old
+/// cwd. The stable container name lets us recover the owning project without
+/// rewriting the original cwd used for resume.
+fn managed_worktree_project_root(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|ancestor| {
+            ancestor.file_name().and_then(|name| name.to_str()) == Some(".clauge-worktrees")
+        })
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+}
+
+/// Resolve a provider session cwd to the stable main-project identity used
+/// for grouping. The cwd itself remains untouched in the discovered-session
+/// row so native resume still opens in the original linked worktree.
+pub(crate) fn resolve_project_root(path: &str) -> String {
+    let path = path.trim();
+    if path.is_empty() {
+        return String::new();
+    }
+
+    let common_root = git_output(
+        path,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .ok()
+    .and_then(output_path)
+    .and_then(|common| main_project_from_common_dir(&common));
+
+    common_root
+        .or_else(|| {
+            git_output(path, &["rev-parse", "--show-toplevel"])
+                .ok()
+                .and_then(output_path)
+        })
+        .or_else(|| managed_worktree_project_root(Path::new(path)))
+        .unwrap_or_else(|| PathBuf::from(path))
+        .to_string_lossy()
+        .to_string()
 }
 
 fn validate_new_branch(project_path: &str, branch_name: &str) -> Result<(), String> {
@@ -106,38 +171,7 @@ pub async fn agent_resolve_project_roots(
                 continue;
             }
 
-            // `--git-common-dir` points every linked worktree back at the
-            // main repository's .git directory, so worktree sessions group
-            // under one project instead of appearing as separate projects.
-            let common_root = git_output(
-                &path,
-                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            )
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .and_then(|value| {
-                let common = std::path::Path::new(&value);
-                (common.file_name().and_then(|name| name.to_str()) == Some(".git"))
-                    .then(|| {
-                        common
-                            .parent()
-                            .map(|parent| parent.to_string_lossy().to_string())
-                    })
-                    .flatten()
-            });
-            let root = common_root
-                .or_else(|| {
-                    git_output(&path, &["rev-parse", "--show-toplevel"])
-                        .ok()
-                        .filter(|output| output.status.success())
-                        .and_then(|output| String::from_utf8(output.stdout).ok())
-                        .map(|value| value.trim().to_string())
-                        .filter(|value| !value.is_empty())
-                })
-                .unwrap_or_else(|| path.clone());
+            let root = resolve_project_root(&path);
             roots.insert(path, root);
         }
 
@@ -373,7 +407,15 @@ mod tests {
         assert_eq!(roots[&nested_string], expected);
         assert_eq!(roots[&worktree], expected);
 
-        let _ = agent_remove_worktree(repo.to_string_lossy().to_string(), worktree, true);
+        // Discovery catalogs outlive individual worktrees. Once the linked
+        // checkout is removed, its historical cwd must still group under the
+        // main project instead of becoming a phantom standalone project.
+        agent_remove_worktree(repo.to_string_lossy().to_string(), worktree.clone(), true).unwrap();
+        let removed_roots = agent_resolve_project_roots(vec![worktree.clone()])
+            .await
+            .unwrap();
+        assert_eq!(removed_roots[&worktree], expected);
+
         let _ = std::fs::remove_dir_all(repo);
     }
 

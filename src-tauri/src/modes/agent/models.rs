@@ -80,7 +80,11 @@ pub struct AgentDiscoveredSession {
     pub id: String,
     pub provider: String,
     pub external_session_id: String,
+    /// Provider-native cwd. Kept unchanged so resume opens in the original
+    /// worktree rather than silently switching to the main checkout.
     pub project_path: Option<String>,
+    /// Stable main-repository root used only for catalog grouping.
+    pub project_root: Option<String>,
     pub project_name: Option<String>,
     pub title: Option<String>,
     pub preview: Option<String>,
@@ -101,6 +105,7 @@ pub struct DiscoveredSessionUpsert {
     pub provider: String,
     pub external_session_id: String,
     pub project_path: Option<String>,
+    pub project_root: Option<String>,
     pub project_name: Option<String>,
     pub title: Option<String>,
     pub preview: Option<String>,

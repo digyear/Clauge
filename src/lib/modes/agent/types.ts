@@ -65,7 +65,10 @@ export interface AgentDiscoveredSession {
   id: string;
   provider: AgentProvider;
   externalSessionId: string;
+  /** Original provider cwd; used for resume/reveal. */
   projectPath: string | null;
+  /** Stable main repository root; used only for project grouping. */
+  projectRoot: string | null;
   projectName: string | null;
   title: string | null;
   preview: string | null;

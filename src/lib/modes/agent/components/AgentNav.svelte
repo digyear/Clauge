@@ -84,7 +84,7 @@
       .filter((s) => !s.adoptedAgentSessionId)
       .filter((s) => {
         if (!q) return true;
-        return [s.provider, s.externalSessionId, s.projectName, s.projectPath, s.title, s.preview]
+        return [s.provider, s.externalSessionId, s.projectName, s.projectPath, s.projectRoot, s.title, s.preview]
           .some((v) => (v ?? '').toLowerCase().includes(q));
       })
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -104,6 +104,12 @@
 
   function discoveredTitle(session: AgentDiscoveredSession): string {
     return session.title || session.preview || session.externalSessionId;
+  }
+
+  function discoveredProjectName(session: AgentDiscoveredSession): string {
+    const root = session.projectRoot?.replace(/[\\/]+$/, '');
+    if (root) return root.split(/[\\/]/).pop() || root;
+    return session.projectName || session.projectPath || providerName(session.provider);
   }
 
 
@@ -451,7 +457,7 @@
           </span>
           <span class="discovered-recent-copy">
             <strong>{discoveredTitle(discovered)}</strong>
-            <small>{discovered.projectName || discovered.projectPath || providerName(discovered.provider)} · {providerName(discovered.provider)}</small>
+            <small>{discoveredProjectName(discovered)} · {providerName(discovered.provider)}</small>
           </span>
           <time>{relativeTime(discovered.updatedAt)}</time>
         </button>

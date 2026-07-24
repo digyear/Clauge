@@ -55,8 +55,9 @@
 
   function canonicalProjectPath(session: AgentDiscoveredSession): string {
     const path = session.projectPath?.trim();
-    if (!path) return '__unscoped__';
-    const root = projectRoots[path] || path;
+    const persistedRoot = session.projectRoot?.trim();
+    if (!path && !persistedRoot) return '__unscoped__';
+    const root = persistedRoot || (path ? projectRoots[path] : '') || path || '';
     return isBroadDirectory(root) ? '__unscoped__' : root;
   }
 
@@ -95,6 +96,7 @@
           session.externalSessionId,
           session.projectName,
           session.projectPath,
+          session.projectRoot,
           root,
           session.provider,
         ].some((value) => (value || '').toLowerCase().includes(needle));
@@ -193,7 +195,13 @@
     try {
       const sessions = await agentListDiscoveredSessions({ includeHidden: true });
       catalog = sessions;
-      const paths = [...new Set(sessions.map((session) => session.projectPath?.trim()).filter((value): value is string => !!value))];
+      // Rows scanned by current builds carry a persistent main-repository
+      // identity. Resolve only legacy rows so catalog loading does not spawn
+      // Git once per path on every open.
+      const paths = [...new Set(sessions
+        .filter((session) => !session.projectRoot?.trim())
+        .map((session) => session.projectPath?.trim())
+        .filter((value): value is string => !!value))];
       projectRoots = paths.length ? await agentResolveProjectRoots(paths) : {};
       selectedIds = selectedIds.filter((id) => sessions.some((session) => session.id === id));
     } catch (error) {

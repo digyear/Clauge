@@ -1,7 +1,9 @@
 use crate::modes::agent::models::*;
+use crate::modes::agent::worktree::resolve_project_root;
 use crate::shared::cli::{registry::runner_for, runner::CliRunner};
 use crate::shared::repos::discovered_sessions as discovered_repo;
 use sqlx::SqlitePool;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use tauri::State;
@@ -33,11 +35,12 @@ impl ProviderDiscoveredSession {
         }
     }
 
-    fn into_upsert(self, now: &str) -> DiscoveredSessionUpsert {
+    fn into_upsert(self, now: &str, project_root: Option<String>) -> DiscoveredSessionUpsert {
         DiscoveredSessionUpsert {
             provider: self.provider,
             external_session_id: self.external_session_id,
             project_path: self.project_path,
+            project_root,
             project_name: self.project_name,
             title: self.title,
             preview: self.preview,
@@ -632,10 +635,38 @@ pub async fn scan_discovered_sessions_into_catalog(
 
     let now = chrono::Utc::now().to_rfc3339();
     let scanned = discovered.len();
+    // Many provider sessions share the same cwd. Resolve every unique cwd
+    // once, off the async executor, rather than spawning Git per session.
+    let project_paths = discovered
+        .iter()
+        .filter_map(|item| item.project_path.as_deref())
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect::<HashSet<_>>();
+    let project_roots = tauri::async_runtime::spawn_blocking(move || {
+        project_paths
+            .into_iter()
+            .map(|path| {
+                let root = resolve_project_root(&path);
+                (path, root)
+            })
+            .collect::<HashMap<_, _>>()
+    })
+    .await
+    .map_err(|e| format!("project root resolution thread: {e}"))?;
     let mut upserted = 0;
     for item in discovered {
-        if let Err(e) =
-            discovered_repo::upsert_discovered_session(pool, &item.into_upsert(&now)).await
+        let project_root = item
+            .project_path
+            .as_deref()
+            .and_then(|path| project_roots.get(path.trim()))
+            .cloned();
+        if let Err(e) = discovered_repo::upsert_discovered_session(
+            pool,
+            &item.into_upsert(&now, project_root),
+        )
+        .await
         {
             errors.push(format!("catalog upsert: {}", e));
             continue;
@@ -775,9 +806,10 @@ pub async fn adopt_discovered_session_by_id(
             return Err(format!("Project path is not a directory: {}", project_path));
         }
         let project_name = discovered
-            .project_name
-            .clone()
-            .filter(|s| !s.trim().is_empty())
+            .project_root
+            .as_deref()
+            .and_then(|root| project_name_from_path_opt(Some(root)))
+            .or_else(|| discovered.project_name.clone().filter(|s| !s.trim().is_empty()))
             .or_else(|| project_name_from_path_opt(Some(project_path)))
             .unwrap_or_else(|| "Unknown".to_string());
         let title = discovered
@@ -3652,6 +3684,7 @@ mod discovery_tests {
                 provider TEXT NOT NULL,
                 external_session_id TEXT NOT NULL,
                 project_path TEXT,
+                project_root TEXT,
                 project_name TEXT,
                 title TEXT,
                 preview TEXT,
@@ -3678,18 +3711,22 @@ mod discovery_tests {
         let pool = adoption_test_pool().await;
         let project = unique_test_dir("clauge-adoption-project");
         let project_path = project.to_string_lossy().to_string();
+        let worktree = project.join(".clauge-worktrees").join("imported-task");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let worktree_path = worktree.to_string_lossy().to_string();
 
         sqlx::query(
             "INSERT INTO agent_discovered_sessions (
-                id, provider, external_session_id, project_path, project_name,
+                id, provider, external_session_id, project_path, project_root, project_name,
                 title, preview, created_at, updated_at, last_seen_at,
                 session_kind
-             ) VALUES (?, 'codex', 'resume-codex-1', ?, 'project-gamma',
+             ) VALUES (?, 'codex', 'resume-codex-1', ?, ?, 'imported-task',
                 'Imported Codex', 'First imported prompt',
                 '2026-07-24T00:00:00Z', '2026-07-24T01:00:00Z',
                 '2026-07-24T02:00:00Z', 'conversation')",
         )
         .bind("codex:resume-codex-1")
+        .bind(&worktree_path)
         .bind(&project_path)
         .execute(&pool)
         .await
@@ -3706,6 +3743,11 @@ mod discovery_tests {
         assert_eq!(first.provider, "codex");
         assert_eq!(first.claude_session_id.as_deref(), Some("resume-codex-1"));
         assert_eq!(first.origin, "manual");
+        assert_eq!(first.project_path, worktree_path);
+        assert_eq!(
+            first.project_name,
+            project.file_name().unwrap().to_string_lossy()
+        );
         assert_eq!(first.worktree_path, None);
         assert_eq!(first.worktree_branch, None);
         assert_eq!(first.base_branch, None);
