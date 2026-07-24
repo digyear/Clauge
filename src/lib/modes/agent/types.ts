@@ -61,6 +61,31 @@ export interface DiscoveredSession {
   preview: string | null;
 }
 
+export interface AgentDiscoveredSession {
+  id: string;
+  provider: AgentProvider;
+  externalSessionId: string;
+  projectPath: string | null;
+  projectName: string | null;
+  title: string | null;
+  preview: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastSeenAt: string;
+  parentExternalSessionId: string | null;
+  sessionKind: string | null;
+  sourcePath: string | null;
+  hidden: number;
+  hiddenAt: string | null;
+  adoptedAgentSessionId: string | null;
+}
+
+export interface DiscoveredSessionScanSummary {
+  scanned: number;
+  upserted: number;
+  errors: string[];
+}
+
 export interface ContextUsage {
   inputTokens: number;
   cacheReadTokens: number;

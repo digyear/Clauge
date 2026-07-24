@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 fn git_output(project_path: &str, args: &[&str]) -> Result<std::process::Output, String> {
@@ -86,6 +87,64 @@ fn portable_path_component(value: &str, fallback: &str) -> String {
 pub fn agent_is_git_repo(path: String) -> Result<bool, String> {
     let output = git_output(&path, &["rev-parse", "--is-inside-work-tree"])?;
     Ok(output.status.success())
+}
+
+/// Resolve arbitrary session working directories to their containing Git
+/// repository roots. Non-repository paths map to themselves so the frontend
+/// can still surface them under an Unscoped/standalone project group.
+#[tauri::command]
+pub async fn agent_resolve_project_roots(
+    paths: Vec<String>,
+) -> Result<HashMap<String, String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut roots = HashMap::new();
+        let mut seen = HashSet::new();
+
+        for path in paths {
+            let path = path.trim().to_string();
+            if path.is_empty() || !seen.insert(path.clone()) {
+                continue;
+            }
+
+            // `--git-common-dir` points every linked worktree back at the
+            // main repository's .git directory, so worktree sessions group
+            // under one project instead of appearing as separate projects.
+            let common_root = git_output(
+                &path,
+                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            )
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .and_then(|value| {
+                let common = std::path::Path::new(&value);
+                (common.file_name().and_then(|name| name.to_str()) == Some(".git"))
+                    .then(|| {
+                        common
+                            .parent()
+                            .map(|parent| parent.to_string_lossy().to_string())
+                    })
+                    .flatten()
+            });
+            let root = common_root
+                .or_else(|| {
+                    git_output(&path, &["rev-parse", "--show-toplevel"])
+                        .ok()
+                        .filter(|output| output.status.success())
+                        .and_then(|output| String::from_utf8(output.stdout).ok())
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                })
+                .unwrap_or_else(|| path.clone());
+            roots.insert(path, root);
+        }
+
+        roots
+    })
+    .await
+    .map_err(|error| format!("Project root resolution failed: {error}"))
 }
 
 #[tauri::command]
@@ -291,6 +350,31 @@ mod tests {
             "lute_station-rel-2026.07"
         );
         assert_eq!(portable_path_component("中文/🚀", "branch"), "branch");
+    }
+
+    #[tokio::test]
+    async fn project_root_resolution_merges_subdirectories_and_linked_worktrees() {
+        let repo = temp_repo("resolve-roots");
+        let nested = repo.join("src").join("feature");
+        std::fs::create_dir_all(&nested).unwrap();
+        let worktree = agent_create_worktree(
+            repo.to_string_lossy().to_string(),
+            "44444444-0000-0000-0000-000000000000".into(),
+            "dev".into(),
+            "feature/root-resolution".into(),
+        )
+        .unwrap();
+
+        let nested_string = nested.to_string_lossy().to_string();
+        let roots = agent_resolve_project_roots(vec![nested_string.clone(), worktree.clone()])
+            .await
+            .unwrap();
+        let expected = repo.to_string_lossy().to_string();
+        assert_eq!(roots[&nested_string], expected);
+        assert_eq!(roots[&worktree], expected);
+
+        let _ = agent_remove_worktree(repo.to_string_lossy().to_string(), worktree, true);
+        let _ = std::fs::remove_dir_all(repo);
     }
 
     #[test]

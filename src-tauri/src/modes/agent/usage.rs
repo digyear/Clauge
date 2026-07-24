@@ -1,7 +1,88 @@
 use crate::modes::agent::models::*;
 use crate::shared::cli::{registry::runner_for, runner::CliRunner};
+use crate::shared::repos::discovered_sessions as discovered_repo;
+use sqlx::SqlitePool;
 use std::fs;
 use std::path::PathBuf;
+use tauri::State;
+
+const GLOBAL_SCAN_CAP_PER_PROVIDER: usize = 300;
+const GLOBAL_SCAN_FILE_CAP: usize = 1_500;
+
+#[derive(Debug, Clone)]
+struct ProviderDiscoveredSession {
+    provider: String,
+    external_session_id: String,
+    project_path: Option<String>,
+    project_name: Option<String>,
+    title: Option<String>,
+    preview: Option<String>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    parent_external_session_id: Option<String>,
+    session_kind: Option<String>,
+    source_path: Option<String>,
+}
+
+impl ProviderDiscoveredSession {
+    fn to_legacy(&self) -> DiscoveredSession {
+        DiscoveredSession {
+            session_id: self.external_session_id.clone(),
+            modified_at: self.updated_at.clone().unwrap_or_default(),
+            preview: self.preview.clone().or_else(|| self.title.clone()),
+        }
+    }
+
+    fn into_upsert(self, now: &str) -> DiscoveredSessionUpsert {
+        DiscoveredSessionUpsert {
+            provider: self.provider,
+            external_session_id: self.external_session_id,
+            project_path: self.project_path,
+            project_name: self.project_name,
+            title: self.title,
+            preview: self.preview,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            last_seen_at: now.to_string(),
+            parent_external_session_id: self.parent_external_session_id,
+            session_kind: self.session_kind,
+            source_path: self.source_path,
+        }
+    }
+}
+
+fn project_name_from_path_opt(path: Option<&str>) -> Option<String> {
+    path.and_then(|p| {
+        std::path::Path::new(p)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string())
+    })
+}
+
+fn system_time_rfc3339(t: std::time::SystemTime) -> String {
+    let datetime: chrono::DateTime<chrono::Utc> = t.into();
+    datetime.to_rfc3339()
+}
+
+fn path_modified_rfc3339(path: &std::path::Path) -> Option<String> {
+    path.metadata()
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .map(system_time_rfc3339)
+}
+
+const VALID_AGENT_PROVIDERS: &[&str] = &["claude", "codex", "gemini", "opencode", "hermes"];
+
+fn normalize_agent_provider(provider: Option<&str>) -> Result<&'static str, String> {
+    let raw = provider.unwrap_or("claude").trim();
+    let provider = if raw.is_empty() { "claude" } else { raw };
+    VALID_AGENT_PROVIDERS
+        .iter()
+        .copied()
+        .find(|p| *p == provider)
+        .ok_or_else(|| format!("Unsupported agent provider: {}", provider))
+}
 
 // Usage analytics today reads Claude's per-project JSONL files. The
 // equivalent surfaces on Codex (`~/.codex/state_5.sqlite`) and OpenCode
@@ -35,15 +116,26 @@ pub async fn agent_get_usage_analytics(
 
 pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytics, String> {
     let cli: &dyn CliRunner = claude_cli();
-    let projects_dir = cli.sessions_root().ok_or("Cannot determine home directory")?;
+    let projects_dir = cli
+        .sessions_root()
+        .ok_or("Cannot determine home directory")?;
 
     if !projects_dir.exists() {
         return Ok(UsageAnalytics {
-            total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
-            total_cache_read_tokens: 0, total_cache_write_tokens: 0,
-            total_sessions: 0, total_api_calls: 0, cache_hit_percent: 0.0,
-            daily: vec![], by_model: vec![], by_project: vec![],
-            top_sessions: vec![], tools: vec![], shell_commands: vec![],
+            total_cost: 0.0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_read_tokens: 0,
+            total_cache_write_tokens: 0,
+            total_sessions: 0,
+            total_api_calls: 0,
+            cache_hit_percent: 0.0,
+            daily: vec![],
+            by_model: vec![],
+            by_project: vec![],
+            top_sessions: vec![],
+            tools: vec![],
+            shell_commands: vec![],
         });
     }
 
@@ -54,9 +146,13 @@ pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytic
     let price_for_model = |model: &str| -> (f64, f64, f64, f64) {
         // (input, output, cache_read, cache_write) per million tokens
         let m = model.to_lowercase();
-        if m.contains("opus") { (15.0, 75.0, 1.5, 18.75) }
-        else if m.contains("haiku") { (0.80, 4.0, 0.08, 1.0) }
-        else { (3.0, 15.0, 0.3, 3.75) } // sonnet default
+        if m.contains("opus") {
+            (15.0, 75.0, 1.5, 18.75)
+        } else if m.contains("haiku") {
+            (0.80, 4.0, 0.08, 1.0)
+        } else {
+            (3.0, 15.0, 0.3, 3.75)
+        } // sonnet default
     };
 
     let mut total_input: u64 = 0;
@@ -67,37 +163,56 @@ pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytic
     let mut total_calls: u32 = 0;
     let mut total_sessions: u32 = 0;
 
-    let mut daily_map: std::collections::HashMap<String, (f64, u32, u64, u64)> = std::collections::HashMap::new();
-    let mut model_map: std::collections::HashMap<String, (f64, u32, u64, u64, u64, u64)> = std::collections::HashMap::new();
-    let mut project_map: std::collections::HashMap<String, (f64, u32, u32)> = std::collections::HashMap::new();
+    let mut daily_map: std::collections::HashMap<String, (f64, u32, u64, u64)> =
+        std::collections::HashMap::new();
+    let mut model_map: std::collections::HashMap<String, (f64, u32, u64, u64, u64, u64)> =
+        std::collections::HashMap::new();
+    let mut project_map: std::collections::HashMap<String, (f64, u32, u32)> =
+        std::collections::HashMap::new();
     let mut session_costs: Vec<SessionCost> = Vec::new();
     let mut tool_map: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
     let mut shell_map: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
 
     // Iterate all project directories
-    for project_entry in std::fs::read_dir(&projects_dir).map_err(|e| e.to_string())?.flatten() {
+    for project_entry in std::fs::read_dir(&projects_dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+    {
         let project_name = project_entry.file_name().to_string_lossy().to_string();
         let project_dir = project_entry.path();
-        if !project_dir.is_dir() { continue; }
+        if !project_dir.is_dir() {
+            continue;
+        }
 
         let mut project_cost: f64 = 0.0;
         let mut project_sessions: u32 = 0;
         let mut project_calls: u32 = 0;
 
         // Iterate session files
-        for session_entry in std::fs::read_dir(&project_dir).map_err(|e| e.to_string())?.flatten() {
+        for session_entry in std::fs::read_dir(&project_dir)
+            .map_err(|e| e.to_string())?
+            .flatten()
+        {
             let path = session_entry.path();
-            if !cli.is_session_file(&path) { continue; }
+            if !cli.is_session_file(&path) {
+                continue;
+            }
 
             // Check modification time
             if let Ok(metadata) = path.metadata() {
                 if let Ok(modified) = metadata.modified() {
                     let modified_time: chrono::DateTime<chrono::Utc> = modified.into();
-                    if modified_time < cutoff { continue; }
+                    if modified_time < cutoff {
+                        continue;
+                    }
                 }
             }
 
-            let session_id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let session_id = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             let content = match std::fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -110,7 +225,9 @@ pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytic
             project_sessions += 1;
 
             for line in content.lines() {
-                if line.trim().is_empty() { continue; }
+                if line.trim().is_empty() {
+                    continue;
+                }
                 let val: serde_json::Value = match serde_json::from_str(line) {
                     Ok(v) => v,
                     Err(_) => continue,
@@ -118,28 +235,52 @@ pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytic
 
                 // Extract model and usage from assistant messages
                 let msg_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                if msg_type != "assistant" { continue; }
+                if msg_type != "assistant" {
+                    continue;
+                }
 
                 let message = match val.get("message") {
                     Some(m) => m,
                     None => continue,
                 };
 
-                let model = message.get("model").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                if session_model.is_empty() { session_model = model.clone(); }
+                let model = message
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                if session_model.is_empty() {
+                    session_model = model.clone();
+                }
 
                 let usage = match message.get("usage") {
                     Some(u) => u,
                     None => continue,
                 };
 
-                let input = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                let output = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                let cache_read = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                let cache_write = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                let input = usage
+                    .get("input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let output = usage
+                    .get("output_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let cache_read = usage
+                    .get("cache_read_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let cache_write = usage
+                    .get("cache_creation_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
 
                 let (pi, po, pcr, pcw) = price_for_model(&model);
-                let call_cost = (input as f64 * pi + output as f64 * po + cache_read as f64 * pcr + cache_write as f64 * pcw) / 1_000_000.0;
+                let call_cost = (input as f64 * pi
+                    + output as f64 * po
+                    + cache_read as f64 * pcr
+                    + cache_write as f64 * pcw)
+                    / 1_000_000.0;
 
                 total_input += input;
                 total_output += output;
@@ -153,7 +294,9 @@ pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytic
                 project_calls += 1;
 
                 // Daily
-                let date_str = val.get("timestamp").and_then(|v| v.as_str())
+                let date_str = val
+                    .get("timestamp")
+                    .and_then(|v| v.as_str())
                     .map(|t| t[..10].to_string())
                     .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
                 let daily = daily_map.entry(date_str).or_insert((0.0, 0, 0, 0));
@@ -163,10 +306,15 @@ pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytic
                 daily.3 += output;
 
                 // Model
-                let short_model = if model.contains("opus") { "Opus".to_string() }
-                    else if model.contains("haiku") { "Haiku".to_string() }
-                    else if model.contains("sonnet") { "Sonnet".to_string() }
-                    else { model.clone() };
+                let short_model = if model.contains("opus") {
+                    "Opus".to_string()
+                } else if model.contains("haiku") {
+                    "Haiku".to_string()
+                } else if model.contains("sonnet") {
+                    "Sonnet".to_string()
+                } else {
+                    model.clone()
+                };
                 let me = model_map.entry(short_model).or_insert((0.0, 0, 0, 0, 0, 0));
                 me.0 += call_cost;
                 me.1 += 1;
@@ -179,14 +327,21 @@ pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytic
                 if let Some(content_arr) = message.get("content").and_then(|v| v.as_array()) {
                     for block in content_arr {
                         if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
-                            let tool_name = block.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                            let tool_name = block
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
                             *tool_map.entry(tool_name.clone()).or_insert(0) += 1;
 
                             // Extract shell commands from Bash tool
                             if tool_name == "Bash" || tool_name == "bash" {
                                 if let Some(input_obj) = block.get("input") {
-                                    if let Some(cmd) = input_obj.get("command").and_then(|v| v.as_str()) {
-                                        let shell_cmd = cmd.split_whitespace().next().unwrap_or("").to_string();
+                                    if let Some(cmd) =
+                                        input_obj.get("command").and_then(|v| v.as_str())
+                                    {
+                                        let shell_cmd =
+                                            cmd.split_whitespace().next().unwrap_or("").to_string();
                                         if !shell_cmd.is_empty() {
                                             *shell_map.entry(shell_cmd).or_insert(0) += 1;
                                         }
@@ -267,7 +422,9 @@ pub fn agent_get_usage_analytics_sync(days: Option<u32>) -> Result<UsageAnalytic
 #[tauri::command]
 pub async fn agent_fetch_usage_limits(session_key: String) -> Result<serde_json::Value, String> {
     let cli: &dyn CliRunner = claude_cli();
-    let orgs_url = cli.usage_api_orgs_url().ok_or("CLI does not expose a usage API")?;
+    let orgs_url = cli
+        .usage_api_orgs_url()
+        .ok_or("CLI does not expose a usage API")?;
 
     let client = reqwest::Client::builder()
         .use_native_tls()
@@ -349,7 +506,9 @@ fn usage_auth_error(stage: &str, status: reqwest::StatusCode) -> String {
 /// optional secondary window) for the StatusBar chips. The full payload
 /// is returned so the Settings UI can surface plan/credits later.
 #[tauri::command]
-pub async fn agent_fetch_codex_usage_limits(access_token: String) -> Result<serde_json::Value, String> {
+pub async fn agent_fetch_codex_usage_limits(
+    access_token: String,
+) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::builder()
         .use_native_tls()
         .timeout(std::time::Duration::from_secs(10))
@@ -388,13 +547,9 @@ pub fn agent_discover_sessions(
     project_path: String,
     provider: Option<String>,
 ) -> Result<Vec<DiscoveredSession>, String> {
-    match provider.as_deref().unwrap_or("claude") {
-        "codex" => discover_codex_sessions(&project_path),
-        "gemini" => discover_gemini_sessions(&project_path),
-        "opencode" => discover_opencode_sessions(&project_path),
-        "hermes" => discover_hermes_sessions(&project_path),
-        _ => discover_claude_sessions(&project_path),
-    }
+    let provider = normalize_agent_provider(provider.as_deref())?;
+    discover_sessions_for_project(provider, &project_path)
+        .map(|items| items.into_iter().map(|s| s.to_legacy()).collect())
 }
 
 /// Look up the most recently-touched session id for `(provider,
@@ -410,18 +565,298 @@ pub fn agent_resolve_resume_id(
     project_path: String,
     provider: Option<String>,
 ) -> Result<Option<String>, String> {
-    let p = provider.as_deref().unwrap_or("claude");
-    let sessions = match p {
-        "claude" => discover_claude_sessions(&project_path)?,
-        "codex" => discover_codex_sessions(&project_path)?,
-        "gemini" => discover_gemini_sessions(&project_path)?,
-        "opencode" => discover_opencode_sessions(&project_path)?,
-        "hermes" => discover_hermes_sessions(&project_path)?,
-        _ => return Ok(None),
-    };
+    let p = normalize_agent_provider(provider.as_deref())?;
+    let sessions = discover_sessions_for_project(p, &project_path)?;
     // discover_*_sessions sort descending by modified_at, so the first
     // entry is the newest. Empty list → None (no session created yet).
-    Ok(sessions.into_iter().next().map(|s| s.session_id))
+    Ok(sessions.into_iter().next().map(|s| s.external_session_id))
+}
+
+fn discover_sessions_for_project(
+    provider: &str,
+    project_path: &str,
+) -> Result<Vec<ProviderDiscoveredSession>, String> {
+    let provider = normalize_agent_provider(Some(provider))?;
+    match provider {
+        "codex" => discover_codex_sessions(project_path),
+        "gemini" => discover_gemini_sessions(project_path),
+        "opencode" => discover_opencode_sessions(project_path),
+        "hermes" => discover_hermes_sessions(project_path),
+        _ => discover_claude_sessions(project_path),
+    }
+}
+
+fn discover_sessions_global(
+    provider: Option<&str>,
+) -> Result<(Vec<ProviderDiscoveredSession>, Vec<String>), String> {
+    let mut out = Vec::new();
+    let mut errors = Vec::new();
+    let providers: Vec<&str> = if let Some(provider) = provider {
+        vec![normalize_agent_provider(Some(provider))?]
+    } else {
+        vec!["claude", "codex", "opencode", "hermes"]
+    };
+
+    for p in providers {
+        let result = match p {
+            "claude" => discover_claude_sessions_global(GLOBAL_SCAN_CAP_PER_PROVIDER),
+            "codex" => discover_codex_sessions_global(GLOBAL_SCAN_CAP_PER_PROVIDER),
+            "opencode" => discover_opencode_sessions_global(GLOBAL_SCAN_CAP_PER_PROVIDER),
+            "hermes" => discover_hermes_sessions_global(GLOBAL_SCAN_CAP_PER_PROVIDER),
+            // Antigravity global project-aware discovery is intentionally
+            // unsupported for now; returning empty is safer than guessing.
+            "gemini" => Ok(Vec::new()),
+            _ => Ok(Vec::new()),
+        };
+        match result {
+            Ok(mut rows) => out.append(&mut rows),
+            Err(e) => {
+                log::warn!(target: "agent::discovery", "{} scan failed: {}", p, e);
+                errors.push(format!("{}: {}", p, e));
+            }
+        }
+    }
+    Ok((out, errors))
+}
+
+pub async fn scan_discovered_sessions_into_catalog(
+    pool: &SqlitePool,
+    provider: Option<&str>,
+) -> Result<DiscoveredSessionScanSummary, String> {
+    let provider_owned = provider.map(str::to_string);
+    let (discovered, mut errors) = tauri::async_runtime::spawn_blocking(move || {
+        discover_sessions_global(provider_owned.as_deref())
+    })
+    .await
+    .map_err(|e| format!("discovery thread: {}", e))??;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let scanned = discovered.len();
+    let mut upserted = 0;
+    for item in discovered {
+        if let Err(e) =
+            discovered_repo::upsert_discovered_session(pool, &item.into_upsert(&now)).await
+        {
+            errors.push(format!("catalog upsert: {}", e));
+            continue;
+        }
+        upserted += 1;
+    }
+    Ok(DiscoveredSessionScanSummary {
+        scanned,
+        upserted,
+        errors,
+    })
+}
+
+#[tauri::command]
+pub async fn agent_scan_discovered_sessions(
+    pool: State<'_, SqlitePool>,
+    provider: Option<String>,
+) -> Result<DiscoveredSessionScanSummary, String> {
+    let provider = match provider.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(p) => Some(normalize_agent_provider(Some(p))?),
+        None => None,
+    };
+    scan_discovered_sessions_into_catalog(pool.inner(), provider).await
+}
+
+#[tauri::command]
+pub async fn agent_list_discovered_sessions(
+    pool: State<'_, SqlitePool>,
+    include_hidden: Option<bool>,
+    provider: Option<String>,
+    project_path: Option<String>,
+    search: Option<String>,
+) -> Result<Vec<AgentDiscoveredSession>, String> {
+    let provider = match provider.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(p) => Some(normalize_agent_provider(Some(p))?.to_string()),
+        None => None,
+    };
+    discovered_repo::list_discovered_sessions(
+        pool.inner(),
+        &DiscoveredSessionListOptions {
+            include_hidden,
+            provider,
+            project_path,
+            search,
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn agent_hide_discovered_session(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> Result<(), String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    discovered_repo::set_hidden(pool.inner(), &id, true, Some(&now))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn agent_unhide_discovered_session(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> Result<(), String> {
+    discovered_repo::set_hidden(pool.inner(), &id, false, None)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub async fn adopt_discovered_session_by_id(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<AgentSession, String> {
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let result = async {
+        let discovered = sqlx::query_as::<_, AgentDiscoveredSession>(
+            "SELECT * FROM agent_discovered_sessions WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+        let provider = normalize_agent_provider(Some(&discovered.provider))?;
+
+        if let Some(linked_id) = discovered.adopted_agent_session_id.as_deref() {
+            if let Some(session) =
+                sqlx::query_as::<_, AgentSession>("SELECT * FROM agent_sessions WHERE id = ?")
+                    .bind(linked_id)
+                    .fetch_optional(&mut *conn)
+                    .await
+                    .map_err(|e| e.to_string())?
+            {
+                return Ok(session);
+            }
+        }
+
+        if let Some(session) = sqlx::query_as::<_, AgentSession>(
+            "SELECT * FROM agent_sessions \
+             WHERE provider = ? AND claude_session_id = ? AND origin = 'manual' \
+             ORDER BY last_used_at DESC LIMIT 1",
+        )
+        .bind(provider)
+        .bind(&discovered.external_session_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?
+        {
+            sqlx::query(
+                "UPDATE agent_discovered_sessions
+                 SET adopted_agent_session_id = ?
+                 WHERE id = ?",
+            )
+            .bind(&session.id)
+            .bind(&discovered.id)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+            return Ok(session);
+        }
+
+        let project_path = discovered
+            .project_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or("Discovered session has no project path to open in Clauge")?;
+        let project_meta = std::fs::metadata(project_path)
+            .map_err(|_| format!("Project path does not exist: {}", project_path))?;
+        if !project_meta.is_dir() {
+            return Err(format!("Project path is not a directory: {}", project_path));
+        }
+        let project_name = discovered
+            .project_name
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| project_name_from_path_opt(Some(project_path)))
+            .unwrap_or_else(|| "Unknown".to_string());
+        let title = discovered
+            .title
+            .clone()
+            .or_else(|| discovered.preview.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("{} external session", provider));
+        let title: String = title.chars().take(80).collect();
+        let now = chrono::Utc::now().to_rfc3339();
+        let session_id = uuid::Uuid::new_v4().to_string();
+
+        sqlx::query(
+            "INSERT INTO agent_sessions (
+                id, title, purpose, project_path, project_name, claude_session_id,
+                context_prompt, skip_permissions, git_name, git_email,
+                created_at, last_used_at, origin, provider, binary_path,
+                base_branch, worktree_branch
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?)",
+        )
+        .bind(&session_id)
+        .bind(&title)
+        .bind("External")
+        .bind(project_path)
+        .bind(&project_name)
+        .bind(&discovered.external_session_id)
+        .bind("")
+        .bind(0)
+        .bind(Option::<&str>::None)
+        .bind(Option::<&str>::None)
+        .bind(&now)
+        .bind(&now)
+        .bind(provider)
+        .bind(Option::<&str>::None)
+        .bind(Option::<&str>::None)
+        .bind(Option::<&str>::None)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+        sqlx::query(
+            "UPDATE agent_discovered_sessions
+             SET adopted_agent_session_id = ?
+             WHERE id = ?",
+        )
+        .bind(&session_id)
+        .bind(&discovered.id)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        sqlx::query_as::<_, AgentSession>("SELECT * FROM agent_sessions WHERE id = ?")
+            .bind(&session_id)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    .await;
+
+    match result {
+        Ok(session) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(session)
+        }
+        Err(e) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn agent_adopt_discovered_session(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> Result<AgentSession, String> {
+    adopt_discovered_session_by_id(pool.inner(), &id).await
 }
 
 /// Canonicalize a path for comparison. Falls back to the literal path
@@ -451,7 +886,9 @@ fn peek_session_cwd(path: &std::path::Path) -> Option<String> {
     let f = std::fs::File::open(path).ok()?;
     let reader = BufReader::new(f);
     for (i, line) in reader.lines().enumerate() {
-        if i > 50 { break; }
+        if i > 50 {
+            break;
+        }
         let line = line.ok()?;
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
             if let Some(cwd) = val.get("cwd").and_then(|v| v.as_str()) {
@@ -462,40 +899,129 @@ fn peek_session_cwd(path: &std::path::Path) -> Option<String> {
     None
 }
 
-fn read_one_session_file(path: &std::path::Path) -> Option<DiscoveredSession> {
+fn read_one_claude_session_file(path: &std::path::Path) -> Option<ProviderDiscoveredSession> {
     let session_id = path.file_stem().and_then(|s| s.to_str())?.to_string();
-    let modified_at = path
-        .metadata()
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .map(|t| {
-            let datetime: chrono::DateTime<chrono::Utc> = t.into();
-            datetime.to_rfc3339()
-        })
-        .unwrap_or_default();
+    let modified_at = path_modified_rfc3339(path);
 
-    // Extract first user message as preview
-    let preview = fs::read_to_string(path).ok().and_then(|content| {
-        for line in content.lines().take(20) {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                if val.get("type").and_then(|t| t.as_str()) == Some("human") {
-                    if let Some(msg) = val.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()) {
-                        let trimmed = msg.chars().take(80).collect::<String>();
-                        return Some(trimmed);
-                    }
+    let mut cwd: Option<String> = None;
+    let mut preview: Option<String> = None;
+    let content = fs::read_to_string(path).ok()?;
+    for line in content.lines().take(50) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+            if cwd.is_none() {
+                cwd = val
+                    .get("cwd")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+            }
+            if preview.is_none() && val.get("type").and_then(|t| t.as_str()) == Some("human") {
+                if let Some(msg) = val
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_str())
+                {
+                    preview = Some(msg.chars().take(80).collect::<String>());
                 }
             }
+            if cwd.is_some() && preview.is_some() {
+                break;
+            }
         }
-        None
-    });
+    }
 
-    Some(DiscoveredSession { session_id, modified_at, preview })
+    Some(ProviderDiscoveredSession {
+        provider: "claude".to_string(),
+        external_session_id: session_id,
+        project_name: project_name_from_path_opt(cwd.as_deref()),
+        project_path: cwd,
+        title: preview.clone(),
+        preview,
+        created_at: modified_at.clone(),
+        updated_at: modified_at,
+        parent_external_session_id: None,
+        session_kind: Some("conversation".to_string()),
+        source_path: Some(path.to_string_lossy().to_string()),
+    })
 }
 
-fn discover_claude_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>, String> {
+fn read_claude_project_dir(
+    dir: &std::path::Path,
+    target_project_path: Option<&str>,
+    out: &mut Vec<ProviderDiscoveredSession>,
+    seen_ids: &mut std::collections::HashSet<String>,
+    cap: usize,
+) {
+    if out.len() >= cap {
+        return;
+    }
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let target_canon = target_project_path.map(canon_for_compare);
+    for entry in entries.flatten() {
+        if out.len() >= cap {
+            return;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        if let Some(s) = read_one_claude_session_file(&path) {
+            if let Some(target) = target_canon.as_deref() {
+                if s.project_path.as_deref().map(canon_for_compare).as_deref() != Some(target) {
+                    continue;
+                }
+            }
+            if seen_ids.insert(s.external_session_id.clone()) {
+                out.push(s);
+            }
+        }
+    }
+}
+
+fn discover_claude_sessions_global(cap: usize) -> Result<Vec<ProviderDiscoveredSession>, String> {
+    let cli: &dyn CliRunner = claude_cli();
+    let projects_root = cli
+        .sessions_root()
+        .ok_or("Cannot determine home directory")?;
+    if !projects_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut project_dirs: Vec<(std::path::PathBuf, std::time::SystemTime)> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&projects_root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let modified = path
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            project_dirs.push((path, modified));
+        }
+    }
+    project_dirs.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let mut sessions = Vec::new();
+    let mut seen_ids = std::collections::HashSet::new();
+    for (dir, _) in project_dirs {
+        if sessions.len() >= cap {
+            break;
+        }
+        read_claude_project_dir(&dir, None, &mut sessions, &mut seen_ids, cap);
+    }
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.truncate(cap);
+    Ok(sessions)
+}
+
+fn discover_claude_sessions(project_path: &str) -> Result<Vec<ProviderDiscoveredSession>, String> {
     let cli: &dyn CliRunner = claude_cli();
     let projects_root = cli.sessions_root().ok_or("Cannot determine home directory")?;
-    let mut sessions: Vec<DiscoveredSession> = Vec::new();
+    let mut sessions: Vec<ProviderDiscoveredSession> = Vec::new();
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // L1 fast path: try the predictably-encoded directory first.
@@ -505,9 +1031,11 @@ fn discover_claude_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if !cli.is_session_file(&path) { continue; }
-                    if let Some(s) = read_one_session_file(&path) {
-                        if seen_ids.insert(s.session_id.clone()) {
+                    if !cli.is_session_file(&path) {
+                        continue;
+                    }
+                    if let Some(s) = read_one_claude_session_file(&path) {
+                        if seen_ids.insert(s.external_session_id.clone()) {
                             sessions.push(s);
                         }
                     }
@@ -527,10 +1055,14 @@ fn discover_claude_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>
         if let Ok(top) = fs::read_dir(&projects_root) {
             for entry in top.flatten() {
                 let dir = entry.path();
-                if !dir.is_dir() { continue; }
+                if !dir.is_dir() {
+                    continue;
+                }
                 // Skip the dir we already scanned in the fast path.
                 if let Some(p) = primary.as_ref() {
-                    if &dir == p { continue; }
+                    if &dir == p {
+                        continue;
+                    }
                 }
                 // Peek the first .jsonl file's cwd. If it matches our
                 // canonicalized target, every session file in this dir
@@ -538,19 +1070,31 @@ fn discover_claude_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>
                 let first_file = fs::read_dir(&dir).ok().and_then(|mut it| {
                     it.find_map(|r| {
                         let p = r.ok()?.path();
-                        if cli.is_session_file(&p) { Some(p) } else { None }
+                        if cli.is_session_file(&p) {
+                            Some(p)
+                        } else {
+                            None
+                        }
                     })
                 });
-                let Some(first_file) = first_file else { continue };
-                let Some(cwd) = peek_session_cwd(&first_file) else { continue };
-                if canon_for_compare(&cwd) != target { continue; }
+                let Some(first_file) = first_file else {
+                    continue;
+                };
+                let Some(cwd) = peek_session_cwd(&first_file) else {
+                    continue;
+                };
+                if canon_for_compare(&cwd) != target {
+                    continue;
+                }
 
                 if let Ok(entries) = fs::read_dir(&dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if !cli.is_session_file(&path) { continue; }
-                        if let Some(s) = read_one_session_file(&path) {
-                            if seen_ids.insert(s.session_id.clone()) {
+                        if !cli.is_session_file(&path) {
+                            continue;
+                        }
+                        if let Some(s) = read_one_claude_session_file(&path) {
+                            if seen_ids.insert(s.external_session_id.clone()) {
                                 sessions.push(s);
                             }
                         }
@@ -560,7 +1104,7 @@ fn discover_claude_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>
         }
     }
 
-    sessions.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(sessions)
 }
 
@@ -573,7 +1117,7 @@ fn discover_claude_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>
 /// The preview is the first user-typed message (`type: "response_item"`
 /// → `payload.role: "user"` → first string content field) — Codex
 /// distinguishes between system meta events and the user's first turn.
-fn discover_codex_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>, String> {
+fn discover_codex_sessions(project_path: &str) -> Result<Vec<ProviderDiscoveredSession>, String> {
     let root = dirs::home_dir()
         .map(|h| h.join(".codex").join("sessions"))
         .ok_or("Cannot determine home directory")?;
@@ -582,16 +1126,40 @@ fn discover_codex_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>,
     }
 
     let mut sessions = Vec::new();
-    walk_codex_sessions(&root, project_path, &mut sessions);
-    sessions.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+    walk_codex_sessions(
+        &root,
+        Some(project_path),
+        &mut sessions,
+        GLOBAL_SCAN_FILE_CAP,
+    );
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(sessions)
+}
+
+fn discover_codex_sessions_global(cap: usize) -> Result<Vec<ProviderDiscoveredSession>, String> {
+    let root = runner_for("codex")
+        .sessions_root()
+        .ok_or("Cannot determine Codex home directory")?;
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut sessions = Vec::new();
+    walk_codex_sessions(&root, None, &mut sessions, GLOBAL_SCAN_FILE_CAP);
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.truncate(cap);
     Ok(sessions)
 }
 
 fn walk_codex_sessions(
     dir: &std::path::Path,
-    project_path: &str,
-    out: &mut Vec<DiscoveredSession>,
+    project_path: Option<&str>,
+    out: &mut Vec<ProviderDiscoveredSession>,
+    file_cap: usize,
 ) {
+    if out.len() >= file_cap {
+        return;
+    }
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -603,7 +1171,7 @@ fn walk_codex_sessions(
             Err(_) => continue,
         };
         if ft.is_dir() {
-            walk_codex_sessions(&path, project_path, out);
+            walk_codex_sessions(&path, project_path, out, file_cap);
             continue;
         }
         if !path
@@ -616,14 +1184,17 @@ fn walk_codex_sessions(
         }
         if let Some(found) = parse_codex_session(&path, project_path) {
             out.push(found);
+            if out.len() >= file_cap {
+                return;
+            }
         }
     }
 }
 
 fn parse_codex_session(
     path: &std::path::Path,
-    project_path: &str,
-) -> Option<DiscoveredSession> {
+    project_path: Option<&str>,
+) -> Option<ProviderDiscoveredSession> {
     let content = fs::read_to_string(path).ok()?;
     let mut lines = content.lines();
     let first = lines.next()?;
@@ -633,19 +1204,16 @@ fn parse_codex_session(
     }
     let payload = meta.get("payload")?;
     let cwd = payload.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
-    if cwd != project_path {
+    if let Some(project_path) = project_path {
+        if cwd != project_path {
+            return None;
+        }
+    }
+    if cwd.trim().is_empty() {
         return None;
     }
     let session_id = payload.get("id").and_then(|v| v.as_str())?.to_string();
-    let modified_at = path
-        .metadata()
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .map(|t| {
-            let datetime: chrono::DateTime<chrono::Utc> = t.into();
-            datetime.to_rfc3339()
-        })
-        .unwrap_or_default();
+    let modified_at = path_modified_rfc3339(path);
 
     // Best-effort preview: scan a few subsequent lines for the first
     // user turn. Codex stores conversation events as `response_item`
@@ -654,18 +1222,22 @@ fn parse_codex_session(
     for line in lines.take(40) {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
             let payload = val.get("payload");
-            let role = payload
-                .and_then(|p| p.get("role"))
-                .and_then(|r| r.as_str());
+            let role = payload.and_then(|p| p.get("role")).and_then(|r| r.as_str());
             if role != Some("user") {
                 continue;
             }
             // Content can be a string, or an array of {type, text} blocks.
-            if let Some(text) = payload.and_then(|p| p.get("content")).and_then(|c| c.as_str()) {
+            if let Some(text) = payload
+                .and_then(|p| p.get("content"))
+                .and_then(|c| c.as_str())
+            {
                 preview = Some(text.chars().take(80).collect());
                 break;
             }
-            if let Some(arr) = payload.and_then(|p| p.get("content")).and_then(|c| c.as_array()) {
+            if let Some(arr) = payload
+                .and_then(|p| p.get("content"))
+                .and_then(|c| c.as_array())
+            {
                 for item in arr {
                     if let Some(t) = item.get("text").and_then(|v| v.as_str()) {
                         preview = Some(t.chars().take(80).collect());
@@ -679,10 +1251,18 @@ fn parse_codex_session(
         }
     }
 
-    Some(DiscoveredSession {
-        session_id,
-        modified_at,
+    Some(ProviderDiscoveredSession {
+        provider: "codex".to_string(),
+        external_session_id: session_id,
+        project_path: Some(cwd.to_string()),
+        project_name: project_name_from_path_opt(Some(cwd)),
+        title: preview.clone(),
         preview,
+        created_at: modified_at.clone(),
+        updated_at: modified_at,
+        parent_external_session_id: None,
+        session_kind: Some("conversation".to_string()),
+        source_path: Some(path.to_string_lossy().to_string()),
     })
 }
 
@@ -717,12 +1297,18 @@ fn opencode_db_paths() -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_file() { continue; }
+        if !path.is_file() {
+            continue;
+        }
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if !name.starts_with("opencode") { continue; }
+        if !name.starts_with("opencode") {
+            continue;
+        }
         // Accept only the primary DB file — sidecars like `.db-shm`
         // and `.db-wal` mustn't be passed to sqlx.
-        if path.extension().and_then(|e| e.to_str()) != Some("db") { continue; }
+        if path.extension().and_then(|e| e.to_str()) != Some("db") {
+            continue;
+        }
         out.push(path);
     }
     out
@@ -746,7 +1332,20 @@ fn opencode_connect_opts(db_path: &std::path::Path) -> sqlx::sqlite::SqliteConne
 /// first prompt — perfect for preview), and `time_updated` (epoch
 /// millis). Filter by `directory = project_path` exact match, then
 /// merge results across all channel DBs.
-fn discover_opencode_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>, String> {
+fn discover_opencode_sessions(
+    project_path: &str,
+) -> Result<Vec<ProviderDiscoveredSession>, String> {
+    discover_opencode_sessions_filtered(Some(project_path), GLOBAL_SCAN_CAP_PER_PROVIDER)
+}
+
+fn discover_opencode_sessions_global(cap: usize) -> Result<Vec<ProviderDiscoveredSession>, String> {
+    discover_opencode_sessions_filtered(None, cap)
+}
+
+fn discover_opencode_sessions_filtered(
+    project_path: Option<&str>,
+    cap: usize,
+) -> Result<Vec<ProviderDiscoveredSession>, String> {
     let dbs = opencode_db_paths();
     if dbs.is_empty() {
         return Ok(Vec::new());
@@ -754,51 +1353,77 @@ fn discover_opencode_sessions(project_path: &str) -> Result<Vec<DiscoveredSessio
 
     // Read-only async connect avoids contention with a running
     // opencode server (WAL mode is opencode's default).
-    let project_owned = project_path.to_string();
+    let project_owned = project_path.map(str::to_string);
     let runtime = tokio::runtime::Handle::try_current().ok();
     let mut all = Vec::new();
     for db_path in dbs {
         let rows_res = match &runtime {
-            Some(handle) => handle.block_on(query_opencode_sessions(&db_path, &project_owned)),
+            Some(handle) => handle.block_on(query_opencode_sessions(
+                &db_path,
+                project_owned.as_deref(),
+                cap,
+            )),
             None => {
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .map_err(|e| format!("opencode discover runtime: {}", e))?;
-                rt.block_on(query_opencode_sessions(&db_path, &project_owned))
+                rt.block_on(query_opencode_sessions(
+                    &db_path,
+                    project_owned.as_deref(),
+                    cap,
+                ))
             }
         };
         if let Ok(rows) = rows_res {
             all.extend(rows);
         }
     }
-    all.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+    all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    all.truncate(cap);
     Ok(all)
 }
 
 async fn query_opencode_sessions(
     db_path: &std::path::Path,
-    project_path: &str,
-) -> Result<Vec<DiscoveredSession>, String> {
+    project_path: Option<&str>,
+    limit: usize,
+) -> Result<Vec<ProviderDiscoveredSession>, String> {
     let opts = opencode_connect_opts(db_path);
     let pool = sqlx::SqlitePool::connect_with(opts)
         .await
         .map_err(|e| format!("opencode db open: {}", e))?;
-    let rows: Vec<(String, String, i64)> = sqlx::query_as(
-        "SELECT id, COALESCE(title, '') as title, time_updated \
-         FROM session WHERE directory = ? \
-         ORDER BY time_updated DESC LIMIT 50",
-    )
-    .bind(project_path)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("opencode db query: {}", e))?;
+    let rows: Vec<(String, String, String, i64)> = if let Some(project_path) = project_path {
+        sqlx::query_as(
+            "SELECT id, COALESCE(title, '') as title, COALESCE(directory, '') as directory,
+                    time_updated
+             FROM session WHERE directory = ?
+             ORDER BY time_updated DESC LIMIT ?",
+        )
+        .bind(project_path)
+        .bind(limit as i64)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| format!("opencode db query: {}", e))?
+    } else {
+        sqlx::query_as(
+            "SELECT id, COALESCE(title, '') as title, COALESCE(directory, '') as directory,
+                    time_updated
+             FROM session
+             ORDER BY time_updated DESC LIMIT ?",
+        )
+        .bind(limit as i64)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| format!("opencode db query: {}", e))?
+    };
     pool.close().await;
 
     Ok(rows
         .into_iter()
-        .map(|(id, title, ts_ms)| {
-            let modified_at = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ts_ms)
+        .filter(|(_, _, directory, _)| !directory.trim().is_empty())
+        .map(|(id, title, directory, updated_ms)| {
+            let modified_at = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(updated_ms)
                 .map(|d| d.to_rfc3339())
                 .unwrap_or_default();
             let preview = if title.trim().is_empty() {
@@ -806,10 +1431,18 @@ async fn query_opencode_sessions(
             } else {
                 Some(title.chars().take(80).collect())
             };
-            DiscoveredSession {
-                session_id: id,
-                modified_at,
+            ProviderDiscoveredSession {
+                provider: "opencode".to_string(),
+                external_session_id: id,
+                project_name: project_name_from_path_opt(Some(&directory)),
+                project_path: Some(directory),
+                title: preview.clone(),
                 preview,
+                created_at: Some(modified_at.clone()),
+                updated_at: Some(modified_at),
+                parent_external_session_id: None,
+                session_kind: Some("conversation".to_string()),
+                source_path: Some(db_path.to_string_lossy().to_string()),
             }
         })
         .collect())
@@ -818,7 +1451,18 @@ async fn query_opencode_sessions(
 /// Hermes keeps session metadata in `<HERMES_HOME>/state.db`. Filter by
 /// exact cwd so the resume picker only offers conversations created in the
 /// selected project (or its selected worktree).
-fn discover_hermes_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>, String> {
+fn discover_hermes_sessions(project_path: &str) -> Result<Vec<ProviderDiscoveredSession>, String> {
+    discover_hermes_sessions_filtered(Some(project_path), GLOBAL_SCAN_CAP_PER_PROVIDER)
+}
+
+fn discover_hermes_sessions_global(cap: usize) -> Result<Vec<ProviderDiscoveredSession>, String> {
+    discover_hermes_sessions_filtered(None, cap)
+}
+
+fn discover_hermes_sessions_filtered(
+    project_path: Option<&str>,
+    cap: usize,
+) -> Result<Vec<ProviderDiscoveredSession>, String> {
     let db_path = runner_for("hermes")
         .sessions_root()
         .ok_or("Cannot determine Hermes home directory")?
@@ -827,24 +1471,33 @@ fn discover_hermes_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>
         return Ok(Vec::new());
     }
 
-    let project_owned = project_path.to_string();
+    let project_owned = project_path.map(str::to_string);
     let runtime = tokio::runtime::Handle::try_current().ok();
     match runtime {
-        Some(handle) => handle.block_on(query_hermes_sessions(&db_path, &project_owned)),
+        Some(handle) => handle.block_on(query_hermes_sessions(
+            &db_path,
+            project_owned.as_deref(),
+            cap,
+        )),
         None => {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| format!("Hermes discover runtime: {}", e))?;
-            rt.block_on(query_hermes_sessions(&db_path, &project_owned))
+            rt.block_on(query_hermes_sessions(
+                &db_path,
+                project_owned.as_deref(),
+                cap,
+            ))
         }
     }
 }
 
 async fn query_hermes_sessions(
     db_path: &std::path::Path,
-    project_path: &str,
-) -> Result<Vec<DiscoveredSession>, String> {
+    project_path: Option<&str>,
+    limit: usize,
+) -> Result<Vec<ProviderDiscoveredSession>, String> {
     #[derive(Clone, sqlx::FromRow)]
     struct HermesSessionNode {
         root_id: String,
@@ -852,6 +1505,8 @@ async fn query_hermes_sessions(
         parent_session_id: Option<String>,
         title: String,
         preview: String,
+        cwd: String,
+        source: String,
         started_at: f64,
         ended_at: Option<f64>,
         end_reason: Option<String>,
@@ -869,8 +1524,9 @@ async fn query_hermes_sessions(
     // - show roots and explicit /branch children only
     // - hide archived and delegate/subagent rows
     // - walk compression continuations, then project each root to its live tip
-    let rows: Vec<HermesSessionNode> = sqlx::query_as(
-        r#"
+    let rows: Vec<HermesSessionNode> = if let Some(project_path) = project_path {
+        sqlx::query_as(
+            r#"
         WITH RECURSIVE roots(id) AS (
             SELECT s.id
             FROM sessions s
@@ -887,6 +1543,7 @@ async fn query_hermes_sessions(
                           AND s.started_at >= p.ended_at
                     )
               )
+            ORDER BY s.started_at DESC LIMIT ?
         ),
         chain(root_id, cur_id, depth) AS (
             SELECT id, id, 0 FROM roots
@@ -911,6 +1568,8 @@ async fn query_hermes_sessions(
                    WHERE m.session_id = s.id AND m.role = 'user' AND m.content IS NOT NULL
                    ORDER BY m.timestamp, m.id LIMIT 1
                ), '') AS preview,
+               COALESCE(s.cwd, '') AS cwd,
+               COALESCE(s.source, '') AS source,
                CAST(s.started_at AS REAL) AS started_at,
                CAST(s.ended_at AS REAL) AS ended_at,
                s.end_reason,
@@ -921,11 +1580,74 @@ async fn query_hermes_sessions(
         FROM chain c
         JOIN sessions s ON s.id = c.cur_id
         "#,
-    )
-    .bind(project_path)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("Hermes state db query: {}", e))?;
+        )
+        .bind(project_path)
+        .bind(limit as i64)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| format!("Hermes state db query: {}", e))?
+    } else {
+        sqlx::query_as(
+            r#"
+        WITH RECURSIVE roots(id) AS (
+            SELECT s.id
+            FROM sessions s
+            WHERE s.archived = 0
+              AND COALESCE(s.cwd, '') != ''
+              AND json_extract(COALESCE(s.model_config, '{}'), '$._delegate_from') IS NULL
+              AND (
+                    s.parent_session_id IS NULL
+                    OR json_extract(COALESCE(s.model_config, '{}'), '$._branched_from') IS NOT NULL
+                    OR EXISTS (
+                        SELECT 1 FROM sessions p
+                        WHERE p.id = s.parent_session_id
+                          AND p.end_reason = 'branched'
+                          AND s.started_at >= p.ended_at
+                    )
+              )
+            ORDER BY s.started_at DESC LIMIT ?
+        ),
+        chain(root_id, cur_id, depth) AS (
+            SELECT id, id, 0 FROM roots
+            UNION ALL
+            SELECT c.root_id, child.id, c.depth + 1
+            FROM chain c
+            JOIN sessions parent ON parent.id = c.cur_id
+            JOIN sessions child ON child.parent_session_id = parent.id
+            WHERE c.depth < 100
+              AND parent.end_reason = 'compression'
+              AND json_extract(COALESCE(child.model_config, '{}'), '$._branched_from') IS NULL
+              AND json_extract(COALESCE(child.model_config, '{}'), '$._delegate_from') IS NULL
+              AND COALESCE(child.source, '') != 'tool'
+        )
+        SELECT c.root_id,
+               s.id,
+               s.parent_session_id,
+               COALESCE(s.title, '') AS title,
+               COALESCE((
+                   SELECT SUBSTR(REPLACE(REPLACE(m.content, X'0A', ' '), X'0D', ' '), 1, 80)
+                   FROM messages m
+                   WHERE m.session_id = s.id AND m.role = 'user' AND m.content IS NOT NULL
+                   ORDER BY m.timestamp, m.id LIMIT 1
+               ), '') AS preview,
+               COALESCE(s.cwd, '') AS cwd,
+               COALESCE(s.source, '') AS source,
+               CAST(s.started_at AS REAL) AS started_at,
+               CAST(s.ended_at AS REAL) AS ended_at,
+               s.end_reason,
+               CAST(COALESCE(
+                   (SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.session_id = s.id),
+                   s.started_at
+               ) AS REAL) AS last_active
+        FROM chain c
+        JOIN sessions s ON s.id = c.cur_id
+        "#,
+        )
+        .bind(limit as i64)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| format!("Hermes state db query: {}", e))?
+    };
     pool.close().await;
 
     let mut by_root: std::collections::HashMap<String, Vec<HermesSessionNode>> =
@@ -980,24 +1702,45 @@ async fn query_hermes_sessions(
             tip.title.trim()
         };
         let preview = (!preview.is_empty()).then(|| preview.chars().take(80).collect());
+        let secs_started = tip.started_at.trunc() as i64;
+        let nanos_started = ((tip.started_at.fract().abs()) * 1_000_000_000.0) as u32;
         discovered.push((
             tip.last_active,
             tip.started_at,
-            DiscoveredSession {
-                session_id: tip.id,
-                modified_at: chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nanos)
-                    .map(|d| d.to_rfc3339())
-                    .unwrap_or_default(),
+            ProviderDiscoveredSession {
+                provider: "hermes".to_string(),
+                external_session_id: tip.id,
+                project_name: project_name_from_path_opt(Some(&tip.cwd)),
+                project_path: Some(tip.cwd),
+                title: preview.clone(),
                 preview,
+                created_at: chrono::DateTime::<chrono::Utc>::from_timestamp(
+                    secs_started,
+                    nanos_started,
+                )
+                .map(|d| d.to_rfc3339()),
+                updated_at: chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nanos)
+                    .map(|d| d.to_rfc3339())
+                    .or_else(|| Some(chrono::Utc::now().to_rfc3339())),
+                parent_external_session_id: tip.parent_session_id,
+                session_kind: Some(
+                    if tip.source.trim().is_empty() {
+                        "conversation"
+                    } else {
+                        tip.source.trim()
+                    }
+                    .to_string(),
+                ),
+                source_path: Some(db_path.to_string_lossy().to_string()),
             },
         ));
     }
     discovered.sort_by(|a, b| {
         b.0.total_cmp(&a.0)
             .then_with(|| b.1.total_cmp(&a.1))
-            .then_with(|| b.2.session_id.cmp(&a.2.session_id))
+            .then_with(|| b.2.external_session_id.cmp(&a.2.external_session_id))
     });
-    discovered.truncate(100);
+    discovered.truncate(limit);
 
     Ok(discovered
         .into_iter()
@@ -1021,7 +1764,7 @@ async fn query_hermes_sessions(
 /// already carries the right id once `agy` has printed it in the exit
 /// banner (frontend regex captures it), so returning empty here just
 /// means "no auto-resume on a fresh row" — not a regression.
-fn discover_gemini_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>, String> {
+fn discover_gemini_sessions(project_path: &str) -> Result<Vec<ProviderDiscoveredSession>, String> {
     if !project_path.is_empty() {
         return Ok(Vec::new());
     }
@@ -1063,22 +1806,34 @@ fn discover_gemini_sessions(project_path: &str) -> Result<Vec<DiscoveredSession>
         // Preview would require opening the SQLite database. Surface
         // the bare conversation id for now; a follow-up can wire
         // sqlx/rusqlite to pull the first user message.
-        sessions.push(DiscoveredSession {
-            session_id,
-            modified_at,
+        sessions.push(ProviderDiscoveredSession {
+            provider: "gemini".to_string(),
+            external_session_id: session_id,
+            project_path: None,
+            project_name: None,
+            title: None,
             preview: None,
+            created_at: Some(modified_at.clone()),
+            updated_at: Some(modified_at),
+            parent_external_session_id: None,
+            session_kind: Some("conversation".to_string()),
+            source_path: Some(path.to_string_lossy().to_string()),
         });
     }
-    sessions.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(sessions)
 }
 
 fn is_uuid_filename(s: &str) -> bool {
-    if s.len() != 36 { return false; }
+    if s.len() != 36 {
+        return false;
+    }
     for (i, b) in s.as_bytes().iter().enumerate() {
         let expect_dash = matches!(i, 8 | 13 | 18 | 23);
         if expect_dash {
-            if *b != b'-' { return false; }
+            if *b != b'-' {
+                return false;
+            }
         } else if !b.is_ascii_hexdigit() {
             return false;
         }
@@ -1119,8 +1874,7 @@ pub fn agent_get_session_tokens(
                 }
             }
         }
-        best.map(|(p, _)| p)
-            .ok_or("No session files found")?
+        best.map(|(p, _)| p).ok_or("No session files found")?
     };
 
     if !file_path.exists() {
@@ -1140,14 +1894,20 @@ pub fn agent_get_session_tokens(
         }
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
             // Check both direct usage and message.usage patterns
-            let usage = val.get("usage").or_else(|| {
-                val.get("message").and_then(|m| m.get("usage"))
-            });
+            let usage = val
+                .get("usage")
+                .or_else(|| val.get("message").and_then(|m| m.get("usage")));
             if let Some(u) = usage {
                 input_tokens += u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                 output_tokens += u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                cache_read_tokens += u.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                cache_creation_tokens += u.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                cache_read_tokens += u
+                    .get("cache_read_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                cache_creation_tokens += u
+                    .get("cache_creation_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
             }
         }
     }
@@ -1193,19 +1953,33 @@ pub fn agent_get_session_context_usage(
 fn model_context_window(model: &str) -> u64 {
     let m = model.to_ascii_lowercase();
     // Claude (used for opencode runs that target anthropic provider)
-    if m.contains("opus") { return 1_000_000; }
-    if m.contains("sonnet") || m.contains("haiku") { return 200_000; }
+    if m.contains("opus") {
+        return 1_000_000;
+    }
+    if m.contains("sonnet") || m.contains("haiku") {
+        return 200_000;
+    }
     // OpenAI / Codex
-    if m.contains("gpt-5.5") { return 384_000; }
-    if m.contains("gpt-5") { return 256_000; }
-    if m.contains("gpt-4o") || m.contains("gpt-4-turbo") { return 128_000; }
-    if m.starts_with("o1") || m.starts_with("o3") { return 200_000; }
+    if m.contains("gpt-5.5") {
+        return 384_000;
+    }
+    if m.contains("gpt-5") {
+        return 256_000;
+    }
+    if m.contains("gpt-4o") || m.contains("gpt-4-turbo") {
+        return 128_000;
+    }
+    if m.starts_with("o1") || m.starts_with("o3") {
+        return 200_000;
+    }
     // Gemini family. Gemini 1.5 Pro / 2.x / 3.x all ship with a 1M
     // token context window today; 1.5-pro-experimental briefly offered
     // 2M but isn't a default selectable model. Keep the cap at 1M for
     // the user-facing % calculation — overestimating "% used" is worse
     // than underestimating headroom.
-    if m.starts_with("gemini-") || m.contains("gemini") { return 1_000_000; }
+    if m.starts_with("gemini-") || m.contains("gemini") {
+        return 1_000_000;
+    }
     200_000
 }
 
@@ -1242,11 +2016,18 @@ fn claude_context_usage(project_path: &str, session_id: &str) -> Result<ContextU
             let usage = val.get("message").and_then(|m| m.get("usage"));
             if let Some(u) = usage {
                 let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                let cache_read = u.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                let cache_create = u.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                let cache_read = u
+                    .get("cache_read_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let cache_create = u
+                    .get("cache_creation_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
                 let total = input + cache_read + cache_create;
 
-                let model = val.get("message")
+                let model = val
+                    .get("message")
                     .and_then(|m| m.get("model"))
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown")
@@ -1317,9 +2098,16 @@ fn codex_context_usage(session_id: &str) -> Result<ContextUsage, String> {
     let mut last_cached: u64 = 0;
 
     for line in content.lines() {
-        if line.trim().is_empty() { continue; }
-        let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else { continue; };
-        let payload = match val.get("payload") { Some(p) => p, None => continue };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let payload = match val.get("payload") {
+            Some(p) => p,
+            None => continue,
+        };
         // Latest model selection wins — turn_context fires whenever
         // the user (or the agent) changes models mid-session.
         if val.get("type").and_then(|t| t.as_str()) == Some("turn_context") {
@@ -1328,7 +2116,9 @@ fn codex_context_usage(session_id: &str) -> Result<ContextUsage, String> {
             }
             continue;
         }
-        if payload.get("type").and_then(|t| t.as_str()) != Some("token_count") { continue; }
+        if payload.get("type").and_then(|t| t.as_str()) != Some("token_count") {
+            continue;
+        }
         let info = match payload.get("info") {
             Some(v) if !v.is_null() => v,
             _ => continue, // early events report info=null
@@ -1340,7 +2130,10 @@ fn codex_context_usage(session_id: &str) -> Result<ContextUsage, String> {
             .or_else(|| info.get("total_token_usage"));
         let Some(u) = usage else { continue };
         let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-        let cached = u.get("cached_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let cached = u
+            .get("cached_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let total = u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
         last_input = input;
         last_cached = cached;
@@ -1355,7 +2148,9 @@ fn codex_context_usage(session_id: &str) -> Result<ContextUsage, String> {
     }
     let fill_percent = if context_window > 0 {
         (last_total as f64 / context_window as f64) * 100.0
-    } else { 0.0 };
+    } else {
+        0.0
+    };
 
     Ok(ContextUsage {
         // Cached is reported inside input by OpenAI — subtract before
@@ -1382,7 +2177,9 @@ fn codex_context_usage(session_id: &str) -> Result<ContextUsage, String> {
 fn codex_find_session_file(session_id: &str) -> Option<std::path::PathBuf> {
     let runner = crate::shared::cli::registry::runner_for("codex");
     let root = runner.sessions_root()?;
-    if !root.exists() { return None; }
+    if !root.exists() {
+        return None;
+    }
 
     fn walk(dir: &std::path::Path, session_id: &str) -> Option<std::path::PathBuf> {
         let entries = fs::read_dir(dir).ok()?;
@@ -1395,7 +2192,9 @@ fn codex_find_session_file(session_id: &str) -> Option<std::path::PathBuf> {
                 }
                 continue;
             }
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
             // Filename includes the UUID (`rollout-<ts>-<uuid>.jsonl`).
             // Cheap pre-check before opening the file.
             let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
@@ -1405,8 +2204,11 @@ fn codex_find_session_file(session_id: &str) -> Option<std::path::PathBuf> {
                 // the session_meta payload).
                 if let Ok(first) = read_capped_first_line(&path, 1_048_576) {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&first) {
-                        if val.get("payload").and_then(|p| p.get("id"))
-                            .and_then(|v| v.as_str()) == Some(session_id)
+                        if val
+                            .get("payload")
+                            .and_then(|p| p.get("id"))
+                            .and_then(|v| v.as_str())
+                            == Some(session_id)
                         {
                             return Some(path);
                         }
@@ -1427,10 +2229,7 @@ fn codex_find_session_file(session_id: &str) -> Option<std::path::PathBuf> {
 /// whole file into memory. Codex 0.128+ embeds the full system prompt
 /// in `session_meta`, which legitimately runs 20–27 KB; the 1 MB cap
 /// leaves comfortable headroom.
-fn read_capped_first_line(
-    path: &std::path::Path,
-    cap_bytes: usize,
-) -> std::io::Result<String> {
+fn read_capped_first_line(path: &std::path::Path, cap_bytes: usize) -> std::io::Result<String> {
     use std::io::{BufRead, BufReader, Read};
     let f = std::fs::File::open(path)?;
     let mut reader = BufReader::new(f).take(cap_bytes as u64);
@@ -1504,9 +2303,11 @@ async fn query_opencode_message(
     .map_err(|e| format!("opencode message query: {}", e))?;
     pool.close().await;
 
-    let blob = row.ok_or_else(|| "No assistant messages yet".to_string())?.0;
-    let parsed: serde_json::Value = serde_json::from_str(&blob)
-        .map_err(|e| format!("opencode message JSON: {}", e))?;
+    let blob = row
+        .ok_or_else(|| "No assistant messages yet".to_string())?
+        .0;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&blob).map_err(|e| format!("opencode message JSON: {}", e))?;
 
     let tokens = parsed.get("tokens");
     let input = tokens
@@ -1585,12 +2386,19 @@ const ANALYTICS_TOP_SESSIONS: i64 = 10;
 /// `https://openai.com/api/pricing` as new models drop.
 fn codex_price_for_model(model: &str) -> (f64, f64, f64) {
     let m = model.to_ascii_lowercase();
-    if m.contains("gpt-5.5") { (1.25, 10.0, 0.125) }
-    else if m.contains("gpt-5") { (1.25, 10.0, 0.125) }
-    else if m.contains("gpt-4o") { (2.5, 10.0, 1.25) }
-    else if m.starts_with("o1") { (15.0, 60.0, 7.5) }
-    else if m.starts_with("o3") { (10.0, 40.0, 2.5) }
-    else { (2.5, 10.0, 1.25) }
+    if m.contains("gpt-5.5") {
+        (1.25, 10.0, 0.125)
+    } else if m.contains("gpt-5") {
+        (1.25, 10.0, 0.125)
+    } else if m.contains("gpt-4o") {
+        (2.5, 10.0, 1.25)
+    } else if m.starts_with("o1") {
+        (15.0, 60.0, 7.5)
+    } else if m.starts_with("o3") {
+        (10.0, 40.0, 2.5)
+    } else {
+        (2.5, 10.0, 1.25)
+    }
 }
 
 /// Codex analytics — walk every `rollout-*.jsonl` under
@@ -1622,14 +2430,23 @@ fn codex_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
     // rely on parsing the segments — just descend.
     let mut files: Vec<std::path::PathBuf> = Vec::new();
     fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = fs::read_dir(dir) else { return };
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let Ok(ft) = entry.file_type() else { continue };
-            if ft.is_dir() { collect(&path, out); continue; }
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
+            if ft.is_dir() {
+                collect(&path, out);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
             let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            if !fname.starts_with("rollout-") { continue; }
+            if !fname.starts_with("rollout-") {
+                continue;
+            }
             out.push(path);
         }
     }
@@ -1644,7 +2461,8 @@ fn codex_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
     let mut by_model: std::collections::HashMap<String, ModelUsage> = Default::default();
     let mut by_project: std::collections::HashMap<String, ProjectUsage> = Default::default();
     let mut per_session: std::collections::HashMap<String, SessionCost> = Default::default();
-    let mut project_sessions: std::collections::HashMap<String, std::collections::HashSet<String>> = Default::default();
+    let mut project_sessions: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        Default::default();
     let mut tool_counts: std::collections::HashMap<String, u32> = Default::default();
     let mut shell_counts: std::collections::HashMap<String, u32> = Default::default();
 
@@ -1653,7 +2471,9 @@ fn codex_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
         if let Ok(meta) = path.metadata() {
             if let Ok(modified) = meta.modified() {
                 let dt: chrono::DateTime<chrono::Utc> = modified.into();
-                if dt < cutoff { continue; }
+                if dt < cutoff {
+                    continue;
+                }
             }
         }
         let content = match fs::read_to_string(&path) {
@@ -1672,20 +2492,29 @@ fn codex_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
             Ok(v) => v,
             Err(_) => continue,
         };
-        if meta.get("type").and_then(|t| t.as_str()) != Some("session_meta") { continue; }
-        let payload = match meta.get("payload") { Some(p) => p, None => continue };
+        if meta.get("type").and_then(|t| t.as_str()) != Some("session_meta") {
+            continue;
+        }
+        let payload = match meta.get("payload") {
+            Some(p) => p,
+            None => continue,
+        };
         let originator = payload
             .get("originator")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        if !originator.to_ascii_lowercase().starts_with("codex") { continue; }
+        if !originator.to_ascii_lowercase().starts_with("codex") {
+            continue;
+        }
 
         let session_id = payload
             .get("id")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        if session_id.is_empty() { continue; }
+        if session_id.is_empty() {
+            continue;
+        }
         let project = payload
             .get("cwd")
             .and_then(|v| v.as_str())
@@ -1700,10 +2529,17 @@ fn codex_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
         let mut session_calls: u32 = 0;
 
         for line in lines {
-            if line.trim().is_empty() { continue; }
-            let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
             let t = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            let payload = match val.get("payload") { Some(p) => p, None => continue };
+            let payload = match val.get("payload") {
+                Some(p) => p,
+                None => continue,
+            };
 
             // Track model — latest turn_context wins.
             if t == "turn_context" {
@@ -1717,7 +2553,11 @@ fn codex_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
             if t == "response_item"
                 && payload.get("type").and_then(|v| v.as_str()) == Some("function_call")
             {
-                let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let name = payload
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if !name.is_empty() {
                     *tool_counts.entry(name.clone()).or_insert(0) += 1;
                     // Codex's shell tool is `exec_command`; `arguments`
@@ -1738,8 +2578,12 @@ fn codex_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
             }
 
             // Token accounting — event_msg.token_count.
-            if t != "event_msg" { continue; }
-            if payload.get("type").and_then(|v| v.as_str()) != Some("token_count") { continue; }
+            if t != "event_msg" {
+                continue;
+            }
+            if payload.get("type").and_then(|v| v.as_str()) != Some("token_count") {
+                continue;
+            }
             let info = match payload.get("info") {
                 Some(v) if !v.is_null() => v,
                 _ => continue,
@@ -1752,16 +2596,40 @@ fn codex_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
             // as a "duplicate" of an uninitialized state.
             let (input_raw, cached, output_raw) =
                 if let Some(last) = info.get("last_token_usage").filter(|v| !v.is_null()) {
-                    let i = last.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let c = last.get("cached_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let o = last.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
-                          + last.get("reasoning_output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let i = last
+                        .get("input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let c = last
+                        .get("cached_input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let o = last
+                        .get("output_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                        + last
+                            .get("reasoning_output_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
                     (i, c, o)
                 } else if let Some(total) = info.get("total_token_usage").filter(|v| !v.is_null()) {
-                    let ti = total.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let tc = total.get("cached_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let to = total.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
-                           + total.get("reasoning_output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let ti = total
+                        .get("input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let tc = total
+                        .get("cached_input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let to = total
+                        .get("output_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                        + total
+                            .get("reasoning_output_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
                     let di = ti.saturating_sub(prev_total_input.unwrap_or(0));
                     let dc = tc.saturating_sub(prev_total_cached.unwrap_or(0));
                     let do_ = to.saturating_sub(prev_total_output.unwrap_or(0));
@@ -1787,9 +2655,16 @@ fn codex_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
                 if prev_total_input.is_none() {
                     prev_total_input = total.get("input_tokens").and_then(|v| v.as_u64());
                     prev_total_cached = total.get("cached_input_tokens").and_then(|v| v.as_u64());
-                    prev_total_output = total.get("output_tokens").and_then(|v| v.as_u64()).map(|o|
-                        o + total.get("reasoning_output_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
-                    );
+                    prev_total_output =
+                        total
+                            .get("output_tokens")
+                            .and_then(|v| v.as_u64())
+                            .map(|o| {
+                                o + total
+                                    .get("reasoning_output_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0)
+                            });
                 }
             }
 
@@ -1832,9 +2707,14 @@ fn codex_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
                 .entry(project.clone())
                 .or_default()
                 .insert(session_id.clone());
-            per_session.entry(session_id.clone()).or_insert(SessionCost {
-                session_id, project: project.clone(),
-                cost: session_cost, calls: session_calls, model,
+            per_session
+                .entry(session_id.clone())
+                .or_insert(SessionCost {
+                    session_id,
+                    project: project.clone(),
+                    cost: session_cost,
+                    calls: session_calls,
+                    model,
             });
         }
     }
@@ -1846,16 +2726,30 @@ fn codex_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
     }
     let cache_hit_percent = if total_input + total_cache_read > 0 {
         (total_cache_read as f64 / (total_input + total_cache_read) as f64) * 100.0
-    } else { 0.0 };
+    } else {
+        0.0
+    };
 
     let mut daily: Vec<DailyUsage> = by_day.into_values().collect();
     daily.sort_by(|a, b| a.date.cmp(&b.date));
     let mut by_model_vec: Vec<ModelUsage> = by_model.into_values().collect();
-    by_model_vec.sort_by(|a, b| b.cost.partial_cmp(&a.cost).unwrap_or(std::cmp::Ordering::Equal));
+    by_model_vec.sort_by(|a, b| {
+        b.cost
+            .partial_cmp(&a.cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut by_project_vec: Vec<ProjectUsage> = by_project.into_values().collect();
-    by_project_vec.sort_by(|a, b| b.cost.partial_cmp(&a.cost).unwrap_or(std::cmp::Ordering::Equal));
+    by_project_vec.sort_by(|a, b| {
+        b.cost
+            .partial_cmp(&a.cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut top: Vec<SessionCost> = per_session.into_values().collect();
-    top.sort_by(|a, b| b.cost.partial_cmp(&a.cost).unwrap_or(std::cmp::Ordering::Equal));
+    top.sort_by(|a, b| {
+        b.cost
+            .partial_cmp(&a.cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let total_sessions = top.len() as u32;
     top.truncate(ANALYTICS_TOP_SESSIONS as usize);
 
@@ -1920,10 +2814,20 @@ async fn opencode_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, S
             Ok(p) => p,
             Err(_) => continue,
         };
-        let batch: Result<Vec<(
-            String, i64, Option<String>, Option<String>,
-            Option<f64>, Option<i64>, Option<i64>, Option<i64>, Option<i64>,
-        )>, _> = sqlx::query_as(
+        let batch: Result<
+            Vec<(
+                String,
+                i64,
+                Option<String>,
+                Option<String>,
+                Option<f64>,
+                Option<i64>,
+                Option<i64>,
+                Option<i64>,
+                Option<i64>,
+            )>,
+            _,
+        > = sqlx::query_as(
         // SQLite's json_extract returns the raw JSON type, so `{"cost":0}`
         // comes back as INTEGER, not REAL. sqlx then refuses to decode
         // INTEGER → f64 and the whole call fails (frontend showed "no
@@ -1961,9 +2865,21 @@ async fn opencode_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, S
     let mut by_model: std::collections::HashMap<String, ModelUsage> = Default::default();
     let mut by_project: std::collections::HashMap<String, ProjectUsage> = Default::default();
     let mut per_session: std::collections::HashMap<String, SessionCost> = Default::default();
-    let mut project_sessions: std::collections::HashMap<String, std::collections::HashSet<String>> = Default::default();
+    let mut project_sessions: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        Default::default();
 
-    for (session_id, ts_ms, directory, model_opt, cost_opt, input_opt, output_opt, cache_r_opt, cache_w_opt) in rows {
+    for (
+        session_id,
+        ts_ms,
+        directory,
+        model_opt,
+        cost_opt,
+        input_opt,
+        output_opt,
+        cache_r_opt,
+        cache_w_opt,
+    ) in rows
+    {
         let model = model_opt.unwrap_or_else(|| "unknown".to_string());
         let project = directory.unwrap_or_else(|| "unknown".to_string());
         let cost = cost_opt.unwrap_or(0.0);
@@ -2046,7 +2962,9 @@ async fn opencode_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, S
         if let Ok(rows) = parts {
             for (tool_opt, cmd_opt) in rows {
                 let Some(tool) = tool_opt else { continue };
-                if tool.is_empty() { continue; }
+                if tool.is_empty() {
+                    continue;
+                }
                 *tool_counts.entry(tool.clone()).or_insert(0) += 1;
                 if tool == "bash" {
                     if let Some(cmd) = cmd_opt {
@@ -2072,7 +2990,9 @@ async fn opencode_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, S
     // Cache-hit % across all turns.
     let cache_hit_percent = if total_input + total_cache_read > 0 {
         (total_cache_read as f64 / (total_input + total_cache_read) as f64) * 100.0
-    } else { 0.0 };
+    } else {
+        0.0
+    };
 
     let mut daily: Vec<DailyUsage> = by_day.into_values().collect();
     daily.sort_by(|a, b| a.date.cmp(&b.date));
@@ -2080,11 +3000,23 @@ async fn opencode_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, S
     // OpenCode per-model cache hit: aggregate from per-model accumulated
     // input + cache_read by re-running once. Simpler: leave at 0 for v1
     // (the top-level cache_hit_percent is the headline metric).
-    by_model_vec.sort_by(|a, b| b.cost.partial_cmp(&a.cost).unwrap_or(std::cmp::Ordering::Equal));
+    by_model_vec.sort_by(|a, b| {
+        b.cost
+            .partial_cmp(&a.cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut by_project_vec: Vec<ProjectUsage> = by_project.into_values().collect();
-    by_project_vec.sort_by(|a, b| b.cost.partial_cmp(&a.cost).unwrap_or(std::cmp::Ordering::Equal));
+    by_project_vec.sort_by(|a, b| {
+        b.cost
+            .partial_cmp(&a.cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut top: Vec<SessionCost> = per_session.into_values().collect();
-    top.sort_by(|a, b| b.cost.partial_cmp(&a.cost).unwrap_or(std::cmp::Ordering::Equal));
+    top.sort_by(|a, b| {
+        b.cost
+            .partial_cmp(&a.cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let total_sessions = top.len() as u32;
     let total_api_calls: u32 = daily.iter().map(|d| d.calls).sum();
     top.truncate(ANALYTICS_TOP_SESSIONS as usize);
@@ -2109,11 +3041,20 @@ async fn opencode_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, S
 
 fn empty_analytics() -> UsageAnalytics {
     UsageAnalytics {
-        total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
-        total_cache_read_tokens: 0, total_cache_write_tokens: 0,
-        total_sessions: 0, total_api_calls: 0, cache_hit_percent: 0.0,
-        daily: vec![], by_model: vec![], by_project: vec![],
-        top_sessions: vec![], tools: vec![], shell_commands: vec![],
+        total_cost: 0.0,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cache_read_tokens: 0,
+        total_cache_write_tokens: 0,
+        total_sessions: 0,
+        total_api_calls: 0,
+        cache_hit_percent: 0.0,
+        daily: vec![],
+        by_model: vec![],
+        by_project: vec![],
+        top_sessions: vec![],
+        tools: vec![],
+        shell_commands: vec![],
     }
 }
 
@@ -2150,15 +3091,25 @@ fn empty_analytics() -> UsageAnalytics {
 fn gemini_price_for_model(model: &str) -> (f64, f64, f64) {
     let m = model.to_ascii_lowercase();
     // Gemini 3 family (Dec 2025 / Mar 2026). Cached read = 10% of input (Google docs).
-    if m.contains("gemini-3.1-pro") { (2.00, 12.00, 0.20) }
-    else if m.contains("gemini-3.1-flash-lite") { (0.25, 1.50, 0.025) }
-    else if m.contains("gemini-3-flash") { (0.50, 3.00, 0.05) }
-    else if m.contains("gemini-3") { (0.50, 3.00, 0.05) }
+    if m.contains("gemini-3.1-pro") {
+        (2.00, 12.00, 0.20)
+    } else if m.contains("gemini-3.1-flash-lite") {
+        (0.25, 1.50, 0.025)
+    } else if m.contains("gemini-3-flash") {
+        (0.50, 3.00, 0.05)
+    } else if m.contains("gemini-3") {
+        (0.50, 3.00, 0.05)
+    }
     // Gemini 2.5 family. 2.5 Pro output corrected to $10 (was $5 — stale).
-    else if m.contains("gemini-2.5-pro") { (1.25, 10.00, 0.20) }
-    else if m.contains("gemini-2.5-flash-lite") { (0.10, 0.40, 0.01) }
-    else if m.contains("gemini-2.5-flash") { (0.30, 2.50, 0.03) }
-    else { (0.30, 2.50, 0.03) }
+    else if m.contains("gemini-2.5-pro") {
+        (1.25, 10.00, 0.20)
+    } else if m.contains("gemini-2.5-flash-lite") {
+        (0.10, 0.40, 0.01)
+    } else if m.contains("gemini-2.5-flash") {
+        (0.30, 2.50, 0.03)
+    } else {
+        (0.30, 2.50, 0.03)
+    }
 }
 
 /// Iterate a Gemini session file regardless of JSON vs JSONL shape.
@@ -2189,15 +3140,23 @@ where
         let arr: Vec<serde_json::Value> = serde_json::from_str(trimmed)
             .map_err(|e| format!("gemini session JSON parse: {}", e))?;
         let mut iter = arr.into_iter();
-        if let Some(first) = iter.next() { on_header(&first); }
-        for ev in iter { on_event(&ev); }
+        if let Some(first) = iter.next() {
+            on_header(&first);
+        }
+        for ev in iter {
+            on_event(&ev);
+        }
     } else {
         // JSONL: one JSON object per line. First non-empty line is
         // the header; subsequent lines are events.
         let mut header_seen = false;
         for line in trimmed.lines() {
-            if line.trim().is_empty() { continue; }
-            let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else { continue; };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
             if !header_seen {
                 on_header(&val);
                 header_seen = true;
@@ -2255,7 +3214,8 @@ fn gemini_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
     let mut by_model: std::collections::HashMap<String, ModelUsage> = Default::default();
     let mut by_project: std::collections::HashMap<String, ProjectUsage> = Default::default();
     let mut per_session: std::collections::HashMap<String, SessionCost> = Default::default();
-    let mut project_sessions: std::collections::HashMap<String, std::collections::HashSet<String>> = Default::default();
+    let mut project_sessions: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        Default::default();
     let mut tool_counts: std::collections::HashMap<String, u32> = Default::default();
     let mut shell_counts: std::collections::HashMap<String, u32> = Default::default();
 
@@ -2263,18 +3223,34 @@ fn gemini_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
     // can attach each session to its absolute project path via
     // projects.json. Sessions without a matching slug fall back to the
     // slug name (better than "unknown").
-    for slug_entry in fs::read_dir(&tmp_root).map_err(|e| e.to_string())?.flatten() {
+    for slug_entry in fs::read_dir(&tmp_root)
+        .map_err(|e| e.to_string())?
+        .flatten()
+    {
         let slug_dir = slug_entry.path();
-        if !slug_dir.is_dir() { continue; }
-        let slug = slug_dir.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        if !slug_dir.is_dir() {
+            continue;
+        }
+        let slug = slug_dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
         let chats_dir = slug_dir.join("chats");
-        if !chats_dir.exists() { continue; }
+        if !chats_dir.exists() {
+            continue;
+        }
         let project_path = gemini_project_path_for_slug(&slug).unwrap_or_else(|| slug.clone());
 
-        for entry in fs::read_dir(&chats_dir).map_err(|e| e.to_string())?.flatten() {
+        for entry in fs::read_dir(&chats_dir)
+            .map_err(|e| e.to_string())?
+            .flatten()
+        {
             let path = entry.path();
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if ext != "jsonl" && ext != "json" { continue; }
+            if ext != "jsonl" && ext != "json" {
+                continue;
+            }
 
             // Skip files older than the cutoff using mtime — Gemini's
             // events have per-event timestamps but the file mtime is
@@ -2282,7 +3258,9 @@ fn gemini_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
             if let Ok(meta) = path.metadata() {
                 if let Ok(modified) = meta.modified() {
                     let dt: chrono::DateTime<chrono::Utc> = modified.into();
-                    if dt < cutoff { continue; }
+                    if dt < cutoff {
+                        continue;
+                    }
                 }
             }
 
@@ -2311,7 +3289,10 @@ fn gemini_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
                         }
                         return;
                     }
-                    let tokens = match ev.get("tokens") { Some(t) => t, None => return };
+                    let tokens = match ev.get("tokens") {
+                        Some(t) => t,
+                        None => return,
+                    };
                     // Cached is INSIDE input per Google's accounting —
                     // subtract before applying the input rate so cached
                     // tokens aren't double-charged.
@@ -2321,7 +3302,11 @@ fn gemini_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
                     let thoughts = tokens.get("thoughts").and_then(|v| v.as_u64()).unwrap_or(0);
                     let input = input_raw.saturating_sub(cached);
 
-                    let model = ev.get("model").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                    let model = ev
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
                     let (in_p, out_p, cache_p) = gemini_price_for_model(&model);
                     // Thoughts billed at output rate.
                     let cost = (input as f64 / 1_000_000.0) * in_p
@@ -2372,7 +3357,8 @@ fn gemini_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
                                 // the dashboard's shell breakdown is
                                 // populated for Gemini too.
                                 if name == "run_shell_command" {
-                                    if let Some(cmd) = tc.get("args")
+                                    if let Some(cmd) = tc
+                                        .get("args")
                                         .and_then(|a| a.get("command"))
                                         .and_then(|v| v.as_str())
                                     {
@@ -2392,9 +3378,14 @@ fn gemini_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
                     .entry(project_path.clone())
                     .or_default()
                     .insert(session_id.clone());
-                per_session.entry(session_id.clone()).or_insert(SessionCost {
-                    session_id, project: project_path.clone(),
-                    cost: session_cost, calls: session_calls, model: session_model,
+                per_session
+                    .entry(session_id.clone())
+                    .or_insert(SessionCost {
+                        session_id,
+                        project: project_path.clone(),
+                        cost: session_cost,
+                        calls: session_calls,
+                        model: session_model,
                 });
             }
         }
@@ -2407,22 +3398,42 @@ fn gemini_usage_analytics(days: Option<u32>) -> Result<UsageAnalytics, String> {
     }
     let cache_hit_percent = if total_input + total_cache_read > 0 {
         (total_cache_read as f64 / (total_input + total_cache_read) as f64) * 100.0
-    } else { 0.0 };
+    } else {
+        0.0
+    };
 
     let mut daily: Vec<DailyUsage> = by_day.into_values().collect();
     daily.sort_by(|a, b| a.date.cmp(&b.date));
     let mut by_model_vec: Vec<ModelUsage> = by_model.into_values().collect();
-    by_model_vec.sort_by(|a, b| b.cost.partial_cmp(&a.cost).unwrap_or(std::cmp::Ordering::Equal));
+    by_model_vec.sort_by(|a, b| {
+        b.cost
+            .partial_cmp(&a.cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut by_project_vec: Vec<ProjectUsage> = by_project.into_values().collect();
-    by_project_vec.sort_by(|a, b| b.cost.partial_cmp(&a.cost).unwrap_or(std::cmp::Ordering::Equal));
+    by_project_vec.sort_by(|a, b| {
+        b.cost
+            .partial_cmp(&a.cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut top: Vec<SessionCost> = per_session.into_values().collect();
-    top.sort_by(|a, b| b.cost.partial_cmp(&a.cost).unwrap_or(std::cmp::Ordering::Equal));
+    top.sort_by(|a, b| {
+        b.cost
+            .partial_cmp(&a.cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let total_sessions = top.len() as u32;
     top.truncate(ANALYTICS_TOP_SESSIONS as usize);
 
-    let mut tools: Vec<ToolCount> = tool_counts.into_iter().map(|(name, count)| ToolCount { name, count }).collect();
+    let mut tools: Vec<ToolCount> = tool_counts
+        .into_iter()
+        .map(|(name, count)| ToolCount { name, count })
+        .collect();
     tools.sort_by(|a, b| b.count.cmp(&a.count));
-    let mut shell_commands: Vec<ToolCount> = shell_counts.into_iter().map(|(name, count)| ToolCount { name, count }).collect();
+    let mut shell_commands: Vec<ToolCount> = shell_counts
+        .into_iter()
+        .map(|(name, count)| ToolCount { name, count })
+        .collect();
     shell_commands.sort_by(|a, b| b.count.cmp(&a.count));
 
     Ok(UsageAnalytics {
@@ -2466,13 +3477,23 @@ fn gemini_context_usage(session_id: &str) -> Result<ContextUsage, String> {
     }
 
     let mut found: Option<std::path::PathBuf> = None;
-    'outer: for slug_entry in fs::read_dir(&tmp_root).map_err(|e| e.to_string())?.flatten() {
+    'outer: for slug_entry in fs::read_dir(&tmp_root)
+        .map_err(|e| e.to_string())?
+        .flatten()
+    {
         let chats_dir = slug_entry.path().join("chats");
-        if !chats_dir.exists() { continue; }
-        for f in fs::read_dir(&chats_dir).map_err(|e| e.to_string())?.flatten() {
+        if !chats_dir.exists() {
+            continue;
+        }
+        for f in fs::read_dir(&chats_dir)
+            .map_err(|e| e.to_string())?
+            .flatten()
+        {
             let path = f.path();
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if ext != "jsonl" && ext != "json" { continue; }
+            if ext != "jsonl" && ext != "json" {
+                continue;
+            }
             // Cheap match: header is in the first kilobyte — peek the
             // start of the file rather than reading it whole.
             if let Ok(mut buf) = fs::read(&path) {
@@ -2496,11 +3517,22 @@ fn gemini_context_usage(session_id: &str) -> Result<ContextUsage, String> {
         &path,
         |_hdr| {},
         |ev| {
-            if ev.get("type").and_then(|t| t.as_str()) != Some("gemini") { return; }
+            if ev.get("type").and_then(|t| t.as_str()) != Some("gemini") {
+                return;
+            }
             if let Some(tokens) = ev.get("tokens") {
-                last_total = tokens.get("total").and_then(|v| v.as_u64()).unwrap_or(last_total);
-                last_input = tokens.get("input").and_then(|v| v.as_u64()).unwrap_or(last_input);
-                last_cached = tokens.get("cached").and_then(|v| v.as_u64()).unwrap_or(last_cached);
+                last_total = tokens
+                    .get("total")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(last_total);
+                last_input = tokens
+                    .get("input")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(last_input);
+                last_cached = tokens
+                    .get("cached")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(last_cached);
             }
             if let Some(m) = ev.get("model").and_then(|v| v.as_str()) {
                 model = m.to_string();
@@ -2511,7 +3543,9 @@ fn gemini_context_usage(session_id: &str) -> Result<ContextUsage, String> {
     let context_window = model_context_window(&model);
     let fill_percent = if context_window > 0 {
         (last_total as f64 / context_window as f64) * 100.0
-    } else { 0.0 };
+    } else {
+        0.0
+    };
 
     Ok(ContextUsage {
         input_tokens: last_input.saturating_sub(last_cached),
@@ -2526,8 +3560,173 @@ fn gemini_context_usage(session_id: &str) -> Result<ContextUsage, String> {
 }
 
 #[cfg(test)]
-mod hermes_discovery_tests {
+mod discovery_tests {
     use super::*;
+
+    fn unique_test_dir(prefix: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("{}-{}", prefix, uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn claude_jsonl_parser_extracts_id_cwd_and_preview() {
+        let dir = unique_test_dir("clauge-claude-parser");
+        let path = dir.join("claude-session-1.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"summary","cwd":"/tmp/project-alpha"}
+{"type":"human","cwd":"/tmp/project-alpha","message":{"content":"Build the settings panel and wire the save action"}}
+{"type":"assistant","message":{"content":"Done"}}
+"#,
+        )
+        .unwrap();
+
+        let parsed = read_one_claude_session_file(&path).unwrap();
+        assert_eq!(parsed.external_session_id, "claude-session-1");
+        assert_eq!(parsed.project_path.as_deref(), Some("/tmp/project-alpha"));
+        assert_eq!(parsed.project_name.as_deref(), Some("project-alpha"));
+        assert_eq!(
+            parsed.preview.as_deref(),
+            Some("Build the settings panel and wire the save action")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn codex_jsonl_parser_extracts_id_cwd_and_first_user_preview() {
+        let dir = unique_test_dir("clauge-codex-parser");
+        let path = dir.join("rollout-2026-07-24-codex.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"session_meta","payload":{"id":"codex-resume-1","cwd":"/tmp/project-beta"}}
+{"type":"response_item","payload":{"role":"assistant","content":"Earlier assistant text"}}
+{"type":"response_item","payload":{"role":"user","content":[{"type":"input_text","text":"Find the regression in discovery adoption"}]}}
+{"type":"response_item","payload":{"role":"user","content":"Ignore second user turn"}}
+"#,
+        )
+        .unwrap();
+
+        let parsed = parse_codex_session(&path, Some("/tmp/project-beta")).unwrap();
+        assert_eq!(parsed.external_session_id, "codex-resume-1");
+        assert_eq!(parsed.project_path.as_deref(), Some("/tmp/project-beta"));
+        assert_eq!(parsed.project_name.as_deref(), Some("project-beta"));
+        assert_eq!(
+            parsed.preview.as_deref(),
+            Some("Find the regression in discovery adoption")
+        );
+        assert!(parse_codex_session(&path, Some("/tmp/other-project")).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    async fn adoption_test_pool() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE agent_sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                claude_session_id TEXT,
+                context_prompt TEXT NOT NULL DEFAULT '',
+                worktree_path TEXT,
+                worktree_branch TEXT,
+                base_branch TEXT,
+                skip_permissions INTEGER NOT NULL DEFAULT 0,
+                git_name TEXT,
+                git_email TEXT,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT NOT NULL,
+                origin TEXT NOT NULL DEFAULT 'manual',
+                card_id TEXT,
+                provider TEXT NOT NULL DEFAULT 'claude',
+                binary_path TEXT
+            );
+            CREATE TABLE agent_discovered_sessions (
+                id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                external_session_id TEXT NOT NULL,
+                project_path TEXT,
+                project_name TEXT,
+                title TEXT,
+                preview TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                parent_external_session_id TEXT,
+                session_kind TEXT,
+                source_path TEXT,
+                hidden INTEGER NOT NULL DEFAULT 0,
+                hidden_at TEXT,
+                adopted_agent_session_id TEXT,
+                UNIQUE(provider, external_session_id)
+            );",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn adopting_discovered_session_is_idempotent_and_preserves_resume_identity() {
+        let pool = adoption_test_pool().await;
+        let project = unique_test_dir("clauge-adoption-project");
+        let project_path = project.to_string_lossy().to_string();
+
+        sqlx::query(
+            "INSERT INTO agent_discovered_sessions (
+                id, provider, external_session_id, project_path, project_name,
+                title, preview, created_at, updated_at, last_seen_at,
+                session_kind
+             ) VALUES (?, 'codex', 'resume-codex-1', ?, 'project-gamma',
+                'Imported Codex', 'First imported prompt',
+                '2026-07-24T00:00:00Z', '2026-07-24T01:00:00Z',
+                '2026-07-24T02:00:00Z', 'conversation')",
+        )
+        .bind("codex:resume-codex-1")
+        .bind(&project_path)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let first = adopt_discovered_session_by_id(&pool, "codex:resume-codex-1")
+            .await
+            .unwrap();
+        let second = adopt_discovered_session_by_id(&pool, "codex:resume-codex-1")
+            .await
+            .unwrap();
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(first.provider, "codex");
+        assert_eq!(first.claude_session_id.as_deref(), Some("resume-codex-1"));
+        assert_eq!(first.origin, "manual");
+        assert_eq!(first.worktree_path, None);
+        assert_eq!(first.worktree_branch, None);
+        assert_eq!(first.base_branch, None);
+
+        let managed_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM agent_sessions WHERE provider = 'codex' AND claude_session_id = 'resume-codex-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(managed_count, 1);
+
+        let adopted_id: Option<String> = sqlx::query_scalar(
+            "SELECT adopted_agent_session_id FROM agent_discovered_sessions WHERE id = 'codex:resume-codex-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(adopted_id.as_deref(), Some(first.id.as_str()));
+        let _ = std::fs::remove_dir_all(project);
+    }
 
     #[tokio::test]
     async fn picker_hides_archived_and_delegate_rows_and_projects_compression_tip() {
@@ -2570,10 +3769,16 @@ mod hermes_discovery_tests {
         }
         pool.close().await;
 
-        let rows = query_hermes_sessions(&db_path, "/repo").await.unwrap();
-        let ids: Vec<&str> = rows.iter().map(|r| r.session_id.as_str()).collect();
+        let rows = query_hermes_sessions(&db_path, Some("/repo"), 100)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = rows
+            .iter()
+            .map(|r| r.external_session_id.as_str())
+            .collect();
         assert_eq!(ids, vec!["regular", "branch", "tip"]);
         assert_eq!(rows[2].preview.as_deref(), Some("Live"));
+        assert_eq!(rows[2].project_path.as_deref(), Some("/repo"));
         let _ = std::fs::remove_file(db_path);
     }
 }

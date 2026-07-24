@@ -1,10 +1,15 @@
 import { writable, get } from 'svelte/store';
-import type { AgentSession, AgentContext, ContextUsage, GitFileChange } from './types';
-import { agentListSessions, agentListContexts, agentGitStatus, agentGitBranch, agentGitAheadBehind, agentGetSessionContextUsage, agentFetchUsageLimits, agentFetchCodexUsageLimits, agentUpdateTrayTitle, agentGetClaudePlan } from './commands';
+import type { AgentSession, AgentContext, ContextUsage, GitFileChange, AgentDiscoveredSession, DiscoveredSessionScanSummary } from './types';
+import { agentListSessions, agentListContexts, agentGitStatus, agentGitBranch, agentGitAheadBehind, agentGetSessionContextUsage, agentFetchUsageLimits, agentFetchCodexUsageLimits, agentUpdateTrayTitle, agentGetClaudePlan, agentListDiscoveredSessions, agentScanDiscoveredSessions } from './commands';
 
 // Sessions
 export const agentSessions = writable<AgentSession[]>([]);
 export const activeAgentSession = writable<AgentSession | null>(null);
+export const agentDiscoveredSessions = writable<AgentDiscoveredSession[]>([]);
+export const agentDiscoveredScanSummary = writable<DiscoveredSessionScanSummary | null>(null);
+// Full-page catalog visibility. Kept independent from activeAgentSession so
+// opening the catalog never tears down a live terminal behind it.
+export const agentSessionCenterOpen = writable<boolean>(false);
 
 // (The provider install-state pre-warm was removed: the New Session
 // modal no longer disables provider tiles. The spawn-time check still
@@ -198,6 +203,21 @@ export async function loadAgentSessions() {
   } catch (e) {
     console.error('Failed to load agent sessions:', e);
   }
+}
+
+export async function loadAgentDiscoveredSessions(search?: string) {
+  try {
+    const sessions = await agentListDiscoveredSessions({ search: search || undefined });
+    agentDiscoveredSessions.set(sessions);
+  } catch (e) {
+    console.error('Failed to load discovered agent sessions:', e);
+  }
+}
+
+export async function scanAgentDiscoveredSessions(provider?: string) {
+  const summary = await agentScanDiscoveredSessions(provider);
+  agentDiscoveredScanSummary.set(summary);
+  return summary;
 }
 
 export async function loadAgentContexts() {

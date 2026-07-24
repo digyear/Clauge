@@ -1,13 +1,17 @@
 <script lang="ts">
-  import { agentSessions, activeAgentSession, agentContextUsage, agentSessionActivity, agentSessionAwaiting, agentClaudePlan } from '../stores';
+  import { onMount, onDestroy } from 'svelte';
+  import { agentSessions, activeAgentSession, agentContextUsage, agentSessionActivity, agentSessionAwaiting, agentDiscoveredSessions, agentSessionCenterOpen, loadAgentDiscoveredSessions, scanAgentDiscoveredSessions, loadAgentSessions } from '../stores';
   import { mode } from '$lib/stores/app';
   import { showContextMenu } from '$lib/shared/primitives/contextmenu';
-  import type { AgentSession } from '../types';
+  import type { AgentDiscoveredSession, AgentSession } from '../types';
   import { tabs, addTab, activateTab } from '$lib/shared/stores/tabs';
   import { get } from 'svelte/store';
   import { AGENT_EVENT } from '$lib/shared/constants/events';
   import ConfirmDialog from '$lib/shared/primitives/ConfirmDialog.svelte';
-  import { agentWorktreeIsDirty } from '../commands';
+  import { agentAdoptDiscoveredSession, agentWorktreeIsDirty } from '../commands';
+  import { PROVIDER_INSTALL_INFO, type AgentProvider } from '$lib/shared/agent/providers';
+  import { showToast } from '$lib/shared/primitives/toast';
+  import { friendlyError } from '$lib/utils/errors';
 
   interface Props {
     searchQuery?: string;
@@ -74,6 +78,97 @@
       : $agentSessions
   );
 
+  const filteredDiscoveredSessions = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return $agentDiscoveredSessions
+      .filter((s) => !s.adoptedAgentSessionId)
+      .filter((s) => {
+        if (!q) return true;
+        return [s.provider, s.externalSessionId, s.projectName, s.projectPath, s.title, s.preview]
+          .some((v) => (v ?? '').toLowerCase().includes(q));
+      })
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  });
+
+  const recentDiscoveredSessions = $derived(
+    filteredDiscoveredSessions.slice(0, searchQuery.trim() ? 20 : 6),
+  );
+
+  let discoveredScanning = $state(false);
+  let discoveredActionIds = $state<string[]>([]);
+  let discoveredTimer: ReturnType<typeof setInterval> | null = null;
+
+  function providerName(provider: string): string {
+    return PROVIDER_INSTALL_INFO[provider as AgentProvider]?.name ?? provider;
+  }
+
+  function discoveredTitle(session: AgentDiscoveredSession): string {
+    return session.title || session.preview || session.externalSessionId;
+  }
+
+
+  function isDiscoveredBusy(id: string): boolean {
+    return discoveredActionIds.includes(id);
+  }
+
+  function setDiscoveredBusy(id: string, busy: boolean) {
+    if (busy) {
+      if (!discoveredActionIds.includes(id)) discoveredActionIds = [...discoveredActionIds, id];
+    } else {
+      discoveredActionIds = discoveredActionIds.filter((v) => v !== id);
+    }
+  }
+
+  async function refreshDiscovered(scan = false) {
+    if (scan) {
+      if (discoveredScanning) return;
+      discoveredScanning = true;
+      try {
+        const summary = await scanAgentDiscoveredSessions();
+        if (summary.errors.length > 0) {
+          console.warn('[agent-discovery] scan warnings', summary.errors);
+        }
+      } catch (e) {
+        console.warn('[agent-discovery] scan failed', e);
+      } finally {
+        discoveredScanning = false;
+      }
+    }
+    await loadAgentDiscoveredSessions();
+  }
+
+  async function handleRefreshDiscovered() {
+    await refreshDiscovered(true);
+  }
+
+  async function handleAdoptDiscovered(session: AgentDiscoveredSession) {
+    if (isDiscoveredBusy(session.id)) return;
+    setDiscoveredBusy(session.id, true);
+    try {
+      const adopted = await agentAdoptDiscoveredSession(session.id);
+      await loadAgentSessions();
+      await loadAgentDiscoveredSessions();
+      handleSelectSession(adopted);
+      showToast('External session opened in Clauge', 'success');
+    } catch (e) {
+      showToast(`Open failed: ${friendlyError(e)}`, 'error');
+    } finally {
+      setDiscoveredBusy(session.id, false);
+    }
+  }
+
+
+  onMount(() => {
+    void refreshDiscovered(true);
+    discoveredTimer = setInterval(() => {
+      if (get(mode) === 'agent') void refreshDiscovered(true);
+    }, 60_000);
+  });
+
+  onDestroy(() => {
+    if (discoveredTimer) clearInterval(discoveredTimer);
+  });
+
   const groupedByProject = $derived.by(() => {
     const groups = new Map<string, AgentSession[]>();
     for (const s of filteredSessions) {
@@ -93,6 +188,7 @@
   }
 
   function handleSelectSession(session: AgentSession) {
+    agentSessionCenterOpen.set(false);
     // Open or focus the tab for this session
     const currentTabs = get(tabs);
     const existing = currentTabs.find(t => t.mode === 'agent' && t.key === session.id);
@@ -316,6 +412,56 @@
       </div>
     {/each}
   {/if}
+
+  <div class="discovered-section">
+    <div class="discovered-header">
+      <div class="discovered-heading">
+        <span>DISCOVERED</span>
+        {#if filteredDiscoveredSessions.length > 0}
+          <span class="discovered-count">{filteredDiscoveredSessions.length}</span>
+        {/if}
+      </div>
+      <button class="discovered-refresh" title="Refresh discovered sessions" disabled={discoveredScanning} onclick={handleRefreshDiscovered}>
+        <svg class:spin={discoveredScanning} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+          <path d="M21 3v6h-6"/>
+        </svg>
+      </button>
+    </div>
+
+    {#if filteredDiscoveredSessions.length === 0}
+      <div class="discovered-empty">{discoveredScanning ? 'Scanning...' : 'No external sessions found'}</div>
+    {:else}
+      <div class="discovered-recent-label">{searchQuery.trim() ? 'MATCHES' : 'RECENT EXTERNAL'}</div>
+      {#each recentDiscoveredSessions as discovered (discovered.id)}
+        {@const busy = isDiscoveredBusy(discovered.id)}
+        <button class="discovered-recent" disabled={busy} title={discovered.projectPath || ''} onclick={() => handleAdoptDiscovered(discovered)}>
+          <span class="discovered-recent-icon">
+            {#if discovered.provider === 'codex'}
+              <img src="/codex.svg" alt="Codex" />
+            {:else if discovered.provider === 'gemini'}
+              <img src="/gemini.svg" alt="Antigravity" />
+            {:else if discovered.provider === 'opencode'}
+              <img src="/opencode-dark.svg" alt="OpenCode" />
+            {:else if discovered.provider === 'hermes'}
+              <img src="/hermes.png" alt="Hermes" />
+            {:else}
+              <img src="/code-no-action.svg" alt="Claude" />
+            {/if}
+          </span>
+          <span class="discovered-recent-copy">
+            <strong>{discoveredTitle(discovered)}</strong>
+            <small>{discovered.projectName || discovered.projectPath || providerName(discovered.provider)} · {providerName(discovered.provider)}</small>
+          </span>
+          <time>{relativeTime(discovered.updatedAt)}</time>
+        </button>
+      {/each}
+      <button class="discovered-browse" onclick={() => agentSessionCenterOpen.set(true)}>
+        <span>Browse all {filteredDiscoveredSessions.length} sessions</span>
+        <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+    {/if}
+  </div>
 </div>
 
 <!-- Confirm Dialog — shared primitive across all modes (header bar, body,
@@ -600,6 +746,114 @@
   .session-ellipsis svg { width: 14px; height: 14px; }
   .session-item:hover .session-ellipsis { display: flex; }
   .session-ellipsis:hover { background: var(--surface-hover); color: var(--t1); }
+
+  .discovered-section {
+    border-top: 1px solid var(--b1);
+    margin-top: 4px;
+    padding-bottom: 8px;
+  }
+  .discovered-header {
+    min-height: 34px;
+    padding: 7px 8px 5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .discovered-heading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-family: var(--ui);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--t4);
+    letter-spacing: 0.04em;
+  }
+  .discovered-count {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--t3);
+    background: var(--n2);
+    border: 1px solid var(--b1);
+    border-radius: 4px;
+    padding: 0 4px;
+    line-height: 15px;
+  }
+  .discovered-refresh {
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--b1);
+    border-radius: 5px;
+    background: transparent;
+    color: var(--t3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .discovered-refresh:hover:not(:disabled) { background: var(--c); color: var(--t1); }
+  .discovered-refresh:disabled { opacity: 0.6; cursor: default; }
+  .discovered-refresh svg { width: 13px; height: 13px; }
+  .discovered-refresh svg.spin { animation: discovered-spin 1s linear infinite; }
+  @keyframes discovered-spin { to { transform: rotate(360deg); } }
+
+  .discovered-empty {
+    padding: 10px 12px 14px;
+    color: var(--t4);
+    font-size: 11px;
+    font-family: var(--ui);
+  }
+  .discovered-recent-label {
+    padding: 3px 9px 4px;
+    color: var(--t4);
+    font: 8px var(--ui);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+  }
+  .discovered-recent {
+    width: 100%;
+    min-height: 43px;
+    padding: 6px 8px;
+    border: 0;
+    border-top: 1px solid color-mix(in srgb, var(--b-subtle) 70%, transparent);
+    background: transparent;
+    color: var(--t2);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .discovered-recent:hover { background: var(--c); }
+  .discovered-recent:disabled { opacity: .55; cursor: default; }
+  .discovered-recent-icon { width: 22px; height: 22px; flex:none; display:grid; place-items:center; }
+  .discovered-recent-icon img { width: 19px; height: 19px; object-fit: contain; }
+  .discovered-recent-copy { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+  .discovered-recent-copy strong,
+  .discovered-recent-copy small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .discovered-recent-copy strong { font: 10.5px var(--ui); font-weight:550; color:var(--t2); }
+  .discovered-recent-copy small { font: 8.5px var(--ui); color:var(--t4); }
+  .discovered-recent time { flex:none; color:var(--t4); font:8.5px var(--ui); }
+  .discovered-browse {
+    width: calc(100% - 16px);
+    height: 30px;
+    margin: 7px 8px 3px;
+    padding: 0 9px;
+    border: 1px solid color-mix(in srgb, var(--acc) 28%, var(--b1));
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--acc) 7%, var(--n2));
+    color: var(--acc);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    font:10px var(--ui);
+    cursor:pointer;
+  }
+  .discovered-browse:hover { background:color-mix(in srgb, var(--acc) 13%, var(--n2)); }
+  .discovered-browse svg { width:13px; height:13px; fill:none; stroke:currentColor; stroke-width:1.8; }
 
 
   /* Claude plan badge */

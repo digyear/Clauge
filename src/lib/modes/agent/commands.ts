@@ -9,6 +9,8 @@ import type {
   UsageAnalytics,
   ClaudePlugin,
   MarketplacePlugin,
+  AgentDiscoveredSession,
+  DiscoveredSessionScanSummary,
 } from './types';
 
 // Session CRUD
@@ -119,6 +121,8 @@ export const agentFileReference = (provider: string, relPath: string) => invoke<
 
 // Worktree
 export const agentIsGitRepo = (path: string) => invoke<boolean>('agent_is_git_repo', { path });
+export const agentResolveProjectRoots = (paths: string[]) =>
+  invoke<Record<string, string>>('agent_resolve_project_roots', { paths });
 export const agentValidateWorktreeBranch = (projectPath: string, branchName: string) => invoke<void>('agent_validate_worktree_branch', { projectPath, branchName });
 export const agentCreateWorktree = (projectPath: string, sessionId: string, baseBranch: string, branchName: string) => invoke<string>('agent_create_worktree', { projectPath, sessionId, baseBranch, branchName });
 export const agentRemoveWorktree = (projectPath: string, worktreePath: string, force = false) =>
@@ -178,6 +182,20 @@ export const agentDiscoverSessions = (projectPath: string, provider?: string) =>
   invoke<DiscoveredSession[]>('agent_discover_sessions', { projectPath, provider });
 export const agentResolveResumeId = (projectPath: string, provider?: string) =>
   invoke<string | null>('agent_resolve_resume_id', { projectPath, provider });
+export const agentScanDiscoveredSessions = (provider?: string) =>
+  invoke<DiscoveredSessionScanSummary>('agent_scan_discovered_sessions', { provider });
+export const agentListDiscoveredSessions = (params: {
+  includeHidden?: boolean;
+  provider?: string;
+  projectPath?: string;
+  search?: string;
+} = {}) => invoke<AgentDiscoveredSession[]>('agent_list_discovered_sessions', params);
+export const agentHideDiscoveredSession = (id: string) =>
+  invoke<void>('agent_hide_discovered_session', { id });
+export const agentUnhideDiscoveredSession = (id: string) =>
+  invoke<void>('agent_unhide_discovered_session', { id });
+export const agentAdoptDiscoveredSession = (id: string) =>
+  invoke<AgentSession>('agent_adopt_discovered_session', { id });
 export const agentGetSessionTokens = (projectPath: string, sessionId?: string) => invoke<TokenUsage>('agent_get_session_tokens', { projectPath, sessionId });
 export const agentGetSessionContextUsage = (projectPath: string, sessionId: string, provider?: string) =>
   invoke<ContextUsage>('agent_get_session_context_usage', { projectPath, sessionId, provider });

@@ -113,15 +113,14 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to get app data dir");
 
-            let pool = tauri::async_runtime::block_on(async {
-                db::pool::init(&app_data_dir).await
-            }).expect("failed to open Clauge database");
+            let pool =
+                tauri::async_runtime::block_on(async { db::pool::init(&app_data_dir).await })
+                    .expect("failed to open Clauge database");
 
             cloud::snapshots::init(&app_data_dir);
 
-            tauri::async_runtime::block_on(async {
-                db::migrator::run(&pool).await
-            }).expect("failed to apply schema migrations");
+            tauri::async_runtime::block_on(async { db::migrator::run(&pool).await })
+                .expect("failed to apply schema migrations");
 
             tauri::async_runtime::block_on(async {
                 db::legacy_import::run_if_needed(&pool).await;
@@ -200,9 +199,7 @@ pub fn run() {
                 }) {
                     log::warn!("[cloud] load_from_keyring: {}", e);
                 }
-                tauri::async_runtime::block_on(
-                    pro_state.hydrate_from_snapshot(&pool_for_auth),
-                );
+                tauri::async_runtime::block_on(pro_state.hydrate_from_snapshot(&pool_for_auth));
                 if auth_state.is_connected() {
                     app.state::<cloud::scheduler::Scheduler>().enable();
                     // Re-queue kinds that were dirty when the app last quit.
@@ -275,7 +272,8 @@ pub fn run() {
                 let app_handle = app.handle().clone();
                 let pool_for_autostart = app.state::<sqlx::SqlitePool>().inner().clone();
                 tauri::async_runtime::spawn(async move {
-                    modes::workspace::commands::maybe_autostart_mcp(app_handle, pool_for_autostart).await;
+                    modes::workspace::commands::maybe_autostart_mcp(app_handle, pool_for_autostart)
+                        .await;
                 });
             }
 
@@ -284,7 +282,8 @@ pub fn run() {
                 let app_handle = app.handle().clone();
                 let pool_for_companion = app.state::<sqlx::SqlitePool>().inner().clone();
                 tauri::async_runtime::spawn(async move {
-                    companion::server::maybe_autostart_companion(app_handle, pool_for_companion).await;
+                    companion::server::maybe_autostart_companion(app_handle, pool_for_companion)
+                        .await;
                 });
             }
 
@@ -295,8 +294,8 @@ pub fn run() {
 
             // System tray with menu
             {
-                use tauri::tray::TrayIconBuilder;
                 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+                use tauri::tray::TrayIconBuilder;
 
                 let show_item = MenuItem::with_id(app, "show", "Back to App", true, None::<&str>)?;
                 let separator = PredefinedMenuItem::separator(app)?;
@@ -334,7 +333,8 @@ pub fn run() {
                 }
 
                 tray_builder
-                    .on_menu_event(move |app_handle: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
+                    .on_menu_event(
+                        move |app_handle: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
                         let id = event.id().as_ref();
                         if id == "quit" {
                             let ah = app_handle.clone();
@@ -348,7 +348,8 @@ pub fn run() {
                                 let _ = window.set_focus();
                             }
                         }
-                    })
+                        },
+                    )
                     .build(app)?;
             }
 
@@ -555,6 +556,7 @@ pub fn run() {
             modes::agent::terminal::agent_resize_terminal,
             modes::agent::terminal::agent_kill_terminal,
             modes::agent::worktree::agent_is_git_repo,
+            modes::agent::worktree::agent_resolve_project_roots,
             modes::agent::worktree::agent_validate_worktree_branch,
             modes::agent::worktree::agent_create_worktree,
             modes::agent::worktree::agent_remove_worktree,
@@ -583,6 +585,11 @@ pub fn run() {
             modes::agent::usage::agent_fetch_codex_usage_limits,
             modes::agent::usage::agent_discover_sessions,
             modes::agent::usage::agent_resolve_resume_id,
+            modes::agent::usage::agent_scan_discovered_sessions,
+            modes::agent::usage::agent_list_discovered_sessions,
+            modes::agent::usage::agent_hide_discovered_session,
+            modes::agent::usage::agent_unhide_discovered_session,
+            modes::agent::usage::agent_adopt_discovered_session,
             modes::agent::usage::agent_get_session_tokens,
             modes::agent::usage::agent_get_session_context_usage,
             modes::agent::commands::agent_update_tray_title,
@@ -681,7 +688,6 @@ pub fn run() {
             modes::workspace::meetings::commands::workspace_meeting_detect_dismiss,
             modes::workspace::meetings::commands::workspace_meeting_detect_status,
             modes::workspace::meetings::permissions::workspace_meeting_request_permissions,
-
             // Companion (mobile) server
             companion::server::companion_status,
             companion::server::companion_start,
@@ -697,7 +703,6 @@ pub fn run() {
             companion::companion_report_open_failed,
             companion::companion_set_terminal_focus,
             companion::push::companion_send_test_push,
-
             // Canvas mode
             modes::canvas::commands::canvas_resolve_tiles,
             modes::canvas::commands::canvas_list_tiles,
@@ -722,7 +727,9 @@ pub fn run() {
                         let _ = win.set_fullscreen(false);
                         for _ in 0..30 {
                             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                            if matches!(win.is_fullscreen(), Ok(false)) { break; }
+                            if matches!(win.is_fullscreen(), Ok(false)) {
+                                break;
+                            }
                         }
                     }
                     let _ = win.hide();
@@ -757,8 +764,8 @@ pub fn run() {
                         // process. Bounded: a wedged stop must not block quit —
                         // the crash-recovery sweep finalizes the meeting at
                         // next boot if this can't finish in time.
-                        let recorder = ah
-                            .state::<modes::workspace::meetings::recorder::RecorderState>();
+                        let recorder =
+                            ah.state::<modes::workspace::meetings::recorder::RecorderState>();
                         if recorder.status().recording {
                             match tokio::time::timeout(
                                 std::time::Duration::from_secs(8),

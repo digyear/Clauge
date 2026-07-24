@@ -31,8 +31,7 @@ pub async fn seed_existing_install(
 ) -> Result<(), sqlx::Error> {
     create_migrations_table(pool).await?;
 
-    let already_seeded: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+    let already_seeded: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
             .fetch_one(pool)
             .await?;
     if already_seeded > 0 {
@@ -123,14 +122,42 @@ async fn probe_version(pool: &SqlitePool, version: i64) -> Result<bool, sqlx::Er
         6 => column_exists(pool, "sql_connections", "ssh_profile_id").await?,
         7 => ssh_profiles_check_includes_agent(pool).await?,
         8 => table_exists(pool, "explorer_connections").await?,
+        9 => column_exists(pool, "ssh_profiles", "proxy_command").await?,
+        10 => ssh_profiles_check_includes_interactive(pool).await?,
+        11 => {
+            table_exists(pool, "workspaces").await?
+                && table_exists(pool, "workspace_board_cards").await?
+        }
+        12 => column_exists(pool, "agent_sessions", "coworker_id").await?,
+        13 => table_exists(pool, "workspace_dismissed_externals").await?,
+        14 => column_exists(pool, "agent_sessions", "provider").await?,
+        15 => column_exists(pool, "workspace_coworkers", "disabled_at").await?,
+        // Data-only rename. It is intentionally safe to re-run, so avoid
+        // guessing from schema and let sqlx apply 16+ normally.
+        16 => false,
+        17 => column_exists(pool, "agent_sessions", "binary_path").await?,
+        18 => column_exists(pool, "ai_usage", "tool_rounds").await?,
+        19 => {
+            table_exists(pool, "canvas_tiles").await?
+                && table_exists(pool, "canvas_viewports").await?
+        }
+        20 => canvas_tiles_check_includes_explorer(pool).await?,
+        21 => {
+            table_exists(pool, "canvas_regions").await?
+                && column_exists(pool, "canvas_tiles", "region_id").await?
+        }
+        22 => table_exists(pool, "companion_devices").await?,
+        23 => table_exists(pool, "workspace_meetings").await?,
+        24 => column_exists(pool, "workspace_card_comments", "channel").await?,
+        25 => column_exists(pool, "agent_sessions", "base_branch").await?,
+        26 => table_exists(pool, "agent_discovered_sessions").await?,
         _ => false,
     })
 }
 
 async fn table_exists(pool: &SqlitePool, name: &str) -> Result<bool, sqlx::Error> {
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
-    )
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?")
     .bind(name)
     .fetch_one(pool)
     .await?;
@@ -141,11 +168,7 @@ async fn table_exists(pool: &SqlitePool, name: &str) -> Result<bool, sqlx::Error
 /// accept bound parameters, so the table name is interpolated. `table`
 /// is always a hard-coded literal from `probe_version` — no user input,
 /// no injection surface.
-async fn column_exists(
-    pool: &SqlitePool,
-    table: &str,
-    column: &str,
-) -> Result<bool, sqlx::Error> {
+async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> Result<bool, sqlx::Error> {
     let rows = sqlx::query(&format!("PRAGMA table_info({})", table))
         .fetch_all(pool)
         .await?;
@@ -171,3 +194,24 @@ async fn ssh_profiles_check_includes_agent(pool: &SqlitePool) -> Result<bool, sq
     Ok(sql.map(|s| s.contains("'agent'")).unwrap_or(false))
 }
 
+async fn ssh_profiles_check_includes_interactive(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+    let sql: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='ssh_profiles'",
+    )
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    Ok(sql.map(|s| s.contains("'interactive'")).unwrap_or(false))
+}
+
+async fn canvas_tiles_check_includes_explorer(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+    let sql: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='canvas_tiles'",
+    )
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    Ok(sql
+        .map(|s| s.contains("'explorer_file_browser'"))
+        .unwrap_or(false))
+}

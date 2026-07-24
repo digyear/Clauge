@@ -1,6 +1,7 @@
 pub mod ai_usage;
 pub mod collections;
 pub mod coworkers;
+pub mod discovered_sessions;
 pub mod environments;
 pub mod explorer;
 pub mod history;

@@ -23,6 +23,7 @@
     agentExplorerOpenSessions,
     agentEditorFile,
     agentFileDragging,
+    agentSessionCenterOpen,
   } from '../stores';
   import { getSetting, setSetting } from '$lib/commands/settings';
   import { phoneOwnedTerminals, phoneDrivenSizes } from '$lib/stores/sizeOwner';
@@ -52,6 +53,7 @@
   import ProviderNotInstalledModal from '$lib/shared/agent/ProviderNotInstalledModal.svelte';
   import AgentFileExplorer from './AgentFileExplorer.svelte';
   import AgentFileEditor from './AgentFileEditor.svelte';
+  import AgentSessionCenter from './AgentSessionCenter.svelte';
   import { showToast } from '$lib/shared/primitives/toast';
   import { errorToast, friendlyError } from '$lib/utils/errors';
   import { refreshAgentGitStatus, refreshAgentContextUsage, loadAgentSessions, agentGitBranchName, agentGitFiles, agentGitAhead, agentGitBehind } from '../stores';
@@ -1870,6 +1872,10 @@
 </script>
 
 <ProviderNotInstalledModal bind:show={showNotInstalled} provider={notInstalledProvider} />
+
+{#if $agentSessionCenterOpen}
+  <AgentSessionCenter />
+{/if}
 
 {#if $activeAgentSession}
   <div class="agent-panel" bind:this={wrapperEl}>

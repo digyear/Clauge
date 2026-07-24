@@ -1,9 +1,9 @@
+use parking_lot::Mutex;
 use portable_pty::MasterPty;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 // ---------------------------------------------------------------------------
 // Session data
@@ -17,6 +17,9 @@ pub struct AgentSession {
     pub purpose: String,
     pub project_path: String,
     pub project_name: String,
+    /// Provider-native resume id. The column keeps its legacy Claude-era
+    /// name for migration compatibility, but stores Codex/OpenCode/Hermes
+    /// ids as well.
     pub claude_session_id: Option<String>,
     pub context_prompt: String,
     pub worktree_path: Option<String>,
@@ -69,6 +72,61 @@ pub struct DiscoveredSession {
     pub session_id: String,
     pub modified_at: String,
     pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDiscoveredSession {
+    pub id: String,
+    pub provider: String,
+    pub external_session_id: String,
+    pub project_path: Option<String>,
+    pub project_name: Option<String>,
+    pub title: Option<String>,
+    pub preview: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_seen_at: String,
+    pub parent_external_session_id: Option<String>,
+    pub session_kind: Option<String>,
+    pub source_path: Option<String>,
+    pub hidden: i32,
+    pub hidden_at: Option<String>,
+    pub adopted_agent_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredSessionUpsert {
+    pub provider: String,
+    pub external_session_id: String,
+    pub project_path: Option<String>,
+    pub project_name: Option<String>,
+    pub title: Option<String>,
+    pub preview: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub last_seen_at: String,
+    pub parent_external_session_id: Option<String>,
+    pub session_kind: Option<String>,
+    pub source_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredSessionListOptions {
+    pub include_hidden: Option<bool>,
+    pub provider: Option<String>,
+    pub project_path: Option<String>,
+    pub search: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredSessionScanSummary {
+    pub scanned: usize,
+    pub upserted: usize,
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
