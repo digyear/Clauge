@@ -1,6 +1,6 @@
 [Desktop Entry]
 Categories=Development;Utility;
-Comment=Clauge — An AI-powered cross-platform desktop super-app for developers
+Comment=ZeroAny Pane — Zero, one, any workspace
 Exec={{exec}} %u
 StartupWMClass={{exec}}
 Icon={{icon}}

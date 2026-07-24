@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>com.clauge.desktop</id>
-  <name>Clauge</name>
-  <summary>An AI-powered cross-platform desktop super-app for developers</summary>
+  <name>ZeroAny Pane</name>
+  <summary>Zero, one, any workspace</summary>
   <description>
     <p>
-      Clauge is an all-in-one developer desktop app. It brings your entire development
+      ZeroAny Pane is an all-in-one developer desktop app. It brings your entire development
       workflow into one place — so you can focus on building instead of switching between tools.
     </p>
     <p>
-      Designed to grow with you, Clauge continuously expands its capabilities to cover
-      more of what developers need, all from a single unified interface.
+      Designed to grow with you, ZeroAny Pane brings agents, developer tools, and project
+      workflows together in a single unified interface.
     </p>
     <p>Features include:</p>
     <ul>
@@ -22,10 +22,10 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">Clauge.desktop</launchable>
+  <launchable type="desktop-id">ZeroAny Pane.desktop</launchable>
 
-  <url type="homepage">https://clauge.in</url>
-  <url type="bugtracker">https://github.com/ClaugeHQ/Clauge/issues</url>
+  <url type="homepage">https://github.com/digyear/Clauge</url>
+  <url type="bugtracker">https://github.com/digyear/Clauge/issues</url>
 
   <categories>
     <category>Development</category>
@@ -46,11 +46,11 @@
     <keyword>workflow</keyword>
   </keywords>
 
-  <developer id="com.clauge">
-    <name>Clauge</name>
+  <developer id="io.github.digyear">
+    <name>ZeroAny Pane contributors</name>
   </developer>
 
-  <project_license>LicenseRef-proprietary</project_license>
+  <project_license>PolyForm-Noncommercial-1.0.0</project_license>
   <metadata_license>FSFAP</metadata_license>
 
   <content_rating type="oars-1.1" />

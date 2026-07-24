@@ -155,7 +155,7 @@
       await loadAgentSessions();
       await loadAgentDiscoveredSessions();
       handleSelectSession(adopted);
-      showToast('External session opened in Clauge', 'success');
+      showToast('External session opened in ZeroAny Pane', 'success');
     } catch (e) {
       showToast(`Open failed: ${friendlyError(e)}`, 'error');
     } finally {

@@ -799,7 +799,7 @@ pub async fn adopt_discovered_session_by_id(
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .ok_or("Discovered session has no project path to open in Clauge")?;
+            .ok_or("Discovered session has no project path to open in ZeroAny Pane")?;
         let project_meta = std::fs::metadata(project_path)
             .map_err(|_| format!("Project path does not exist: {}", project_path))?;
         if !project_meta.is_dir() {

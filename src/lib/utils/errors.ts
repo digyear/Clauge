@@ -7,7 +7,7 @@ import { showToast } from "$lib/shared/primitives/toast";
  */
 export function friendlyError(err: unknown): string {
   // Always log the raw error for debugging
-  console.error("[Clauge Error]", err);
+  console.error("[ZeroAny Pane Error]", err);
 
   let msg = "";
   if (err instanceof Error) {

@@ -187,7 +187,7 @@
       <label class="ie-label">Format</label>
       <select class="ie-select" bind:value={importFormat}>
         <option value="auto">Auto-detect</option>
-        <option value="clauge">Clauge JSON</option>
+        <option value="clauge">ZeroAny Pane JSON (Clauge compatible)</option>
         <option value="postman">Postman Collection</option>
         <option value="curl">cURL Command</option>
       </select>
@@ -229,7 +229,7 @@
 
       <label class="ie-label">Format</label>
       <select class="ie-select" bind:value={exportFormat}>
-        <option value="clauge">Clauge JSON</option>
+        <option value="clauge">ZeroAny Pane JSON (Clauge compatible)</option>
         {#if exportCollectionId !== '__all__'}
           <option value="curl">cURL (.sh)</option>
         {/if}

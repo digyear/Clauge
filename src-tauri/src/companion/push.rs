@@ -186,7 +186,7 @@ pub async fn companion_send_test_push(app: tauri::AppHandle) -> Result<String, S
     let total = fcm_tokens.len();
     let req_body = json!({
         "fcmTokens": fcm_tokens,
-        "title": "Clauge",
+        "title": "ZeroAny Pane",
         "body": "Test notification — delivery is working.",
         "data": { "kind": "test" },
     });

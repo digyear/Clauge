@@ -2036,7 +2036,7 @@
                                 <div class="stg-card-titles">
                                     <h3 class="stg-card-title">Privacy</h3>
                                     <p class="stg-card-sub">
-                                        Help improve Clauge with anonymous usage
+                                        Help improve ZeroAny Pane with anonymous usage
                                         data.
                                     </p>
                                 </div>
@@ -4345,7 +4345,7 @@
                                                     <span
                                                         class="stg-card-row-help"
                                                     >
-                                                        How often Clauge
+                                                        How often ZeroAny Pane
                                                         refreshes live limits
                                                         while Agent mode is
                                                         open.
@@ -5710,7 +5710,7 @@
                     <div class="stg-card-stack stg-about">
                         <section class="stg-card stg-card-bare about-identity">
                             <div class="about-header">
-                                <span class="about-app-name">Clauge</span>
+                                <span class="about-app-name">ZeroAny Pane</span>
                                 <span class="about-version"
                                     >v{appVersion || "—"}</span
                                 >
@@ -5745,7 +5745,7 @@
                                 <div class="stg-card-titles">
                                     <h3 class="stg-card-title">Tech Stack</h3>
                                     <p class="stg-card-sub">
-                                        What Clauge is built on.
+                                        What ZeroAny Pane is built on.
                                     </p>
                                 </div>
                             </header>
@@ -5901,7 +5901,7 @@
                                 <div class="about-links">
                                     <a
                                         class="about-link-btn"
-                                        href="https://github.com/ClaugeHQ/Clauge"
+                                        href="https://github.com/digyear/Clauge"
                                         target="_blank"
                                         rel="noopener"
                                         title="GitHub Repository"
@@ -5915,7 +5915,7 @@
                                     </a>
                                     <a
                                         class="about-link-btn"
-                                        href="https://github.com/ClaugeHQ/Clauge/issues/new/choose"
+                                        href="https://github.com/digyear/Clauge/issues/new/choose"
                                         target="_blank"
                                         rel="noopener"
                                         title="Report an Issue"
@@ -5947,7 +5947,7 @@
                                                 r="4"
                                             /></svg
                                         >
-                                        <span>Developer</span>
+                                        <span>Original Author</span>
                                     </a>
                                     <a
                                         class="about-link-btn"
@@ -5970,7 +5970,7 @@
                                                 d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"
                                             /></svg
                                         >
-                                        <span>Website</span>
+                                        <span>Upstream Clauge</span>
                                     </a>
                                     <a
                                         class="about-link-btn"
@@ -5984,7 +5984,7 @@
                                                 d="M4 4l7.5 9.5L4.5 20H7l5.7-6.2L17 20h3l-7.8-9.9L19.5 4H17l-5.2 5.7L8 4H4z"
                                             /></svg
                                         >
-                                        <span>X / Twitter</span>
+                                        <span>Upstream X</span>
                                     </a>
                                     <a
                                         class="about-link-btn"
@@ -6002,7 +6002,7 @@
                                                 d="M3 7l9 6 9-6"
                                             /></svg
                                         >
-                                        <span>Email</span>
+                                        <span>Upstream Support</span>
                                     </a>
                                 </div>
                             </div>

@@ -4,7 +4,7 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<style>
-			#clauge-splash {
+			#zeroany-pane-splash {
 				position: fixed;
 				inset: 0;
 				display: flex;
@@ -16,8 +16,8 @@
 				transition: opacity 0.3s ease;
 				pointer-events: none;
 			}
-			#clauge-splash.fade-out { opacity: 0; }
-			#clauge-splash img {
+			#zeroany-pane-splash.fade-out { opacity: 0; }
+			#zeroany-pane-splash img {
 				width: 180px;
 				height: 180px;
 				pointer-events: none;
@@ -26,14 +26,14 @@
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
-		<div id="clauge-splash"><img src="/clauge-icon-animated.svg" alt="" aria-hidden="true" /></div>
+		<div id="zeroany-pane-splash"><img src="/zeroany-pane-icon.svg" alt="" aria-hidden="true" /></div>
 		<script>
 			// The transparent widget window must never flash the dark splash,
 			// and needs a root class so its CSS can out-rank the opaque
 			// body background from app.css.
 			if (location.pathname.startsWith("/widget")) {
 				document.documentElement.classList.add("widget-window");
-				document.getElementById("clauge-splash").remove();
+				document.getElementById("zeroany-pane-splash").remove();
 			}
 		</script>
 		<div style="display: contents">%sveltekit.body%</div>

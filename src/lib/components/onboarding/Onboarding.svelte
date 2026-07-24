@@ -167,13 +167,13 @@
 
         <div class="ob-card">
             <img
-                src="/clauge-icon-animated.svg"
-                alt="Clauge"
+                src="/zeroany-pane-icon.svg"
+                alt="ZeroAny Pane"
                 class="ob-logo"
                 width="72"
                 height="72"
             />
-            <h1 class="ob-title">Welcome to Clauge</h1>
+            <h1 class="ob-title">Welcome to ZeroAny Pane</h1>
             <p class="ob-sub">Sign in to get started</p>
 
             <div class="ob-btns">
@@ -237,7 +237,7 @@
                     </button>
 
                     <p class="ob-legal">
-                        By signing in, you agree to our
+                        By signing in, you agree to the Clauge Cloud
                         <a
                             href="https://clauge.in/terms"
                             target="_blank"

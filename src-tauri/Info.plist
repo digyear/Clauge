@@ -3,8 +3,8 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Clauge records meeting audio to create AI meeting notes.</string>
+  <string>ZeroAny Pane records meeting audio to create AI meeting notes.</string>
   <key>NSAudioCaptureUsageDescription</key>
-  <string>Clauge captures system audio so meeting notes include all participants.</string>
+  <string>ZeroAny Pane captures system audio so meeting notes include all participants.</string>
 </dict>
 </plist>

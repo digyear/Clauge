@@ -102,7 +102,10 @@ impl CliRunner for HermesRunner {
     }
 
     fn run_plugin_subcommand(&self, _args: &[&str]) -> Result<(bool, String), String> {
-        Err("Hermes plugins are managed by Hermes; Clauge's marketplace UI does not apply.".into())
+        Err(
+            "Hermes plugins are managed by Hermes; ZeroAny Pane's marketplace UI does not apply."
+                .into(),
+        )
     }
 
     fn sessions_root(&self) -> Option<PathBuf> {

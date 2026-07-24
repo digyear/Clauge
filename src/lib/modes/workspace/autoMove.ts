@@ -83,7 +83,7 @@ export async function autoMoveMergedPrs(): Promise<void> {
           });
           await workspaceCardAddComment(
             card.id,
-            `**PR merged on host** — moved to **${doneCol.name}** by Clauge.`,
+            `**PR merged on host** — moved to **${doneCol.name}** by ZeroAny Pane.`,
             actor,
           );
           showToast(

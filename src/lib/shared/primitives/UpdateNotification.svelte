@@ -19,9 +19,9 @@
   async function handleWhatsNew() {
     try {
       const { openUrl } = await import('@tauri-apps/plugin-opener');
-      await openUrl('https://clauge.in/changelog.html');
+      await openUrl('https://github.com/digyear/Clauge/releases/latest');
     } catch {
-      window.open('https://clauge.in/changelog.html', '_blank');
+      window.open('https://github.com/digyear/Clauge/releases/latest', '_blank');
     }
   }
 
@@ -36,7 +36,7 @@
     <div class="un-header">
       <svg class="un-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
       <div class="un-text">
-        <span class="un-title">Clauge v{$updateAvailable.version} is available</span>
+        <span class="un-title">ZeroAny Pane v{$updateAvailable.version} is available</span>
         <span class="un-desc">
           {#if infoOnly}
             Download the new version to update.

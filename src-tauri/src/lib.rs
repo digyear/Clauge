@@ -299,7 +299,7 @@ pub fn run() {
 
                 let show_item = MenuItem::with_id(app, "show", "Back to App", true, None::<&str>)?;
                 let separator = PredefinedMenuItem::separator(app)?;
-                let quit_item = MenuItem::with_id(app, "quit", "Quit Clauge", true, None::<&str>)?;
+                let quit_item = MenuItem::with_id(app, "quit", "Quit ZeroAny Pane", true, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&show_item, &separator, &quit_item])?;
 
                 // tray-dark.png is a black silhouette designed to be used as a
@@ -321,7 +321,7 @@ pub fn run() {
                 let mut tray_builder = TrayIconBuilder::with_id("main-tray")
                     .icon(tray_icon)
                     .menu(&menu)
-                    .tooltip("Clauge");
+                    .tooltip("ZeroAny Pane");
 
                 // Template mode is a macOS-only concept — the system uses the
                 // alpha channel to render the icon in the right color for the

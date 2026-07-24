@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Clauge",
+  "productName": "ZeroAny Pane",
   "version": "3.5.0",
   "identifier": "com.clauge.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Clauge",
+        "title": "ZeroAny Pane",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
@@ -39,13 +39,13 @@
     ],
     "linux": {
       "deb": {
-        "desktopTemplate": "Clauge.desktop",
+        "desktopTemplate": "ZeroAnyPane.desktop",
         "files": {
           "/usr/share/metainfo/com.clauge.desktop.metainfo.xml": "com.clauge.desktop.metainfo.xml"
         }
       },
       "rpm": {
-        "desktopTemplate": "Clauge.desktop",
+        "desktopTemplate": "ZeroAnyPane.desktop",
         "files": {
           "/usr/share/metainfo/com.clauge.desktop.metainfo.xml": "com.clauge.desktop.metainfo.xml"
         }
@@ -55,7 +55,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/ClaugeHQ/Clauge/releases/latest/download/latest.json"
+        "https://github.com/digyear/Clauge/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxNTMyMTA3Nzc0NzA3NzUKUldSMUIwZDNCeUZUVVhEdkRHdk1qd0NmS2hybWZEWXYwQWxoVjh3STF5KzVkNzY1aTlxelgvMlQK"
     },

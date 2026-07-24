@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ZeroAny Pane tray icon">
+  <path fill="#F4EFE7" fill-rule="evenodd" d="M32 4a28 28 0 1 1 0 56 28 28 0 0 1 0-56Zm0 10a18 18 0 1 0 0 36 18 18 0 0 0 0-36Z"/>
+  <path fill="#070A14" d="M25 21 33 12h10v33h5v10H24V45h8V27l-2 2Z"/>
+  <path fill="#FF8A68" d="M28 21 34 15h6v33h5v4H27v-4h8V21l-5 5Z"/>
+  <rect x="35" y="44" width="8" height="8" rx="2" fill="#63D4B1"/>
+</svg>

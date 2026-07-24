@@ -235,7 +235,7 @@
       await Promise.all([loadAgentSessions(), loadAgentDiscoveredSessions()]);
       catalog = catalog.map((item) => item.id === session.id ? { ...item, adoptedAgentSessionId: managed.id } : item);
       openManagedSession(managed);
-      showToast('Session opened in Clauge', 'success');
+      showToast('Session opened in ZeroAny Pane', 'success');
     } catch (error) {
       showToast(`Open failed: ${friendlyError(error)}`, 'error');
     } finally {
@@ -423,7 +423,7 @@
               <time title={new Date(session.updatedAt).toLocaleString()}>{relativeTime(session.updatedAt)}</time>
               <div class="sc-row-actions">
                 {#if rowStatus === 'external'}
-                  <button class="primary" disabled={busyIds.includes(session.id)} onclick={() => adopt(session)}>Open in Clauge</button>
+                  <button class="primary" disabled={busyIds.includes(session.id)} onclick={() => adopt(session)}>Open in ZeroAny Pane</button>
                   <button disabled={!session.projectPath} onclick={() => session.projectPath && agentFsReveal(session.projectPath)}>Reveal</button>
                   <button onclick={() => setHidden(session, true)}>Hide</button>
                 {:else if rowStatus === 'hidden'}
