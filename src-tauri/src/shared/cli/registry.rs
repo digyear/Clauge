@@ -38,7 +38,7 @@ pub fn try_runner_for(provider: &str) -> Option<&'static dyn CliRunner> {
     }
 }
 
-/// All providers Clauge currently supports, in display order. Drives
+/// All providers ZeroAny Workbench currently supports, in display order. Drives
 /// the provider tab strip in the plugin manager and the picker in
 /// NewSessionModal. Keep Claude first so it stays the obvious default.
 pub const SUPPORTED_PROVIDERS: &[&str] = &["claude", "codex", "gemini", "opencode", "hermes"];

@@ -29,7 +29,7 @@ export {
   deleteHistoryEntry,
   exportCollection,
   exportAllCollections,
-  importClauge,
+  importZeroAny,
   importPostman,
   importCurl,
   exportAsCurl,

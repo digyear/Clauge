@@ -63,7 +63,7 @@ pub async fn cloud_probe_missing_credentials(
 
     // ─── SSH ───────────────────────────────────────────────────────────────
     // Per-row keychain entry under the bare profile id (service
-    // "Clauge SSH"). Three auth shapes:
+    // "ZeroAny Workbench SSH"). Three auth shapes:
     //   - password: keychain miss → flag
     //   - key:      key_path missing on disk → flag (passphrase, if any,
     //               is optional; we don't second-guess it)

@@ -31,7 +31,7 @@ pub fn run() {
     // are single-instance natively, so the plugin is gated to other OSes.
     // Must be registered FIRST — the plugin intercepts startup, brings the
     // running window to focus, and forwards deep-link URIs from the new
-    // attempt (e.g. clauge:// OAuth callbacks) to the existing process.
+    // attempt (e.g. zeroany-workbench:// callbacks) to the existing process.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -40,17 +40,17 @@ pub fn run() {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
-            // Explicitly forward clauge:// URIs from the new launch to the
+            // Explicitly forward zeroany-workbench:// URIs from the new launch to the
             // running deep-link plugin. The single-instance plugin's
             // deep-link cargo feature is supposed to do this automatically,
             // but the auto-forward can miss on Linux .deb installs (the
             // .desktop handoff produces a slightly different argv shape).
             // The frontend's centralized handler in +layout.svelte listens
-            // for this event via onOpenUrl() and dispatches clauge:oauth-callback.
+            // for this event via onOpenUrl() and dispatches the app OAuth event.
             use tauri::Emitter;
             let uris: Vec<String> = args
                 .iter()
-                .filter(|a| a.starts_with("clauge://"))
+                .filter(|a| a.starts_with("zeroany-workbench://"))
                 .cloned()
                 .collect();
             if !uris.is_empty() {
@@ -70,12 +70,12 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_http::init())
-        // tauri-plugin-sql is registered without migrations — the Clauge
-        // database lives in app_data_dir/clauge.db and its schema is
+        // tauri-plugin-sql is registered without migrations — the ZeroAny Workbench
+        // database lives in app_data_dir/zeroany-workbench.db and its schema is
         // managed end-to-end by `db::migrator` (see src-tauri/migrations/).
         // The plugin remains available for any frontend SQL access against
         // user-configured databases (Postgres/MySQL/Mongo via the SQL/NoSQL
-        // modes), but it does NOT touch the Clauge schema.
+        // modes), but it does NOT touch the application schema.
         .plugin(tauri_plugin_sql::Builder::default().build())
         .setup(|app| {
             // Rolling file logger — per-day folder, per-hour file, 30-day retention.
@@ -103,8 +103,7 @@ pub fn run() {
 
             // ── Database setup ───────────────────────────────────────
             // 1. Open the SQLite pool.
-            // 2. Run schema migrations (with bootstrap for legacy installs).
-            // 3. One-time import of pre-SQLite ~/.clauge/* data.
+            // 2. Run schema migrations.
             //
             // All three steps are encapsulated under `db::*` so this
             // setup() block stays focused on plumbing.
@@ -115,16 +114,13 @@ pub fn run() {
 
             let pool =
                 tauri::async_runtime::block_on(async { db::pool::init(&app_data_dir).await })
-                    .expect("failed to open Clauge database");
+                    .expect("failed to open ZeroAny Workbench database");
 
             cloud::snapshots::init(&app_data_dir);
 
             tauri::async_runtime::block_on(async { db::migrator::run(&pool).await })
                 .expect("failed to apply schema migrations");
 
-            tauri::async_runtime::block_on(async {
-                db::legacy_import::run_if_needed(&pool).await;
-            });
 
             // Meetings left at status='recording' mean the app died
             // mid-recording. Finalize them now, before the detect poller
@@ -256,7 +252,7 @@ pub fn run() {
             modes::workspace::meetings::detect::start_poller(app.handle().clone());
 
             // Generate the agent hook assets (notify.sh + the Claude
-            // --settings file) under ~/.clauge/hooks once at boot. The
+            // --settings file) under ~/.zeroany-workbench/hooks once at boot. The
             // spawn path injects them per-launch when agent_hooks_enabled.
             // Best-effort: log + continue so a write failure can't block boot.
             if let Err(e) = modes::agent::hooks::ensure_hook_assets() {
@@ -299,7 +295,7 @@ pub fn run() {
 
                 let show_item = MenuItem::with_id(app, "show", "Back to App", true, None::<&str>)?;
                 let separator = PredefinedMenuItem::separator(app)?;
-                let quit_item = MenuItem::with_id(app, "quit", "Quit ZeroAny Pane", true, None::<&str>)?;
+                let quit_item = MenuItem::with_id(app, "quit", "Quit ZeroAny Workbench", true, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&show_item, &separator, &quit_item])?;
 
                 // tray-dark.png is a black silhouette designed to be used as a
@@ -321,7 +317,7 @@ pub fn run() {
                 let mut tray_builder = TrayIconBuilder::with_id("main-tray")
                     .icon(tray_icon)
                     .menu(&menu)
-                    .tooltip("ZeroAny Pane");
+                    .tooltip("ZeroAny Workbench");
 
                 // Template mode is a macOS-only concept — the system uses the
                 // alpha channel to render the icon in the right color for the
@@ -466,7 +462,7 @@ pub fn run() {
             cloud::credentials_probe::cloud_probe_missing_credentials,
             modes::rest::import_export::export_collection,
             modes::rest::import_export::export_all_collections,
-            modes::rest::import_export::import_clauge,
+            modes::rest::import_export::import_zeroany,
             modes::rest::import_export::import_postman,
             modes::rest::import_export::import_curl,
             modes::rest::import_export::export_as_curl,

@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>com.clauge.desktop</id>
-  <name>ZeroAny Pane</name>
+  <id>com.digyear.zeroany.workbench</id>
+  <name>ZeroAny Workbench</name>
   <summary>Zero, one, any workspace</summary>
   <description>
     <p>
-      ZeroAny Pane is an all-in-one developer desktop app. It brings your entire development
+      ZeroAny Workbench is an all-in-one developer desktop app. It brings your entire development
       workflow into one place — so you can focus on building instead of switching between tools.
     </p>
     <p>
-      Designed to grow with you, ZeroAny Pane brings agents, developer tools, and project
+      Designed to grow with you, ZeroAny Workbench brings agents, developer tools, and project
       workflows together in a single unified interface.
     </p>
     <p>Features include:</p>
@@ -22,7 +22,7 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">ZeroAny Pane.desktop</launchable>
+  <launchable type="desktop-id">ZeroAny Workbench.desktop</launchable>
 
   <url type="homepage">https://github.com/digyear/Clauge</url>
   <url type="bugtracker">https://github.com/digyear/Clauge/issues</url>
@@ -47,7 +47,7 @@
   </keywords>
 
   <developer id="io.github.digyear">
-    <name>ZeroAny Pane contributors</name>
+    <name>ZeroAny Workbench contributors</name>
   </developer>
 
   <project_license>PolyForm-Noncommercial-1.0.0</project_license>

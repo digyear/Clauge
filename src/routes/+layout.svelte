@@ -725,7 +725,7 @@
         if (isWidget) return;
         // Fade out splash screen now that the layout is mounted
         requestAnimationFrame(() => {
-            const splash = document.getElementById("clauge-splash");
+            const splash = document.getElementById("zeroany-workbench-splash");
             if (splash) {
                 splash.classList.add("fade-out");
                 setTimeout(() => splash.remove(), SPLASH_FADE_OUT_MS);
@@ -893,15 +893,15 @@
         //
         // The installed .desktop Exec line is often missing %u (Tauri's bundler
         // doesn't add it). register() creates a user-local handler at
-        // ~/.local/share/applications/clauge-handler.desktop with the correct
-        // Exec="<binary>" %u, and sets it as the xdg default for clauge://.
+        // a user-local handler with the correct Exec="<binary>" %u, and sets
+        // it as the xdg default for zeroany-workbench://.
         // This must run on every startup so the path stays current (e.g. after
         // an update). No-op on macOS/Windows per plugin design.
         try {
             const { register, getCurrent, onOpenUrl } =
                 await import("@tauri-apps/plugin-deep-link");
 
-            if (isLinux()) await register("clauge").catch(() => {});
+            if (isLinux()) await register("zeroany-workbench").catch(() => {});
 
             // Fire cloud_get_status; the Rust ProStateManager applies the
             // entitlements + emits cloud:pro-state which our subscription
@@ -1007,7 +1007,7 @@
                 for (const url of urls) {
                     try {
                         const u = new URL(url);
-                        if (u.protocol !== "clauge:") continue;
+                        if (u.protocol !== "zeroany-workbench:") continue;
 
                         if (u.hostname === "oauth-callback") {
                             const params = u.searchParams;

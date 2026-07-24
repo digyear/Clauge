@@ -1,6 +1,6 @@
-//! SQLite connection pool initialization for the Clauge app database.
+//! SQLite connection pool initialization for the ZeroAny Workbench app database.
 //!
-//! Lives in `app_data_dir/clauge.db`, with `foreign_keys = ON` enforced
+//! Lives in `app_data_dir/zeroany-workbench.db`, with `foreign_keys = ON` enforced
 //! per-connection (SQLite default is OFF). The pool is created once during
 //! `setup()` and managed via Tauri state for `#[tauri::command]` access.
 
@@ -17,16 +17,16 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 /// from `loadX()` calls in the Svelte stores).
 const MAX_CONNECTIONS: u32 = 5;
 
-/// Open the Clauge SQLite pool, creating the file if missing.
+/// Open the ZeroAny Workbench SQLite pool, creating the file if missing.
 ///
-/// `app_data_dir` is `~/Library/Application Support/com.clauge.desktop/`
+/// `app_data_dir` is `~/Library/Application Support/com.digyear.zeroany.workbench/`
 /// on macOS and the per-platform equivalent elsewhere — Tauri provides it
 /// via `app.path().app_data_dir()`.
 pub async fn init(app_data_dir: &Path) -> Result<SqlitePool, String> {
     std::fs::create_dir_all(app_data_dir)
         .map_err(|e| format!("create app data dir: {}", e))?;
 
-    let db_path = app_data_dir.join("clauge.db");
+    let db_path = app_data_dir.join("zeroany-workbench.db");
     let url = format!("sqlite:{}?mode=rwc", db_path.display());
 
     let opts = SqliteConnectOptions::from_str(&url)

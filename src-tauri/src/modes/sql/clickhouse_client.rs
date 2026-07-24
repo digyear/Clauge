@@ -115,7 +115,7 @@ impl ClickhouseClient {
     /// Build a client. `host`/`port` come from `SqlConnectionConfig`;
     /// `ssl=true` switches the URL scheme to https.
     ///
-    /// `app_pool` is the Clauge SQLite pool (used to read the global proxy
+    /// `app_pool` is the ZeroAny Workbench SQLite pool (used to read the global proxy
     /// setting). When `Some`, the HTTP client honours the user's configured
     /// proxy — important for users hitting ClickHouse Cloud from behind a
     /// corporate proxy. `None` falls back to a vanilla client (used in
@@ -187,7 +187,7 @@ impl ClickhouseClient {
 
     /// POST the SQL to ClickHouse and parse the response.
     ///
-    /// FORMAT-clause policy: Clauge's results panel only renders the
+    /// FORMAT-clause policy: ZeroAny Workbench's results panel only renders the
     /// structured `FORMAT JSON` shape (`{ meta: [], data: [], rows: N }`).
     /// We dispatch as follows:
     ///   - No user FORMAT      → append `FORMAT JSON` and parse normally.
@@ -227,7 +227,7 @@ impl ClickhouseClient {
             // User wrote any other FORMAT → reject up-front.
             Some(fmt) => {
                 return Err(format!(
-                    "Custom FORMAT '{}' is not supported in Clauge's table view. \
+                    "Custom FORMAT '{}' is not supported in ZeroAny Workbench's table view. \
                      Remove the FORMAT clause to see results.",
                     fmt
                 ));

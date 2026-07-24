@@ -408,7 +408,7 @@
             </svg>
             <span class="rec-dot" aria-hidden="true"></span>
             {#if stopError}
-                <span class="stop-error">Couldn't stop — open ZeroAny Pane</span>
+                <span class="stop-error">Couldn't stop — open ZeroAny Workbench</span>
             {:else}
                 <span class="elapsed">{elapsedLabel}</span>
             {/if}
@@ -453,7 +453,7 @@
                 </svg>
             </button>
         {:else}
-            <img class="logo" src="/zeroany-pane-icon.svg" alt="" />
+            <img class="logo" src="/zeroany-workbench-icon.svg" alt="" />
             <div class="text">
                 <span class="title">Start AI Meeting Note</span>
                 <span class="subtitle" class:warn={phase === "model-missing"}

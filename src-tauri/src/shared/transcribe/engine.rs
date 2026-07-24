@@ -177,7 +177,7 @@ mod tests {
     #[ignore]
     #[cfg(target_os = "macos")]
     fn transcribe_smoke_hello_world() {
-        let model = std::env::temp_dir().join("clauge-test-models/ggml-tiny.bin");
+        let model = std::env::temp_dir().join("zeroany-workbench-test-models/ggml-tiny.bin");
         if !model.is_file() {
             std::fs::create_dir_all(model.parent().unwrap()).unwrap();
             let url = crate::shared::transcribe::models::download_url("tiny");
@@ -194,8 +194,8 @@ mod tests {
             "downloaded model failed ggml magic validation"
         );
 
-        let aiff = std::env::temp_dir().join("clauge-test-hello.aiff");
-        let wav = std::env::temp_dir().join("clauge-test-hello-16k.wav");
+        let aiff = std::env::temp_dir().join("zeroany-workbench-test-hello.aiff");
+        let wav = std::env::temp_dir().join("zeroany-workbench-test-hello-16k.wav");
         assert!(Command::new("/usr/bin/say")
             .arg("-o")
             .arg(&aiff)

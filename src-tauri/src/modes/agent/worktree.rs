@@ -32,7 +32,7 @@ fn main_project_from_common_dir(common: &Path) -> Option<PathBuf> {
         .flatten()
 }
 
-/// Clauge worktrees live below `<project>/.clauge-worktrees/<session>`.
+/// ZeroAny Workbench worktrees live below `<project>/.zeroany-worktrees/<session>`.
 /// Historical provider sessions remain in their native stores after that
 /// checkout is removed, so Git can no longer answer `rev-parse` for the old
 /// cwd. The stable container name lets us recover the owning project without
@@ -40,7 +40,7 @@ fn main_project_from_common_dir(common: &Path) -> Option<PathBuf> {
 fn managed_worktree_project_root(path: &Path) -> Option<PathBuf> {
     path.ancestors()
         .find(|ancestor| {
-            ancestor.file_name().and_then(|name| name.to_str()) == Some(".clauge-worktrees")
+            ancestor.file_name().and_then(|name| name.to_str()) == Some(".zeroany-worktrees")
         })
         .and_then(Path::parent)
         .map(Path::to_path_buf)
@@ -103,20 +103,20 @@ fn ensure_worktree_ignored(project_path: &str) -> Result<(), String> {
         Ok(contents) => {
             if contents
                 .lines()
-                .any(|line| line.trim() == ".clauge-worktrees/")
+                .any(|line| line.trim() == ".zeroany-worktrees/")
             {
                 return Ok(());
             }
             let updated = if contents.trim_end().is_empty() {
-                ".clauge-worktrees/\n".to_string()
+                ".zeroany-worktrees/\n".to_string()
             } else {
-                format!("{}\n.clauge-worktrees/\n", contents.trim_end())
+                format!("{}\n.zeroany-worktrees/\n", contents.trim_end())
             };
             std::fs::write(&gitignore, updated)
                 .map_err(|e| format!("Failed to update .gitignore: {e}"))?;
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::write(&gitignore, ".clauge-worktrees/\n")
+            std::fs::write(&gitignore, ".zeroany-worktrees/\n")
                 .map_err(|e| format!("Failed to create .gitignore: {e}"))?;
         }
         Err(e) => return Err(format!("Failed to read .gitignore: {e}")),
@@ -226,7 +226,7 @@ pub fn agent_create_worktree(
     let branch_component = portable_path_component(&branch_name, "branch");
     let session_dir = format!("{project_name}-{branch_component}-{session_short}");
     let worktree_dir = PathBuf::from(&project_path)
-        .join(".clauge-worktrees")
+        .join(".zeroany-worktrees")
         .join(session_dir);
     if worktree_dir.exists() {
         return Err(format!(
@@ -293,7 +293,7 @@ pub fn agent_remove_worktree(
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         // Treat "not a working tree" / "no such directory" as success — the
-        // worktree is already gone (deleted outside Clauge); prune above
+        // worktree is already gone (deleted outside ZeroAny Workbench); prune above
         // cleared the stale git metadata. Caller's intent is satisfied.
         let lower = stderr.to_lowercase();
         if lower.contains("is not a working tree")
@@ -343,7 +343,7 @@ mod tests {
 
     fn temp_repo(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("clauge-worktree-{name}-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("zeroany-workbench-worktree-{name}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         assert!(Command::new("git")
             .args(["init", "-b", "dev"])
@@ -364,9 +364,9 @@ mod tests {
             .arg(&dir)
             .args([
                 "-c",
-                "user.name=Clauge Test",
+                "user.name=ZeroAny Workbench Test",
                 "-c",
-                "user.email=test@clauge.local",
+                "user.email=test@zeroany-workbench.local",
                 "commit",
                 "-m",
                 "initial",
@@ -433,7 +433,7 @@ mod tests {
 
         assert_eq!(
             PathBuf::from(&result),
-            repo.join(".clauge-worktrees")
+            repo.join(".zeroany-worktrees")
                 .join(format!("{project_name}-feature-add-user-login-123e4567"))
         );
         let branch = Command::new("git")
@@ -460,7 +460,7 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("Invalid session ID"), "{error}");
-        assert!(!repo.join(".clauge-worktrees").exists());
+        assert!(!repo.join(".zeroany-worktrees").exists());
         let branch = Command::new("git")
             .args(["-C"])
             .arg(&repo)
@@ -490,7 +490,7 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains(".gitignore"), "{error}");
-        assert!(!repo.join(".clauge-worktrees").exists());
+        assert!(!repo.join(".zeroany-worktrees").exists());
         let branch = Command::new("git")
             .args(["-C"])
             .arg(&repo)

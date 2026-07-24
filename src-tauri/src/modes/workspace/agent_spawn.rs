@@ -782,8 +782,8 @@ fn build_persona_prompt(
          \n\
          Notes vs files: when the user says 'create / update a note', 'doc', \
          'page', 'md file', 'markdown file' — and references the workspace, the \
-         notes, or Clauge — use the notes_*_for_project MCP tools. Do NOT use the \
-         filesystem Write tool. Workspace notes live in Clauge's SQLite DB, not on \
+         notes, or ZeroAny Workbench — use the notes_*_for_project MCP tools. Do NOT use the \
+         filesystem Write tool. Workspace notes live in ZeroAny Workbench's SQLite DB, not on \
          disk; only write a real file if the user explicitly says 'on disk' or \
          gives a filesystem path.\n\
          \n\

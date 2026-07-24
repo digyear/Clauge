@@ -1,5 +1,5 @@
 -- Persistent catalog of provider-native sessions discovered outside
--- Clauge's managed agent_sessions table. Provider stores remain the
+-- ZeroAny Workbench's managed agent_sessions table. Provider stores remain the
 -- source of truth; this table is only a local index plus hide/adoption
 -- metadata.
 

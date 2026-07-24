@@ -195,7 +195,7 @@ mod tests {
         let base = DiscoveredSessionUpsert {
             provider: "claude".into(),
             external_session_id: "sid-1".into(),
-            project_path: Some("/repo/.clauge-worktrees/task".into()),
+            project_path: Some("/repo/.zeroany-worktrees/task".into()),
             project_root: Some("/repo".into()),
             project_name: Some("repo".into()),
             title: Some("First".into()),
@@ -215,7 +215,7 @@ mod tests {
             last_seen_at: "2026-01-03T00:00:00Z".into(),
             // Simulate a later scan after an arbitrary linked worktree was
             // deleted and Git could only fall back to the original cwd.
-            project_root: Some("/repo/.clauge-worktrees/task".into()),
+            project_root: Some("/repo/.zeroany-worktrees/task".into()),
             ..base
         };
         let row = upsert_discovered_session(&pool, &second).await.unwrap();
@@ -236,7 +236,7 @@ mod tests {
         assert_eq!(row.preview.as_deref(), Some("updated"));
         assert_eq!(
             row.project_path.as_deref(),
-            Some("/repo/.clauge-worktrees/task")
+            Some("/repo/.zeroany-worktrees/task")
         );
         assert_eq!(row.project_root.as_deref(), Some("/repo"));
         assert_eq!(row.updated_at, "2026-01-02T00:00:00Z");

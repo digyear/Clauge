@@ -6,7 +6,7 @@ pub const API_BASE_URL: &str = match option_env!("CLAUGE_API_URL") {
 
 // OS keyring service for cloud auth tokens. Separate service from SSH /
 // Explorer secrets so wiping cloud auth doesn't touch user-saved credentials.
-pub const KEYRING_SERVICE: &str = "Clauge Cloud Auth";
+pub const KEYRING_SERVICE: &str = "ZeroAny Workbench Cloud Auth";
 
 pub const KEY_GITHUB_ACCESS: &str = "github:access_token";
 pub const KEY_GOOGLE_ACCESS: &str = "google:access_token";

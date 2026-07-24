@@ -162,7 +162,7 @@ impl D1Client {
     /// stuffed per the field-reuse mapping documented at the top of this
     /// file (`host`=account_id, `database`=database_id, `password`=token).
     ///
-    /// `app_pool` is the Clauge SQLite pool (used for the shared HTTP
+    /// `app_pool` is the ZeroAny Workbench SQLite pool (used for the shared HTTP
     /// proxy settings). `None` falls back to a vanilla `reqwest::Client`.
     pub async fn new(
         config: &SqlConnectionConfig,

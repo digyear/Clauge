@@ -2036,7 +2036,7 @@
                                 <div class="stg-card-titles">
                                     <h3 class="stg-card-title">Privacy</h3>
                                     <p class="stg-card-sub">
-                                        Help improve ZeroAny Pane with anonymous usage
+                                        Help improve ZeroAny Workbench with anonymous usage
                                         data.
                                     </p>
                                 </div>
@@ -4345,7 +4345,7 @@
                                                     <span
                                                         class="stg-card-row-help"
                                                     >
-                                                        How often ZeroAny Pane
+                                                        How often ZeroAny Workbench
                                                         refreshes live limits
                                                         while Agent mode is
                                                         open.
@@ -5710,7 +5710,7 @@
                     <div class="stg-card-stack stg-about">
                         <section class="stg-card stg-card-bare about-identity">
                             <div class="about-header">
-                                <span class="about-app-name">ZeroAny Pane</span>
+                                <span class="about-app-name">ZeroAny Workbench</span>
                                 <span class="about-version"
                                     >v{appVersion || "—"}</span
                                 >
@@ -5745,7 +5745,7 @@
                                 <div class="stg-card-titles">
                                     <h3 class="stg-card-title">Tech Stack</h3>
                                     <p class="stg-card-sub">
-                                        What ZeroAny Pane is built on.
+                                        What ZeroAny Workbench is built on.
                                     </p>
                                 </div>
                             </header>

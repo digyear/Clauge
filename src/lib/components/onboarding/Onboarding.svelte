@@ -167,13 +167,13 @@
 
         <div class="ob-card">
             <img
-                src="/zeroany-pane-icon.svg"
-                alt="ZeroAny Pane"
+                src="/zeroany-workbench-icon.svg"
+                alt="ZeroAny Workbench"
                 class="ob-logo"
                 width="72"
                 height="72"
             />
-            <h1 class="ob-title">Welcome to ZeroAny Pane</h1>
+            <h1 class="ob-title">Welcome to ZeroAny Workbench</h1>
             <p class="ob-sub">Sign in to get started</p>
 
             <div class="ob-btns">

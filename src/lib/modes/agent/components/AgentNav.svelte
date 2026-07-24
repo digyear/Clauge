@@ -155,7 +155,7 @@
       await loadAgentSessions();
       await loadAgentDiscoveredSessions();
       handleSelectSession(adopted);
-      showToast('External session opened in ZeroAny Pane', 'success');
+      showToast('External session opened in ZeroAny Workbench', 'success');
     } catch (e) {
       showToast(`Open failed: ${friendlyError(e)}`, 'error');
     } finally {

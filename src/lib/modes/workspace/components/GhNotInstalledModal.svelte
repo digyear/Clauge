@@ -29,7 +29,7 @@
   <div class="cn-body">
     <p class="cn-desc">
       The <code class="cn-code">gh</code> CLI wasn't found on your <code class="cn-code">PATH</code>.
-      ZeroAny Pane uses it to create issues, push branches, and open PRs from cards.
+      ZeroAny Workbench uses it to create issues, push branches, and open PRs from cards.
     </p>
 
     {#if platform === 'windows'}
@@ -50,7 +50,7 @@
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
       </svg>
-      After installing + signing in, restart ZeroAny Pane so it picks up your updated <code class="cn-code">PATH</code>.
+      After installing + signing in, restart ZeroAny Workbench so it picks up your updated <code class="cn-code">PATH</code>.
     </div>
 
     <div class="cn-footer">

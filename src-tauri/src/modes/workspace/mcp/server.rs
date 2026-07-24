@@ -66,17 +66,17 @@ pub async fn start(
                 let router = Router::new()
                     .route("/mcp", post(handle_mcp))
                     .route("/agent-hook", post(handle_agent_hook))
-                    // The `x-clauge-mcp` marker lets a restarting instance
+                    // The `x-zeroany-workbench-mcp` marker lets a restarting instance
                     // tell our own server apart from a foreign port squatter
                     // (see `is_our_mcp`) before adopting the port.
                     .route(
                         "/healthz",
-                        axum::routing::get(|| async { ([("x-clauge-mcp", "1")], "ok") }),
+                        axum::routing::get(|| async { ([("x-zeroany-workbench-mcp", "1")], "ok") }),
                     )
                     .with_state(Arc::new(state));
 
                 // Publish the loopback hook endpoint so the agent spawn path
-                // can inject `CLAUGE_HOOK_URL`. Localhost-only; no auth.
+                // can inject `ZEROANY_WORKBENCH_HOOK_URL`. Localhost-only; no auth.
                 crate::modes::agent::hooks::set_hook_url(format!(
                     "http://127.0.0.1:{}/agent-hook",
                     port
@@ -144,7 +144,7 @@ async fn bind_reuse(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
     socket.listen(1024)
 }
 
-/// Best-effort identity probe: is a live Clauge MCP server already
+/// Best-effort identity probe: is a live ZeroAny Workbench MCP server already
 /// holding this port? Decides adopt-vs-walk when a bind fails.
 async fn is_our_mcp(port: u16) -> bool {
     let url = format!("http://127.0.0.1:{port}/healthz");
@@ -156,7 +156,7 @@ async fn is_our_mcp(port: u16) -> bool {
     {
         // Require the marker header — a foreign process answering 200 on
         // /healthz must not be mistaken for our MCP and adopted.
-        Ok(r) => r.status().is_success() && r.headers().contains_key("x-clauge-mcp"),
+        Ok(r) => r.status().is_success() && r.headers().contains_key("x-zeroany-workbench-mcp"),
         Err(_) => false,
     }
 }
@@ -223,7 +223,7 @@ async fn handle_mcp(
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": { "tools": {} },
-            "serverInfo": { "name": "clauge-workspace", "version": "1.0.0" }
+            "serverInfo": { "name": "zeroany-workbench", "version": "1.0.0" }
         })),
         "tools/list" => Ok(json!({ "tools": tool_descriptors() })),
         "tools/call" => dispatch_tool(&state.pool, state.app.as_ref(), params, &actor).await,

@@ -54,7 +54,7 @@ export const pendingRenameRegionId = writable<string | null>(null);
 
 // Debounced viewport flush — single timer.
 let viewportFlushTimer: ReturnType<typeof setTimeout> | null = null;
-// Singleton: only one canvas workspace is active at a time (Clauge is single-window).
+// Singleton: only one canvas workspace is active at a time (ZeroAny Workbench is single-window).
 let currentWorkspaceId: string | null = null;
 
 export function setActiveWorkspace(workspaceId: string | null): void {

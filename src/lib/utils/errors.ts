@@ -7,7 +7,7 @@ import { showToast } from "$lib/shared/primitives/toast";
  */
 export function friendlyError(err: unknown): string {
   // Always log the raw error for debugging
-  console.error("[ZeroAny Pane Error]", err);
+  console.error("[ZeroAny Workbench Error]", err);
 
   let msg = "";
   if (err instanceof Error) {
@@ -204,7 +204,7 @@ export function friendlyError(err: unknown): string {
   // Raw API / Rust / panic dumps must NEVER reach the UI — they leak
   // implementation details (worker endpoints, JSON shapes, internal
   // Polar/D1 errors) and look unprofessional. The raw text is already
-  // in the console via `console.error('[Clauge Error]', err)` at the
+  // in the console via `console.error('[ZeroAny Workbench Error]', err)` at the
   // top of this function, so production rolling logs still capture it
   // for debugging — only the visible toast gets a safe generic.
   //

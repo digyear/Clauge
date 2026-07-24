@@ -143,7 +143,7 @@ pub struct WorkspaceCardComment {
     /// None for locally-authored comments.
     pub external_id: Option<String>,
     /// GitHub/GitLab login for a fetched comment (display name when the
-    /// author isn't a Clauge user/coworker).
+    /// author isn't a ZeroAny Workbench user/coworker).
     pub external_author: Option<String>,
 }
 

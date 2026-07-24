@@ -18,9 +18,9 @@ use std::sync::OnceLock;
 /// Resolved location of the JSON file:
 ///   `<app_config_dir>/settings.json`
 /// where `app_config_dir` follows the Tauri convention per OS:
-///   macOS:   `~/Library/Application Support/com.clauge.desktop/`
-///   Linux:   `~/.config/com.clauge.desktop/`
-///   Windows: `%APPDATA%\com.clauge.desktop\`
+///   macOS:   `~/Library/Application Support/com.digyear.zeroany.workbench/`
+///   Linux:   `~/.config/com.digyear.zeroany.workbench/`
+///   Windows: `%APPDATA%\com.digyear.zeroany.workbench\`
 pub fn config_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     use tauri::Manager;
     app.path().app_config_dir().ok().map(|d| d.join("settings.json"))
@@ -60,7 +60,7 @@ pub fn load(app: &tauri::AppHandle) -> AppConfig {
             // Log the parse failure but don't bail. The log might not
             // be initialised yet at the very first call site — eprintln
             // is the only universally-safe sink during boot.
-            eprintln!("[clauge] {} is malformed JSON: {}", path.display(), e);
+            eprintln!("[zeroany-workbench] {} is malformed JSON: {}", path.display(), e);
             AppConfig::default()
         }
     }

@@ -168,8 +168,8 @@ export async function exportAllCollections(): Promise<string> {
   return invoke('export_all_collections');
 }
 
-export async function importClauge(json: string): Promise<ImportResult> {
-  return invoke('import_clauge', { json });
+export async function importZeroAny(json: string): Promise<ImportResult> {
+  return invoke('import_zeroany', { json });
 }
 
 export async function importPostman(json: string): Promise<ImportResult> {

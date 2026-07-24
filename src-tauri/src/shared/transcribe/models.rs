@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn validate_magic_accepts_ggml_header() {
-        let path = std::env::temp_dir().join("clauge-test-ggml-magic-ok.bin");
+        let path = std::env::temp_dir().join("zeroany-workbench-test-ggml-magic-ok.bin");
         std::fs::write(&path, [0x6c, 0x6d, 0x67, 0x67, 0x01, 0x02, 0x03]).unwrap();
         assert!(validate_magic(&path));
         let _ = std::fs::remove_file(&path);
@@ -365,16 +365,16 @@ mod tests {
 
     #[test]
     fn validate_magic_rejects_other_content() {
-        let path = std::env::temp_dir().join("clauge-test-ggml-magic-bad.bin");
+        let path = std::env::temp_dir().join("zeroany-workbench-test-ggml-magic-bad.bin");
         std::fs::write(&path, b"<!DOCTYPE html><html>error page</html>").unwrap();
         assert!(!validate_magic(&path));
         let _ = std::fs::remove_file(&path);
 
-        let short = std::env::temp_dir().join("clauge-test-ggml-magic-short.bin");
+        let short = std::env::temp_dir().join("zeroany-workbench-test-ggml-magic-short.bin");
         std::fs::write(&short, [0x6c]).unwrap();
         assert!(!validate_magic(&short));
         let _ = std::fs::remove_file(&short);
 
-        assert!(!validate_magic(Path::new("/nonexistent/clauge/ggml.bin")));
+        assert!(!validate_magic(Path::new("/nonexistent/zeroany-workbench/ggml.bin")));
     }
 }

@@ -21,7 +21,7 @@ use sqlx::SqlitePool;
 use crate::shared::repos::settings as settings_repo;
 
 const KEY_DEVICE_ID: &str = "telemetry_device_id";
-const KEY_THEME: &str = "appearance"; // existing setting key in Clauge
+const KEY_THEME: &str = "appearance"; // existing setting key in ZeroAny Workbench
 
 #[derive(Debug, Clone)]
 pub struct DeviceFingerprint {

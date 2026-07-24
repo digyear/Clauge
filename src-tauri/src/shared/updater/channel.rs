@@ -52,7 +52,7 @@ async fn find_latest_prerelease(pool: &SqlitePool) -> Result<Option<String>, Str
     // GitHub API rejects requests without a User-Agent.
     let releases: Vec<GhRelease> = client
         .get(&url)
-        .header("User-Agent", "ZeroAny-Pane-Updater")
+        .header("User-Agent", "ZeroAny-Workbench-Updater")
         .header("Accept", "application/vnd.github+json")
         .send()
         .await

@@ -1,6 +1,6 @@
 // Canvas writes intentionally do NOT call `crate::cloud::scheduler::bump(...)`.
 // Canvas state (tile positions, viewport) is per-device by v1 design — see
-// `Ctx/Clauge/superpowers/specs/2026-06-01-canvas-mode-design.md` §1
+// `Ctx/ZeroAny Workbench/superpowers/specs/2026-06-01-canvas-mode-design.md` §1
 // (out-of-scope: Cloud sync of Canvas layouts).
 
 use sqlx::sqlite::SqlitePool;

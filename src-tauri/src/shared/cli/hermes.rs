@@ -103,7 +103,7 @@ impl CliRunner for HermesRunner {
 
     fn run_plugin_subcommand(&self, _args: &[&str]) -> Result<(bool, String), String> {
         Err(
-            "Hermes plugins are managed by Hermes; ZeroAny Pane's marketplace UI does not apply."
+            "Hermes plugins are managed by Hermes; ZeroAny Workbench's marketplace UI does not apply."
                 .into(),
         )
     }

@@ -2,7 +2,7 @@
   "app": {
     "windows": [
       {
-        "title": "ZeroAny Pane",
+        "title": "ZeroAny Workbench",
         "width": 1280,
         "height": 800,
         "minWidth": 900,

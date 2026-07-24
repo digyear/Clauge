@@ -34,7 +34,7 @@
   let addInitialView = $state<'manual' | 'import'>('manual');
   // Number of importable hosts found in ~/.ssh/config (excludes already-imported).
   // Only used for the empty-state callout — non-zero means "user has hosts in
-  // their ssh_config but no Clauge profiles yet, surface the import path".
+  // their ssh_config but no ZeroAny Workbench profiles yet, surface the import path".
   let importableCount = $state(0);
 
   // Confirm dialog — single instance drives all SSH confirm prompts

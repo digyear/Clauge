@@ -1,4 +1,4 @@
-// Companion server — the phone-facing HTTP surface for Clauge Mobile.
+// Companion server — the phone-facing HTTP surface for ZeroAny Workbench Mobile.
 // Pairing, device tokens, and (in later tasks) session lists, spawn,
 // and PTY mirroring over WebSocket. OFF by default: the server only
 // runs after an explicit `companion_start` from Settings → Mobile.

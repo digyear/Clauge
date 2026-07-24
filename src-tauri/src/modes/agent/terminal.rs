@@ -171,21 +171,21 @@ pub(crate) async fn spawn_agent_terminal_impl(
     // this terminal's awaiting state authoritatively (claude/codex). Only
     // injected when hooks are enabled AND the endpoint has bound.
     if let Some(ref url) = hook_url {
-        cmd.env("CLAUGE_HOOK_URL", url);
-        cmd.env("CLAUGE_TERMINAL_ID", &terminal_id);
+        cmd.env("ZEROANY_WORKBENCH_HOOK_URL", url);
+        cmd.env("ZEROANY_WORKBENCH_TERMINAL_ID", &terminal_id);
         cmd.env(
-            "CLAUGE_SESSION_REF",
+            "ZEROANY_WORKBENCH_SESSION_REF",
             session_ref.as_deref().unwrap_or(""),
         );
-        cmd.env("CLAUGE_AGENT_ID", &provider);
+        cmd.env("ZEROANY_WORKBENCH_AGENT_ID", &provider);
 
-        // Provider-specific authoritative hooks (Phase 2). The CLAUGE_* env
+        // Provider-specific authoritative hooks (Phase 2). The ZEROANY_WORKBENCH_* env
         // above is shared by all providers; each provider below opts into its
         // own delivery mechanism without ever mutating the user's global agent
         // config. claude/codex completion already arrive via notify.sh (Phase 1).
         match provider.as_str() {
             // OpenCode: do NOT redirect OPENCODE_CONFIG_DIR. Pointing it at a
-            // Clauge-scoped dir was observed to break session resume (OpenCode
+            // ZeroAny Workbench-scoped dir was observed to break session resume (OpenCode
             // did not merge the user's real config as expected), so OpenCode runs
             // with its own config untouched and falls back to the output-heuristic
             // for attention. (Revisit only if config-dir merge is confirmed safe.)
@@ -209,7 +209,7 @@ pub(crate) async fn spawn_agent_terminal_impl(
     }
 
     // Codex registers the workspace MCP with `--bearer-token-env-var
-    // CLAUGE_WORKSPACE_TOKEN` (see modes/workspace/commands.rs
+    // ZEROANY_WORKBENCH_TOKEN` (see modes/workspace/commands.rs
     // ::register_codex). Inject the persisted token into the env
     // exactly when we're spawning codex, so codex can authenticate
     // without the token ever touching ~/.codex/config.toml.

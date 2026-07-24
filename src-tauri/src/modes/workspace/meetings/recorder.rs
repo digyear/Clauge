@@ -815,7 +815,7 @@ fn run_system_drain(
                 EVT_WARNING,
                 RecordingMessage {
                     meeting_id: &meeting_id,
-                    message: "No system audio — enable ZeroAny Pane in System Settings ▸ Screen & System Audio Recording.",
+                    message: "No system audio — enable ZeroAny Workbench in System Settings ▸ Screen & System Audio Recording.",
                 },
             );
         })

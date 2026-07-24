@@ -63,7 +63,7 @@ impl CliRunner for ClaudeRunner {
         if opts.skip_permissions {
             cmd.push_str(" --dangerously-skip-permissions");
         }
-        // Hook-driven attention: register Clauge's notify hooks via an
+        // Hook-driven attention: register ZeroAny Workbench's notify hooks via an
         // additive settings source. The user's own settings.json (auth /
         // MCP) is unaffected; this file carries only a `hooks` block.
         if let Some(path) = opts.claude_settings_path.as_deref()

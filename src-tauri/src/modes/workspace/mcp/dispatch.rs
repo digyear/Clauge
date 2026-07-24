@@ -42,12 +42,12 @@ async fn resolve_actor(
 ///      normalises case on case-insensitive filesystems. Skipped if the
 ///      path doesn't exist (falls back to trimmed input).
 ///   2. Worktree → project root. Every Custom-purpose agent session
-///      auto-creates a worktree under `<root>/.clauge-worktrees/<branch>`
+///      auto-creates a worktree under `<root>/.zeroany-worktrees/<branch>`
 ///      and ends up cwd'd inside it; the workspace, however, is bound to
 ///      `<root>`. Without this step the agent's cwd-derived projectPath
 ///      misses the lookup and a duplicate workspace gets created. We
 ///      walk path components, and if any segment equals
-///      `.clauge-worktrees` we keep only the segments before it.
+///      `.zeroany-worktrees` we keep only the segments before it.
 ///
 /// Returns a string suitable for both `find_workspace_by_project_path`
 /// and `insert_workspace`. Both find and insert use the same canonical
@@ -75,7 +75,7 @@ fn resolve_canonical_project_path(input: &str) -> String {
         })
         .unwrap_or_else(|| trimmed.to_string());
 
-    // 2. Walk path components looking for `.clauge-worktrees`. If found,
+    // 2. Walk path components looking for `.zeroany-worktrees`. If found,
     //    return the parent of that segment (the project root). Component
     //    walk handles both `/` and `\` separators uniformly.
     let pb = std::path::PathBuf::from(&realpath);
@@ -83,7 +83,7 @@ fn resolve_canonical_project_path(input: &str) -> String {
     let mut hit_marker = false;
     for comp in pb.components() {
         let segment = comp.as_os_str().to_string_lossy();
-        if segment == ".clauge-worktrees" {
+        if segment == ".zeroany-worktrees" {
             hit_marker = true;
             break;
         }
@@ -104,7 +104,7 @@ async fn upsert_workspace_for_project(
 ) -> Result<crate::modes::workspace::models::Workspace, (i32, String)> {
     let map_db = |e: sqlx::Error| -> (i32, String) { (-32603, format!("DB error: {}", e)) };
     // Canonicalise the incoming path BEFORE looking it up. This is what
-    // makes "I'm cwd'd in /root/.clauge-worktrees/clauge/custom-foo-xyz,
+    // makes "I'm cwd'd in /root/.zeroany-worktrees/clauge/custom-foo-xyz,
     // please add a note for this project" land on the same workspace
     // that was created against /root from the UI. Without it the agent
     // creates a second workspace because the strings don't match.
@@ -1242,7 +1242,7 @@ pub(super) async fn dispatch_tool(
 
         // ── REST mode CRUD ────────────────────────────────────────
         // Lets an agent sync API endpoints from a project's code into
-        // Clauge's REST mode. Five primitives — agent decides which
+        // ZeroAny Workbench's REST mode. Five primitives — agent decides which
         // combination matches the user's ask (add to existing
         // collection, create+add to new collection, etc.).
         "rest_collections_list" => {

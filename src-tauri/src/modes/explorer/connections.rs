@@ -1,5 +1,5 @@
 //! Tauri commands for `explorer_connections` CRUD. Secrets live in
-//! `CredentialStore` (service `"Clauge Explorer"`), never in this table.
+//! `CredentialStore` (service `"ZeroAny Workbench Explorer"`), never in this table.
 
 use sqlx::SqlitePool;
 use tauri::State;

@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "ZeroAny Pane",
+  "productName": "ZeroAny Workbench",
   "version": "3.5.0",
-  "identifier": "com.clauge.desktop",
+  "identifier": "com.digyear.zeroany.workbench",
   "build": {
     "frontendDist": "../build",
     "devUrl": "http://localhost:5173",
@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "ZeroAny Pane",
+        "title": "ZeroAny Workbench",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
@@ -39,15 +39,15 @@
     ],
     "linux": {
       "deb": {
-        "desktopTemplate": "ZeroAnyPane.desktop",
+        "desktopTemplate": "ZeroAnyWorkbench.desktop",
         "files": {
-          "/usr/share/metainfo/com.clauge.desktop.metainfo.xml": "com.clauge.desktop.metainfo.xml"
+          "/usr/share/metainfo/com.digyear.zeroany.workbench.metainfo.xml": "com.digyear.zeroany.workbench.metainfo.xml"
         }
       },
       "rpm": {
-        "desktopTemplate": "ZeroAnyPane.desktop",
+        "desktopTemplate": "ZeroAnyWorkbench.desktop",
         "files": {
-          "/usr/share/metainfo/com.clauge.desktop.metainfo.xml": "com.clauge.desktop.metainfo.xml"
+          "/usr/share/metainfo/com.digyear.zeroany.workbench.metainfo.xml": "com.digyear.zeroany.workbench.metainfo.xml"
         }
       }
     }
@@ -61,7 +61,7 @@
     },
     "deep-link": {
       "desktop": {
-        "schemes": ["clauge"]
+        "schemes": ["zeroany-workbench"]
       }
     }
   }

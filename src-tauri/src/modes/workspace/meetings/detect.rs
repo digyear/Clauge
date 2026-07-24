@@ -433,7 +433,7 @@ pub fn mic_in_use() -> bool {
     os::mic_in_use()
 }
 
-/// Does any process OTHER than Clauge currently capture the microphone?
+/// Does any process OTHER than ZeroAny Workbench currently capture the microphone?
 /// `mic_in_use()` is useless while we record (our own cpal stream keeps the
 /// device "running somewhere"), so call-end detection during a recording
 /// needs the per-process view. `None` = unknown (probe unsupported or
@@ -451,7 +451,7 @@ mod os {
     use crate::shared::platform::macos::macos_version;
 
     /// kAudioDevicePropertyDeviceIsRunningSomewhere on the default input
-    /// device: 1 when ANY process has the mic running. Clauge's own
+    /// device: 1 when ANY process has the mic running. ZeroAny Workbench's own
     /// recording also trips this, which is why the poller checks the
     /// recorder before probing.
     pub fn mic_in_use() -> bool {
@@ -466,7 +466,7 @@ mod os {
     /// macOS 14.4+, same generation as the tap API the system-audio capture
     /// relies on): a process with kAudioProcessPropertyIsRunningInput true
     /// is capturing input right now; kAudioProcessPropertyPID excludes
-    /// Clauge itself.
+    /// ZeroAny Workbench itself.
     pub fn other_process_uses_mic() -> Option<bool> {
         static SUPPORTED: OnceLock<bool> = OnceLock::new();
         let supported = *SUPPORTED
@@ -530,7 +530,7 @@ mod os {
     }
 
     /// Same WASAPI session walk as `mic_in_use`, but each active session is
-    /// attributed via IAudioSessionControl2::GetProcessId so Clauge's own
+    /// attributed via IAudioSessionControl2::GetProcessId so ZeroAny Workbench's own
     /// capture session can be excluded.
     pub fn other_process_uses_mic() -> Option<bool> {
         unsafe {
@@ -575,7 +575,7 @@ mod os {
     /// Monitor self-captures (fields ending in ".monitor") are skipped when
     /// the source column carries a name; many pactl versions print a numeric
     /// source index instead, in which case any stream counts — acceptable,
-    /// since the poller already skips ticks while Clauge itself records
+    /// since the poller already skips ticks while ZeroAny Workbench itself records
     /// (our monitor capture is the realistic monitor reader).
     pub fn mic_in_use() -> bool {
         let output = match Command::new("pactl")
@@ -601,7 +601,7 @@ mod os {
 
     /// Full `pactl list source-outputs`: every capture stream block carries
     /// `application.process.id = "N"` and a `Source: <index>` line. Streams
-    /// from Clauge's own pid and streams reading `.monitor` sources (system
+    /// from ZeroAny Workbench's own pid and streams reading `.monitor` sources (system
     /// audio loopback — including our own) are skipped; anything left is
     /// another process holding a real mic. pactl missing/failing → None.
     pub fn other_process_uses_mic() -> Option<bool> {

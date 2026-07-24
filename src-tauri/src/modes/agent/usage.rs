@@ -556,7 +556,7 @@ pub fn agent_discover_sessions(
 }
 
 /// Look up the most recently-touched session id for `(provider,
-/// project_path)`. Used by the spawn path to "rehydrate" a Clauge
+/// project_path)`. Used by the spawn path to "rehydrate" a ZeroAny Workbench
 /// session row whose stored session id was never captured. Critical
 /// for crash/update recovery: if the app died before the PTY-output
 /// regex matched, the UUID is otherwise unrecoverable and clicking
@@ -799,7 +799,7 @@ pub async fn adopt_discovered_session_by_id(
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .ok_or("Discovered session has no project path to open in ZeroAny Pane")?;
+            .ok_or("Discovered session has no project path to open in ZeroAny Workbench")?;
         let project_meta = std::fs::metadata(project_path)
             .map_err(|_| format!("Project path does not exist: {}", project_path))?;
         if !project_meta.is_dir() {
@@ -3605,7 +3605,7 @@ mod discovery_tests {
 
     #[test]
     fn claude_jsonl_parser_extracts_id_cwd_and_preview() {
-        let dir = unique_test_dir("clauge-claude-parser");
+        let dir = unique_test_dir("zeroany-workbench-claude-parser");
         let path = dir.join("claude-session-1.jsonl");
         std::fs::write(
             &path,
@@ -3629,7 +3629,7 @@ mod discovery_tests {
 
     #[test]
     fn codex_jsonl_parser_extracts_id_cwd_and_first_user_preview() {
-        let dir = unique_test_dir("clauge-codex-parser");
+        let dir = unique_test_dir("zeroany-workbench-codex-parser");
         let path = dir.join("rollout-2026-07-24-codex.jsonl");
         std::fs::write(
             &path,
@@ -3711,9 +3711,9 @@ mod discovery_tests {
     #[tokio::test]
     async fn adopting_discovered_session_is_idempotent_and_preserves_resume_identity() {
         let pool = adoption_test_pool().await;
-        let project = unique_test_dir("clauge-adoption-project");
+        let project = unique_test_dir("zeroany-workbench-adoption-project");
         let project_path = project.to_string_lossy().to_string();
-        let worktree = project.join(".clauge-worktrees").join("imported-task");
+        let worktree = project.join(".zeroany-worktrees").join("imported-task");
         std::fs::create_dir_all(&worktree).unwrap();
         let worktree_path = worktree.to_string_lossy().to_string();
 
@@ -3775,7 +3775,7 @@ mod discovery_tests {
     #[tokio::test]
     async fn adopting_hermes_compression_tip_preserves_tip_id_and_inherited_cwd() {
         let pool = adoption_test_pool().await;
-        let project = unique_test_dir("clauge-hermes-resume-project");
+        let project = unique_test_dir("zeroany-workbench-hermes-resume-project");
         std::fs::create_dir_all(&project).unwrap();
         let project_path = project.to_string_lossy().to_string();
         let tip_id = "20260618_131330_4a79f5";
@@ -3810,7 +3810,7 @@ mod discovery_tests {
     #[tokio::test]
     async fn picker_hides_archived_and_delegate_rows_and_projects_compression_tip() {
         let db_path = std::env::temp_dir().join(format!(
-            "clauge-hermes-sessions-{}.db",
+            "zeroany-workbench-hermes-sessions-{}.db",
             uuid::Uuid::new_v4()
         ));
         let opts = sqlx::sqlite::SqliteConnectOptions::new()

@@ -98,7 +98,7 @@ export async function loadMcpStatus() {
 // user last saw the inbox. Persisted in localStorage so the count
 // survives app restarts. Marking read just bumps the timestamp to now.
 
-const INBOX_LAST_READ_KEY = 'clauge.workspace.inbox.lastReadAt';
+const INBOX_LAST_READ_KEY = 'zeroany-workbench.workspace.inbox.lastReadAt';
 
 export const inboxLastReadAt = writable<number>(loadInboxLastReadAt());
 export const inboxUnreadCount = writable<number>(0);
@@ -125,7 +125,7 @@ export function markInboxRead() {
 // Stored in one localStorage blob to keep writes cheap (a Map gets
 // flattened to JSON; size cap by trimming the oldest 200 entries).
 
-const CARD_LAST_SEEN_KEY = 'clauge.workspace.card.lastSeenAt';
+const CARD_LAST_SEEN_KEY = 'zeroany-workbench.workspace.card.lastSeenAt';
 const CARD_LAST_SEEN_MAX = 500;
 
 export const cardLastSeenAt = writable<Record<string, string>>(loadCardLastSeenAt());

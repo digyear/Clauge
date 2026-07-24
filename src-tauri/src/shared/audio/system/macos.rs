@@ -145,7 +145,7 @@ fn open_tap_session(tx: Sender<CaptureEvent>) -> Result<TapSession, SystemAudioE
             cf::Boolean::value_true().as_type_ref(),
             cf::Boolean::value_false(),
             cf::Boolean::value_true(),
-            cf::str!(c"clauge-system-audio-tap").as_type_ref(),
+            cf::str!(c"zeroany-workbench-system-audio-tap").as_type_ref(),
             &output_uid,
             &cf::Uuid::new().to_cf_string(),
             &cf::ArrayOf::from_slice(&[sub_tap.as_ref()]),

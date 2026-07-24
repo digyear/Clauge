@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/brand/zeroany-pane-wordmark.png" alt="ZeroAny Pane" width="520" />
+  <img src="assets/brand/zeroany-workbench-wordmark.png" alt="ZeroAny Workbench" width="520" />
 </p>
 
 <p align="center">
@@ -30,19 +30,19 @@
 </p>
 
 <p align="center">
-<b>ZeroAny Pane has no associated cryptocurrency or token. Any tokens using our name are scams </b>
+<b>ZeroAny Workbench has no associated cryptocurrency or token. Any tokens using our name are scams </b>
 </p>
 
 ---
 
 > [!IMPORTANT]
-> **ZeroAny Pane is an unofficial, non-commercial fork of Clauge.** It is not
+> **ZeroAny Workbench is an unofficial, non-commercial fork of Clauge.** It is not
 > affiliated with or endorsed by ClaugeHQ. The original copyright and
 > PolyForm Noncommercial License 1.0.0 remain in effect.
 
 ---
 
-You've been flipping between multiple apps to do one job. ZeroAny Pane runs all of them in one shell — coding agents, an API client, SQL and NoSQL editors, SSH sessions, a remote file browser, and a project workspace — and gives each mode its own AI, tuned for that workflow. Every mode is one keystroke away. Your data stays on your machine.
+You've been flipping between multiple apps to do one job. ZeroAny Workbench runs all of them in one shell — coding agents, an API client, SQL and NoSQL editors, SSH sessions, a remote file browser, and a project workspace — and gives each mode its own AI, tuned for that workflow. Every mode is one keystroke away. Your data stays on your machine.
 
 ---
 
@@ -79,7 +79,7 @@ Per-session controls:
 
 #### Purposes
 
-Every ZeroAny Pane session has a **purpose** that shapes the agent's focus from the first message. No more prompting it to "act like a code reviewer" mid-conversation.
+Every ZeroAny Workbench session has a **purpose** that shapes the agent's focus from the first message. No more prompting it to "act like a code reviewer" mid-conversation.
 
 | Purpose | What the agent focuses on |
 |---|---|
@@ -98,7 +98,7 @@ A shared layer your agents can read, write, and act on through MCP.
 
 - **Kanban boards** — Backlog → Todo → In Progress → In Review → Done. *Review* is a safety gate, not a column you skip past.
 - **Two-way Git integration** — pull open issues from **GitHub** and **GitLab** into a board, push finished cards back as pull requests.
-- **Project linking** — point a workspace at a git repo and ZeroAny Pane auto-spawns one board per subproject.
+- **Project linking** — point a workspace at a git repo and ZeroAny Workbench auto-spawns one board per subproject.
 - **Notion-style notes** — a real WYSIWYG markdown editor, not a textarea. Per-project, linked to sessions, exposed through MCP.
 - **AI coworkers** — named personas (Tech Lead, Brainstormer, Developer, Reviewer, QA) with their own prompts and providers. They read cards, comment, request changes, claim work, commit, and raise PRs.
 - **Single-owner lock** — only one coworker (or one terminal session) owns a card at any moment. Switching owners, claiming from a terminal, and chatting in the card drawer all go through the same lock — no race conditions, no lost work.
@@ -163,13 +163,13 @@ A free-form spatial workspace where every open tab becomes a draggable window. P
 
 ---
 
-## What makes ZeroAny Pane different
+## What makes ZeroAny Workbench different
 
-**One window, not many.** Every developer's day is fragmented across a code editor, a REST client, a SQL GUI, a Mongo shell, a terminal, and a project board. ZeroAny Pane collapses all of them into one shell with shared sessions, shared SSH tunnels, and shared AI context — switch modes with one keystroke.
+**One window, not many.** Every developer's day is fragmented across a code editor, a REST client, a SQL GUI, a Mongo shell, a terminal, and a project board. ZeroAny Workbench collapses all of them into one shell with shared sessions, shared SSH tunnels, and shared AI context — switch modes with one keystroke.
 
 **An AI per workflow, not a generic chat.** REST's AI understands your collections. SQL's AI knows your schema. SSH's AI refuses destructive commands without confirmation. The Workspace AI moves cards, leaves comments, and raises pull requests. Each one is tuned for what it sits next to — not a single chatbot bolted onto the side.
 
-**Built-in MCP server, not a plug-in.** ZeroAny Pane runs an MCP server out of the box, exposing 45+ tools across boards, cards, notes, REST collections, and coworker coordination. Claude Desktop, Cursor, Cline, Continue, or any MCP-speaking client can read, edit, and add to your workspace from the outside.
+**Built-in MCP server, not a plug-in.** ZeroAny Workbench runs an MCP server out of the box, exposing 45+ tools across boards, cards, notes, REST collections, and coworker coordination. Claude Desktop, Cursor, Cline, Continue, or any MCP-speaking client can read, edit, and add to your workspace from the outside.
 
 **Local-first by default.** Your sessions, your notes, your queries, your keys live on your disk. The desktop app is the source of truth. Sync is opt-in, per-feature.
 
@@ -179,7 +179,7 @@ A free-form spatial workspace where every open tab becomes a draggable window. P
 
 ## MCP
 
-ZeroAny Pane ships an MCP server with **45+ tools** — `boards_*`, `cards_*`, `notes_*`, `rest_collection_*`, `coworkers_*`, `workspace_*`, `activity_feed`, and `cards_call_coworker` (so the agent in your terminal can `@-mention` a coworker on a card without leaving the shell). The server **auto-starts on launch** — no flag, no extra setup. Any MCP-speaking client can drive your workspace.
+ZeroAny Workbench ships an MCP server with **45+ tools** — `boards_*`, `cards_*`, `notes_*`, `rest_collection_*`, `coworkers_*`, `workspace_*`, `activity_feed`, and `cards_call_coworker` (so the agent in your terminal can `@-mention` a coworker on a card without leaving the shell). The server **auto-starts on launch** — no flag, no extra setup. Any MCP-speaking client can drive your workspace.
 
 ### From Claude Desktop
 
@@ -198,7 +198,7 @@ Add to your `claude_desktop_config.json`:
 
 ### From Cursor / Cline / Continue
 
-Point your MCP client at the local ZeroAny Pane process (`stdio` or `http://localhost:7421/mcp`). The agent can now list boards, create cards, append notes, raise PRs, search REST collections, and coordinate with the named coworkers you defined inside the app — all without leaving its own UI.
+Point your MCP client at the local ZeroAny Workbench process (`stdio` or `http://localhost:7421/mcp`). The agent can now list boards, create cards, append notes, raise PRs, search REST collections, and coordinate with the named coworkers you defined inside the app — all without leaving its own UI.
 
 ---
 
@@ -208,7 +208,7 @@ Every mode's AI runs on the provider you choose.
 
 | Option | How it works |
 |---|---|
-| **BYOK** | Drop in your own Anthropic, OpenAI, Google, or OpenCode key — ZeroAny Pane talks directly to the provider. No middleman. |
+| **BYOK** | Drop in your own Anthropic, OpenAI, Google, or OpenCode key — ZeroAny Workbench talks directly to the provider. No middleman. |
 | **Clauge AI credits** | Subscribe and use upstream Clauge-managed credits across every mode and every provider — no separate billing. |
 
 Set keys in **Settings → AI Providers**. Per-mode model choice; per-session model override.

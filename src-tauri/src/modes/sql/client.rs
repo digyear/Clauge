@@ -449,7 +449,7 @@ async fn build_pool_inner(
     app_pool: Option<&SqlitePool>,
 ) -> Result<DatabasePool, String> {
     let url = build_connection_url(config)?;
-    log::info!("[Clauge SQL] create_pool driver={} host={} port={} db={} ssl={} user={}",
+    log::info!("[ZeroAny Workbench SQL] create_pool driver={} host={} port={} db={} ssl={} user={}",
         config.driver, config.host, config.port, config.database, config.ssl, config.username);
 
     // User-configurable pool timeouts (Settings → SQL). Fall back to
@@ -474,14 +474,14 @@ async fn build_pool_inner(
                 config.username, config.password, config.host, config.port, config.database
             );
             let ssl_mode = if config.ssl { PgSslMode::Require } else { PgSslMode::Prefer };
-            log::info!("[Clauge SQL] PG base_url={} ssl_mode={:?}", base_url.replace(&config.password, "***"), ssl_mode);
+            log::info!("[ZeroAny Workbench SQL] PG base_url={} ssl_mode={:?}", base_url.replace(&config.password, "***"), ssl_mode);
             let mut opts = PgConnectOptions::from_str(&base_url)
                 .map_err(|e| {
-                    log::error!("[Clauge SQL] PgConnectOptions parse error: {}", e);
+                    log::error!("[ZeroAny Workbench SQL] PgConnectOptions parse error: {}", e);
                     format!("Invalid PostgreSQL URL: {}", e)
                 })?;
             opts = opts.ssl_mode(ssl_mode);
-            log::info!("[Clauge SQL] Connecting to PostgreSQL...");
+            log::info!("[ZeroAny Workbench SQL] Connecting to PostgreSQL...");
             let pool = sqlx::postgres::PgPoolOptions::new()
                 .max_connections(5)
                 .min_connections(1)
@@ -495,10 +495,10 @@ async fn build_pool_inner(
                 .connect_with(opts)
                 .await
                 .map_err(|e| {
-                    log::error!("[Clauge SQL] PostgreSQL connection FAILED: {}", e);
+                    log::error!("[ZeroAny Workbench SQL] PostgreSQL connection FAILED: {}", e);
                     format!("PostgreSQL connection failed: {}", e)
                 })?;
-            log::info!("[Clauge SQL] PostgreSQL connected OK");
+            log::info!("[ZeroAny Workbench SQL] PostgreSQL connected OK");
             Ok(DatabasePool::Postgres(pool))
         }
         SqlDialect::MySql => {
@@ -542,7 +542,7 @@ async fn build_pool_inner(
                 .ping()
                 .await
                 .map_err(|e| format!("ClickHouse connection failed: {}", e))?;
-            log::info!("[Clauge SQL] ClickHouse connected OK");
+            log::info!("[ZeroAny Workbench SQL] ClickHouse connected OK");
             Ok(DatabasePool::Clickhouse(client))
         }
         SqlDialect::D1 => {
@@ -554,7 +554,7 @@ async fn build_pool_inner(
                 .ping()
                 .await
                 .map_err(|e| format!("D1 connection failed: {}", e))?;
-            log::info!("[Clauge SQL] D1 connected OK");
+            log::info!("[ZeroAny Workbench SQL] D1 connected OK");
             Ok(DatabasePool::D1(client))
         }
     }
@@ -990,7 +990,7 @@ pub async fn ensure_pool_inner(
     if let Some(t) = tunnel {
         manager.tunnels.lock().await.insert(key.clone(), t);
     }
-    log::info!("[Clauge SQL] pool opened: {}", key);
+    log::info!("[ZeroAny Workbench SQL] pool opened: {}", key);
     Ok(key)
 }
 
@@ -1066,7 +1066,7 @@ pub async fn sql_cancel_query(
                 .execute(&p)
                 .await
             {
-                log::warn!("[Clauge SQL] pg_cancel_backend failed: {}", e);
+                log::warn!("[ZeroAny Workbench SQL] pg_cancel_backend failed: {}", e);
             }
         }
         (KillHandle::MySql { connection_id }, Some(DatabasePool::MySql(p))) => {
@@ -1074,14 +1074,14 @@ pub async fn sql_cancel_query(
                 .execute(&p)
                 .await
             {
-                log::warn!("[Clauge SQL] KILL QUERY failed: {}", e);
+                log::warn!("[ZeroAny Workbench SQL] KILL QUERY failed: {}", e);
             }
         }
         (KillHandle::Clickhouse { query_id: ch_qid }, Some(DatabasePool::Clickhouse(c))) => {
             let safe = ch_qid.replace('\'', "''");
             let stmt = format!("KILL QUERY WHERE query_id='{}' SYNC", safe);
             if let Err(e) = c.exec(&stmt).await {
-                log::warn!("[Clauge SQL] KILL QUERY WHERE failed: {}", e);
+                log::warn!("[ZeroAny Workbench SQL] KILL QUERY WHERE failed: {}", e);
             }
         }
         // SQLite + D1 + missing-pool cases: drop-future is the only mechanism.
@@ -1278,7 +1278,7 @@ pub async fn sql_execute_query(
     match execute_once(&app, manager.inner(), &key, &query, &query_id).await {
         Ok(r) => Ok(r),
         Err(e) if looks_like_dead_connection(&e) => {
-            log::warn!("[Clauge SQL] dead-pool detected ({}), rebuilding {}", e, key);
+            log::warn!("[ZeroAny Workbench SQL] dead-pool detected ({}), rebuilding {}", e, key);
             // Drop pool + tunnel; ensure_pool_inner will rebuild.
             {
                 let mut conns = manager.connections.lock().await;
@@ -2441,7 +2441,7 @@ pub async fn sql_update_saved_connection(
         close_db_pool(db_pool).await;
         let _ = manager.tunnels.lock().await.remove(&key);
         let _ = manager.permits.lock().await.remove(&key);
-        log::info!("[Clauge SQL] pool dropped on config update: {}", key);
+        log::info!("[ZeroAny Workbench SQL] pool dropped on config update: {}", key);
     }
 
     crate::cloud::scheduler::bump("sql");

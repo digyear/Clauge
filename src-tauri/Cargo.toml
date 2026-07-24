@@ -1,8 +1,8 @@
 [package]
-name = "zeroany-pane"
+name = "zeroany-workbench"
 version = "3.5.0"
-description = "ZeroAny Pane — Zero, one, any workspace"
-authors = ["Anshuman <support@clauge.in>"]
+description = "ZeroAny Workbench — Zero, one, any workspace"
+authors = ["ZeroAny Workbench contributors"]
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 repository = "https://github.com/digyear/Clauge"
 edition = "2021"
@@ -118,7 +118,7 @@ whisper-rs = { version = "0.16", features = ["log_backend"] }
 #   macOS   → shell-out to /usr/bin/security (implicitly trusted by Keychain,
 #             avoids re-signing prompts).
 #   Windows → `keyring` crate, Windows Credential Manager backend.
-#   Linux   → encrypted file at $XDG_DATA_HOME/clauge/credentials.bin
+#   Linux   → encrypted file at $XDG_DATA_HOME/zeroany-workbench/credentials.bin
 #             (AES-256-GCM, key derived from /etc/machine-id via HKDF-SHA256).
 #             Secret Service / libsecret is intentionally NOT used: gnome-keyring
 #             pops a system "unlock with login password" dialog whenever the

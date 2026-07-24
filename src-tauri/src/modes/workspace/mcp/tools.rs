@@ -38,7 +38,7 @@ fn workspace_schemas() -> Vec<Value> {
         json!(
         {
             "name": "workspaces_upsert_for_project",
-            "description": "Find a workspace bound to the given project path. If none exists, create one named after the folder with a default 5-column board, and return it. Use this whenever you have a project path (e.g. cwd) and want a workspace to put notes or cards in — it's the canonical way to resolve 'this project' to a workspace id. The server canonicalises the path before lookup — symlinks are resolved, trailing slashes are normalised, and worktree paths (`<root>/.clauge-worktrees/<branch>/...`) are resolved to the parent project root automatically. So passing your current working directory is fine even when you're inside a worktree: the server will find (or create) the workspace bound to the actual project root, not a duplicate keyed to the worktree.",
+            "description": "Find a workspace bound to the given project path. If none exists, create one named after the folder with a default 5-column board, and return it. Use this whenever you have a project path (e.g. cwd) and want a workspace to put notes or cards in — it's the canonical way to resolve 'this project' to a workspace id. The server canonicalises the path before lookup — symlinks are resolved, trailing slashes are normalised, and worktree paths (`<root>/.zeroany-worktrees/<branch>/...`) are resolved to the parent project root automatically. So passing your current working directory is fine even when you're inside a worktree: the server will find (or create) the workspace bound to the actual project root, not a duplicate keyed to the worktree.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -110,7 +110,7 @@ fn note_schemas() -> Vec<Value> {
         json!(
         {
             "name": "notes_create",
-            "description": "Create a new note inside an existing workspace (when you already know the workspaceId; otherwise prefer notes_create_for_project). Returns the new note. Intent cues — use this tool, NOT the filesystem Write tool, for any request to 'create a note / doc / page / md / markdown file in the workspace / in the notes / in Clauge', or to 'record / capture / jot down / save X in the notes'. Notes live in the Clauge SQLite DB, not on disk; only fall back to filesystem writes if the user explicitly says 'on disk' or names a path.",
+            "description": "Create a new note inside an existing workspace (when you already know the workspaceId; otherwise prefer notes_create_for_project). Returns the new note. Intent cues — use this tool, NOT the filesystem Write tool, for any request to 'create a note / doc / page / md / markdown file in the workspace / in the notes / in ZeroAny Workbench', or to 'record / capture / jot down / save X in the notes'. Notes live in the ZeroAny Workbench SQLite DB, not on disk; only fall back to filesystem writes if the user explicitly says 'on disk' or names a path.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -127,7 +127,7 @@ fn note_schemas() -> Vec<Value> {
         json!(
         {
             "name": "notes_create_for_project",
-            "description": "Create a NEW note for the given project (always creates, never replaces). If no workspace exists for the project path, one is auto-created (named after the folder, with a default board) before the note is added. Returns { workspace, note }. Intent cues — use this tool, NOT the filesystem Write tool, for any request to 'create a note / doc / page / md / markdown file in the workspace / in the notes / in Clauge', or to 'record / capture / jot down / save X in the notes'. Notes live in the Clauge SQLite DB, not on disk; only fall back to filesystem writes if the user explicitly says 'on disk' or names a path. Prefer notes_upsert_for_project when the user is asking to record/refresh information on a topic — it'll update an existing same-titled note instead of stacking duplicates.",
+            "description": "Create a NEW note for the given project (always creates, never replaces). If no workspace exists for the project path, one is auto-created (named after the folder, with a default board) before the note is added. Returns { workspace, note }. Intent cues — use this tool, NOT the filesystem Write tool, for any request to 'create a note / doc / page / md / markdown file in the workspace / in the notes / in ZeroAny Workbench', or to 'record / capture / jot down / save X in the notes'. Notes live in the ZeroAny Workbench SQLite DB, not on disk; only fall back to filesystem writes if the user explicitly says 'on disk' or names a path. Prefer notes_upsert_for_project when the user is asking to record/refresh information on a topic — it'll update an existing same-titled note instead of stacking duplicates.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -144,7 +144,7 @@ fn note_schemas() -> Vec<Value> {
         json!(
         {
             "name": "notes_upsert_for_project",
-            "description": "Find-or-create a note in the project's workspace (workspace itself is auto-created if missing). Match is by case-insensitive title within that one workspace. If the note exists, content/tags are UPDATED (replace by default; pass mode='append' to add to the bottom). Returns { workspace, note, created: bool }. Intent cues — use this tool, NOT the filesystem Write tool, for any request to 'create / update a note / doc / page / md / markdown file in the workspace / in the notes / in Clauge', or to 'record / capture / refresh / update X in the notes'. Notes live in the Clauge SQLite DB, not on disk; only fall back to filesystem writes if the user explicitly says 'on disk' or names a path. This is the right tool for evolving topical docs ('Overview', 'Architecture', 'TODO', etc.) — calling it twice with the same title edits the same note instead of duplicating.",
+            "description": "Find-or-create a note in the project's workspace (workspace itself is auto-created if missing). Match is by case-insensitive title within that one workspace. If the note exists, content/tags are UPDATED (replace by default; pass mode='append' to add to the bottom). Returns { workspace, note, created: bool }. Intent cues — use this tool, NOT the filesystem Write tool, for any request to 'create / update a note / doc / page / md / markdown file in the workspace / in the notes / in ZeroAny Workbench', or to 'record / capture / refresh / update X in the notes'. Notes live in the ZeroAny Workbench SQLite DB, not on disk; only fall back to filesystem writes if the user explicitly says 'on disk' or names a path. This is the right tool for evolving topical docs ('Overview', 'Architecture', 'TODO', etc.) — calling it twice with the same title edits the same note instead of duplicating.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -166,7 +166,7 @@ fn note_schemas() -> Vec<Value> {
         json!(
         {
             "name": "notes_update",
-            "description": "Update an existing note. Pass any of title, content, tags. Pass the note's current `updatedAt` as `expectedUpdatedAt` to refuse the write if the note was modified concurrently. Intent cues — use this tool, NOT the filesystem Write tool, for any request to 'edit / update / append to / rewrite a note / doc / page / md / markdown file in the workspace / in the notes / in Clauge'. Notes live in the Clauge SQLite DB, not on disk; only fall back to filesystem writes if the user explicitly says 'on disk' or names a path.",
+            "description": "Update an existing note. Pass any of title, content, tags. Pass the note's current `updatedAt` as `expectedUpdatedAt` to refuse the write if the note was modified concurrently. Intent cues — use this tool, NOT the filesystem Write tool, for any request to 'edit / update / append to / rewrite a note / doc / page / md / markdown file in the workspace / in the notes / in ZeroAny Workbench'. Notes live in the ZeroAny Workbench SQLite DB, not on disk; only fall back to filesystem writes if the user explicitly says 'on disk' or names a path.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -595,7 +595,7 @@ fn shipping_schemas() -> Vec<Value> {
         json!(
         {
             "name": "cards_check_pr_state",
-            "description": "Read the host's current state for a card's PR / MR — returns `\"open\" | \"merged\" | \"closed\" | \"unknown\"`. Pure read, never mutates the card. Same data Clauge's auto-move-on-merge loop uses. Useful when an agent wants to confirm a PR landed before posting a follow-up. Requires the card to have a pr_url already.",
+            "description": "Read the host's current state for a card's PR / MR — returns `\"open\" | \"merged\" | \"closed\" | \"unknown\"`. Pure read, never mutates the card. Same data ZeroAny Workbench's auto-move-on-merge loop uses. Useful when an agent wants to confirm a PR landed before posting a follow-up. Requires the card to have a pr_url already.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -651,7 +651,7 @@ fn meta_schemas() -> Vec<Value> {
 }
 
 /// REST mode — collection + request CRUD. Lets an agent sync API
-/// endpoints from a project's code into Clauge's REST mode. Typical
+/// endpoints from a project's code into ZeroAny Workbench's REST mode. Typical
 /// flows the user will trigger via prompt:
 ///   • "add all auth endpoints to the Auth collection"
 ///   • "create an Orders collection and put the new /orders APIs there"

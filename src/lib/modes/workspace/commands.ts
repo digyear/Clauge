@@ -299,7 +299,7 @@ export const workspaceMcpUnregister = (agent?: string) =>
   invoke<void>('workspace_mcp_unregister', { agent });
 /** Rotates the MCP bearer token. Persists the new value under
  *  `workspace_mcp_token` AND, if `~/.claude.json` already lists
- *  `clauge-workspace`, rewrites the entry with the new token —
+ *  `zeroany-workbench`, rewrites the entry with the new token —
  *  so the registered config never goes stale relative to the
  *  server's. Pass the port currently in use (or the requested
  *  port if the server isn't running yet). */

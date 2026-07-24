@@ -164,7 +164,7 @@
       <span class="sled mcp-led" class:on={$mcpStatus.running}></span>
       <span>MCP{$mcpStatus.running ? ` · :${$mcpStatus.port}` : ' · off'}</span>
     </div>
-    {#if appVersion}<div class="si">ZeroAny Pane v{appVersion}</div>{/if}
+    {#if appVersion}<div class="si">ZeroAny Workbench v{appVersion}</div>{/if}
     <div class="si"><GetProButton /></div>
   </div>
 </footer>
@@ -185,7 +185,7 @@
         <span>Update available · v{$updateAvailable.version}</span>
       </div>
     {/if}
-    {#if appVersion}<div class="si">ZeroAny Pane v{appVersion}</div>{/if}
+    {#if appVersion}<div class="si">ZeroAny Workbench v{appVersion}</div>{/if}
     <div class="si"><GetProButton /></div>
   </div>
 </footer>

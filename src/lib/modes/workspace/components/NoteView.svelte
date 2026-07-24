@@ -185,7 +185,7 @@
 
   /** Wrap raw markdown HTML in a stand-alone document with enough inline
    *  styling that the exported file looks decent on its own (any browser,
-   *  no Clauge tokens to inherit). Kept intentionally lean — headings,
+   *  no ZeroAny Workbench theme tokens to inherit). Kept intentionally lean — headings,
    *  code, blockquote, links, images. */
   function buildHtmlDocument(noteTitle: string, markdown: string): string {
     const body = marked.parse(markdown ?? '', { async: false }) as string;

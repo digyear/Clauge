@@ -119,19 +119,19 @@ export const MEETING_EVENT = {
 } as const;
 
 export const APP_EVENT = {
-  TAB_CLOSE_PROMPT: 'clauge:tab-close-prompt',
-  SQL_SAVE: 'clauge:sql-save',
-  SAVE_NEW_REQUEST: 'clauge:save-new-request',
+  TAB_CLOSE_PROMPT: 'zeroany-workbench:tab-close-prompt',
+  SQL_SAVE: 'zeroany-workbench:sql-save',
+  SAVE_NEW_REQUEST: 'zeroany-workbench:save-new-request',
   /** Detail: `{ provider: 'github' | 'google'; code: string }`.
    *  The receiver calls `cloudExchangeCode(provider, code)`. */
-  OAUTH_CALLBACK: 'clauge:oauth-callback',
+  OAUTH_CALLBACK: 'zeroany-workbench:oauth-callback',
   /** Fired by Cmd/Ctrl+T (and any other "new tab" shortcut). Topbar
    *  listens and invokes the same handler the "+" button uses, so per-mode
    *  behaviour (SSH/Agent/Workspace pickers, SQL script prompt, blank
    *  REST/NoSQL tab, etc.) stays in one place. */
-  NEW_TAB: 'clauge:new-tab',
+  NEW_TAB: 'zeroany-workbench:new-tab',
   /** Close a tab the same way the topbar "x" does, but WITHOUT the confirm
    *  prompt — a programmatic close (e.g. the mobile companion closed the
    *  session). Detail: `{ tabId: number }`. Topbar runs `doCloseTab`. */
-  CLOSE_TAB_PROGRAMMATIC: 'clauge:close-tab-programmatic',
+  CLOSE_TAB_PROGRAMMATIC: 'zeroany-workbench:close-tab-programmatic',
 } as const;

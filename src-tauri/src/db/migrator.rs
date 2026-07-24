@@ -1,4 +1,4 @@
-//! Schema migrations for the Clauge SQLite database.
+//! Schema migrations for the ZeroAny Workbench SQLite database.
 //!
 //! Migrations live as numbered SQL files under `src-tauri/migrations/`
 //! (`V<n>__<description>.sql`). The `sqlx::migrate!` macro embeds them at

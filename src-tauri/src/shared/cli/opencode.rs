@@ -142,7 +142,7 @@ impl CliRunner for OpenCodeRunner {
 
     fn run_plugin_subcommand(&self, _args: &[&str]) -> Result<(bool, String), String> {
         // `opencode plugin <module>` is an install command, not a listing
-        // surface. The Clauge plugin manager doesn't apply to OpenCode.
+        // surface. The ZeroAny Workbench plugin manager doesn't apply to OpenCode.
         Err("OpenCode plugins are npm packages; the plugin manager doesn't apply here.".into())
     }
 

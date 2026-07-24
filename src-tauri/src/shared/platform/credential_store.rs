@@ -12,7 +12,7 @@ use async_trait::async_trait;
 ///   for signed app builds where re-signing changes the binary identity.
 /// - **Windows**: the `keyring` crate, Windows Credential Manager backend.
 ///   No interactive prompts; secrets are bound to the Windows user account.
-/// - **Linux**: encrypted file at `$XDG_DATA_HOME/clauge/credentials.bin`
+/// - **Linux**: encrypted file at `$XDG_DATA_HOME/zeroany-workbench/credentials.bin`
 ///   (AES-256-GCM, key derived from `/etc/machine-id` via HKDF-SHA256).
 ///   Secret Service / libsecret is intentionally not used — see
 ///   `linux_file_store.rs` for the rationale.
@@ -23,7 +23,7 @@ pub trait CredentialStore: Send + Sync {
     async fn delete(&self, key: &str) -> Result<(), String>;
 }
 
-const SERVICE_NAME: &str = "Clauge SSH";
+const SERVICE_NAME: &str = "ZeroAny Workbench SSH";
 
 // ─── macOS: shell-out to /usr/bin/security ──────────────────────────────────
 
@@ -192,14 +192,14 @@ mod tests {
     use super::*;
 
     // Round-trip the platform-default store. Skipped on Linux because the
-    // factory writes to the real $XDG_DATA_HOME/clauge/ and would clobber
+    // factory writes to the real $XDG_DATA_HOME/zeroany-workbench/ and would clobber
     // the developer's credentials. Linux backend has its own isolated tests
     // in `linux_file_store.rs`.
     #[cfg(not(target_os = "linux"))]
     #[tokio::test]
     async fn round_trip() {
         let store = credential_store();
-        let key = "clauge-test-key-do-not-collide";
+        let key = "zeroany-workbench-test-key-do-not-collide";
         let value = "secret-value-xyz";
 
         let _ = store.delete(key).await; // pre-clean

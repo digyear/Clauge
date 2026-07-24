@@ -354,7 +354,7 @@ pub async fn link_pr_url(
 
 /// Host-side state of a card's PR. Driven by `gh pr view --json state`
 /// / `glab mr view --output json` so it reflects what's actually true
-/// on the host, not any cached Clauge-side state. Consumed by the
+/// on the host, not any cached ZeroAny Workbench-side state. Consumed by the
 /// auto-move-on-merge poll in the frontend and the matching MCP tool.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]

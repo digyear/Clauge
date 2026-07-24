@@ -1,6 +1,6 @@
 -- Explorer mode — remote file system connections (SFTP / FTP / S3 / Azure Blob).
 -- One profile per remote endpoint. Kind-discriminated columns; secrets live in
--- the per-OS keychain (CredentialStore service "Clauge Explorer"), never here.
+-- the per-OS keychain (CredentialStore service "ZeroAny Workbench Explorer"), never here.
 CREATE TABLE explorer_connections (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,

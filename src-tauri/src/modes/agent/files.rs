@@ -18,14 +18,14 @@ use crate::shared::cli::registry::runner_for;
 /// Directory/file NAMES hidden from the tree and dropped from watcher
 /// events — heavy / noisy dirs the agent churns. Matched by path-segment
 /// name, never by substring, so a session rooted *inside* one of these
-/// (e.g. a worktree under `.clauge-worktrees/`) still lists its contents.
+/// (e.g. a worktree under `.zeroany-worktrees/`) still lists its contents.
 const IGNORED_NAMES: &[&str] = &[
     ".git",
     "node_modules",
     "target",
     "dist",
     ".svelte-kit",
-    ".clauge-worktrees",
+    ".zeroany-worktrees",
 ];
 
 /// Files larger than this open read-only (no edit/save).
