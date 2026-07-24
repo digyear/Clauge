@@ -24,6 +24,7 @@
     agentEditorFile,
     agentFileDragging,
     agentSessionCenterOpen,
+    syncCapturedAgentSessionId,
   } from '../stores';
   import { getSetting, setSetting } from '$lib/commands/settings';
   import { phoneOwnedTerminals, phoneDrivenSizes } from '$lib/stores/sizeOwner';
@@ -1226,8 +1227,15 @@
               entry._exitBuffer.match(/agy --conversation[ =]([a-f0-9-]{36})/) ||
               entry._exitBuffer.match(/hermes --resume ([A-Za-z0-9_-]{8,128})/);
             if (resumeMatch) {
-              session.claudeSessionId = resumeMatch[1];
-              agentUpdateSessionId(session.id, resumeMatch[1]).catch(() => {});
+              const capturedResumeId = resumeMatch[1];
+              session.claudeSessionId = capturedResumeId;
+              // The exit-banner fallback runs after the normal discovery
+              // poll has missed the provider session. Persisting the id is
+              // not enough: sidebar rows are long-lived store objects, so
+              // the next click would otherwise reopen with a stale null id
+              // and launch a fresh CLI instead of --resume.
+              syncCapturedAgentSessionId(session.id, capturedResumeId);
+              agentUpdateSessionId(session.id, capturedResumeId).catch(() => {});
             }
           }
           if (entry) entry._exitBuffer = '';

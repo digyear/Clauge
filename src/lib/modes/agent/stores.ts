@@ -1,10 +1,24 @@
 import { writable, get } from 'svelte/store';
 import type { AgentSession, AgentContext, ContextUsage, GitFileChange, AgentDiscoveredSession, DiscoveredSessionScanSummary } from './types';
 import { agentListSessions, agentListContexts, agentGitStatus, agentGitBranch, agentGitAheadBehind, agentGetSessionContextUsage, agentFetchUsageLimits, agentFetchCodexUsageLimits, agentUpdateTrayTitle, agentGetClaudePlan, agentListDiscoveredSessions, agentScanDiscoveredSessions } from './commands';
+import { applyCapturedResumeId } from './session-state';
 
 // Sessions
 export const agentSessions = writable<AgentSession[]>([]);
 export const activeAgentSession = writable<AgentSession | null>(null);
+
+/** Keep all in-memory references aligned with the resume id persisted after
+ * a provider exits. Without this, reopening from the sidebar can reuse a
+ * stale null id and start a fresh conversation even though the DB is correct. */
+export function syncCapturedAgentSessionId(rowId: string, resumeId: string) {
+  agentSessions.update((sessions) => applyCapturedResumeId(sessions, rowId, resumeId));
+  activeAgentSession.update((session) =>
+    session?.id === rowId
+      ? { ...session, claudeSessionId: resumeId }
+      : session,
+  );
+}
+
 export const agentDiscoveredSessions = writable<AgentDiscoveredSession[]>([]);
 export const agentDiscoveredScanSummary = writable<DiscoveredSessionScanSummary | null>(null);
 // Full-page catalog visibility. Kept independent from activeAgentSession so
